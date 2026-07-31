@@ -1,0 +1,20 @@
+# id-x-010.service: systemd 服务端启动配置
+# sudo systemctl daemon-reload
+# sudo systemctl start id-x-010.service
+# sudo systemctl status id-x-010.service
+[Unit]
+Description=ID X 010 Python Application
+After=network.target
+
+[Service]
+Type=simple
+User=master
+Group=master
+WorkingDirectory=/home/master/Desktop/codeSpace/id_x_000
+ExecStart=/home/master/.miniconda3/envs/id-x-010/bin/python main.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

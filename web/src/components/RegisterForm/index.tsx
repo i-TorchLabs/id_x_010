@@ -1,0 +1,279 @@
+"use client";
+
+import React from "react";
+import {
+  Alert,
+  Button,
+  Checkbox,
+  FieldError,
+  Input,
+  Label,
+  TextField,
+} from "@heroui/react";
+
+interface RegisterFormProps {
+  email: string;
+  setEmail: (email: string) => void;
+  phone: string;
+  setPhone: (phone: string) => void;
+  password: string;
+  setPassword: (password: string) => void;
+  confirmPassword: string;
+  setConfirmPassword: (confirmPassword: string) => void;
+  showPassword: boolean;
+  setShowPassword: (show: boolean) => void;
+  isTyping: boolean;
+  setIsTyping: (isTyping: boolean) => void;
+  isPasswordFocused: boolean;
+  setIsPasswordFocused: (focused: boolean) => void;
+  isSubmitting: boolean;
+  onSubmit: (e: React.FormEvent) => Promise<void>;
+  errorMsg: string;
+  emailError: boolean;
+  phoneError: boolean;
+  passwordError: boolean;
+  confirmPasswordError: boolean;
+}
+
+export default function RegisterForm({
+  email,
+  setEmail,
+  phone,
+  setPhone,
+  password,
+  setPassword,
+  confirmPassword,
+  setConfirmPassword,
+  showPassword,
+  setShowPassword,
+  isTyping,
+  setIsTyping,
+  isPasswordFocused,
+  setIsPasswordFocused,
+  isSubmitting,
+  onSubmit,
+  errorMsg,
+  emailError,
+  phoneError,
+  passwordError,
+  confirmPasswordError,
+}: RegisterFormProps) {
+  const eyeIcon = showPassword ? (
+    <svg
+      className="w-5 h-5"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.5}
+        d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88"
+      />
+    </svg>
+  ) : (
+    <svg
+      className="w-5 h-5"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.5}
+        d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z"
+      />
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.5}
+        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+      />
+    </svg>
+  );
+
+  return (
+    <div className="w-full max-w-100">
+      <div className="flex justify-center mb-6">
+        <svg viewBox="0 0 24 24" fill="none" className="w-8 h-8">
+          <path d="M12 2L13.5 9H10.5L12 2Z" fill="#1d1d1f" />
+          <path d="M12 22L10.5 15H13.5L12 22Z" fill="#1d1d1f" />
+          <path d="M2 12L9 10.5V13.5L2 12Z" fill="#1d1d1f" />
+          <path d="M22 12L15 13.5V10.5L22 12Z" fill="#1d1d1f" />
+        </svg>
+      </div>
+
+      <div className="text-center mb-9">
+        <h1 className="text-[28px] font-semibold mb-1.5 leading-[1.14] tracking-[-0.28px] text-foreground">
+          Create your account
+        </h1>
+        <p className="text-[14px] text-muted">Get started with your account</p>
+      </div>
+
+      <form
+        onSubmit={(e) => {
+          void onSubmit(e);
+        }}
+      >
+        {/* Email Field */}
+        <div className="mb-5">
+          <TextField
+            fullWidth
+            isInvalid={emailError}
+            validationBehavior="aria"
+          >
+            <Label htmlFor="email" className="text-sm font-semibold">
+              Email
+            </Label>
+            <Input
+              id="email"
+              type="email"
+              fullWidth
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              onFocus={() => setIsTyping(true)}
+              onBlur={() => setIsTyping(false)}
+              placeholder="you@example.com"
+              autoComplete="off"
+            />
+            {emailError && <FieldError>Invalid email address</FieldError>}
+          </TextField>
+        </div>
+
+        {/* Phone Field */}
+        <div className="mb-5">
+          <TextField
+            fullWidth
+            isInvalid={phoneError}
+            validationBehavior="aria"
+          >
+            <Label htmlFor="phone" className="text-sm font-semibold">
+              Phone{" "}
+              <span className="font-normal text-muted">(Optional)</span>
+            </Label>
+            <Input
+              id="phone"
+              type="tel"
+              fullWidth
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              onFocus={() => setIsTyping(true)}
+              onBlur={() => setIsTyping(false)}
+              placeholder="***********"
+              autoComplete="off"
+            />
+            {phoneError && (
+              <FieldError>Phone number must be 11 digits</FieldError>
+            )}
+          </TextField>
+        </div>
+
+        {/* Password Field */}
+        <div className="mb-5">
+          <TextField
+            fullWidth
+            isInvalid={passwordError}
+            validationBehavior="aria"
+          >
+            <Label htmlFor="password" className="text-sm font-semibold">
+              Password
+            </Label>
+            <div className="relative">
+              <Input
+                id="password"
+                type={showPassword ? "text" : "password"}
+                fullWidth
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onFocus={() => setIsPasswordFocused(true)}
+                onBlur={() => setIsPasswordFocused(false)}
+                placeholder="********"
+                className="pr-11"
+              />
+              <button
+                type="button"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-foreground transition-colors z-10"
+                onClick={() => setShowPassword(!showPassword)}
+                aria-label={showPassword ? "Hide password" : "Show password"}
+              >
+                {eyeIcon}
+              </button>
+            </div>
+            {passwordError && <FieldError>Invalid password</FieldError>}
+          </TextField>
+        </div>
+
+        {/* Confirm Password Field */}
+        <div className="mb-5">
+          <TextField
+            fullWidth
+            isInvalid={confirmPasswordError}
+            validationBehavior="aria"
+          >
+            <Label htmlFor="confirmPassword" className="text-sm font-semibold">
+              Confirm Password
+            </Label>
+            <Input
+              id="confirmPassword"
+              type={showPassword ? "text" : "password"}
+              fullWidth
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              placeholder="********"
+            />
+            {confirmPasswordError && (
+              <FieldError>Passwords do not match</FieldError>
+            )}
+          </TextField>
+        </div>
+
+        {/* Terms Checkbox */}
+        <div className="flex items-center justify-between mb-6">
+          <Checkbox name="terms">
+            <Checkbox.Content>
+              <Checkbox.Control>
+                <Checkbox.Indicator />
+              </Checkbox.Control>
+              <span className="text-sm">
+                I agree to the Terms of Service
+              </span>
+            </Checkbox.Content>
+          </Checkbox>
+        </div>
+
+        {/* Error Message */}
+        {errorMsg && (
+          <Alert status="danger" className="mb-4">
+            <Alert.Indicator />
+            <Alert.Content>
+              <Alert.Description>{errorMsg}</Alert.Description>
+            </Alert.Content>
+          </Alert>
+        )}
+
+        <Button
+          type="submit"
+          fullWidth
+          variant="primary"
+          size="lg"
+          isDisabled={isSubmitting}
+          className="rounded-full font-semibold"
+        >
+          {isSubmitting ? "Creating account..." : "Sign Up"}
+        </Button>
+      </form>
+
+      <div className="text-center mt-2 text-[14px] text-muted">
+        Already have an account?{" "}
+        <a
+          href="/f/login"
+          className="no-underline hover:underline text-foreground font-semibold"
+        >
+          Log In
+        </a>
+      </div>
+    </div>
+  );
+}

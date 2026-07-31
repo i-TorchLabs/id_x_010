@@ -1,0 +1,608 @@
+@import "tailwindcss";
+@import "@heroui/styles";
+
+:root {
+    /* ── Apple Color Palette ── */
+    --color-pure-black: #000000;
+    --color-near-black: #1d1d1f;
+    --color-light-gray: #f5f5f7;
+    --color-apple-blue: #0071e3;
+    --color-link-blue: #0066cc;
+    --color-bright-blue: #2997ff;
+    --color-error: #dc2626;
+
+    /* ── Original Left Panel Colors ── */
+    --color-bg-dark: #1a1a2e;
+    --color-purple-hover: #5b21b6;
+    --color-left-bg-start: #d4d0dc;
+    --color-left-bg-mid: #c8c4d0;
+    --color-left-bg-end: #bbb7c5;
+
+    /* ── Character Colors ── */
+    --color-char-blue: #0071e3;
+    --color-char-black: #1d1d1f;
+    --color-orange: #ff9b6b;
+    --color-yellow: #e8d754;
+
+    /* ── Surface & Dark Variants ── */
+    --color-dark-surface-1: #272729;
+    --color-dark-surface-2: #262628;
+    --color-dark-surface-3: #28282a;
+
+    /* ── Button States ── */
+    --color-button-active: #ededf2;
+    --color-button-default-light: #fafafc;
+
+    /* ── Shadows ── */
+    --shadow-card: rgba(0, 0, 0, 0.22) 3px 5px 30px 0px;
+
+    /* ── Focus ── */
+    --color-focus: #0071e3;
+}
+
+/* Light theme */
+[data-theme="light"] {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f5f5f7;
+    --bg-input: #f7f7f8;
+    --text-primary: #1d1d1f;
+    --text-secondary: rgba(0, 0, 0, 0.6);
+    --text-muted: #6b7280;
+    --border-color: #d1d1d6;
+    --border-light: #e5e7eb;
+    --icon-color: #6b7280;
+    --input-bg: #f7f7f8;
+
+    /* ── HeroUI 黑白色系 ── */
+    --accent: #000000;
+    --accent-foreground: #ffffff;
+    --danger: #000000;
+    --danger-foreground: #ffffff;
+    --success: #000000;
+    --success-foreground: #ffffff;
+}
+
+/* Dark theme (default) */
+[data-theme="dark"] {
+    --bg-primary: #000000;
+    --bg-secondary: #161618;
+    --bg-input: #1f1f23;
+    --text-primary: #ffffff;
+    --text-secondary: rgba(255, 255, 255, 0.6);
+    --text-muted: #9ca3af;
+    --border-color: #2a2a2d;
+    --border-light: #374151;
+    --icon-color: #9ca3af;
+    --input-bg: #1f1f23;
+
+    /* ── HeroUI 黑白色系 ── */
+    --accent: #ffffff;
+    --accent-foreground: #000000;
+    --danger: #ffffff;
+    --danger-foreground: #000000;
+    --success: #ffffff;
+    --success-foreground: #000000;
+}
+
+@theme inline {
+    --font-sans: var(--font-geist-sans);
+    --font-mono: var(--font-geist-mono);
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+body {
+    font-family:
+        "SF Pro Text",
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        Helvetica Neue,
+        Helvetica,
+        Arial,
+        sans-serif;
+    background: var(--color-light-gray);
+    overflow: hidden;
+    height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+[data-theme="dark"] body {
+    background: var(--color-pure-black);
+}
+
+/* ── Custom Scrollbar ── */
+
+/* For Webkit browsers */
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    border-radius: 5px;
+    background-color: var(--border-color);
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background-color: var(--text-muted);
+}
+
+/* For Firefox */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-color) transparent;
+}
+
+/* Dark theme scrollbar */
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+    background-color: #30363d;
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+    background-color: #484f58;
+}
+
+[data-theme="dark"] {
+    scrollbar-color: #30363d transparent;
+}
+
+/* Light theme scrollbar */
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+    background-color: #d1d5db;
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+    background-color: #9ca3af;
+}
+
+[data-theme="light"] {
+    scrollbar-color: #d1d5db transparent;
+}
+
+/* ── Login Page Layout ── */
+
+#login-page {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    height: 100vh;
+}
+
+/* ── Left Panel ── */
+
+.left-panel {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 40px 48px;
+    overflow: hidden;
+}
+
+.left-panel .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family:
+        "SF Pro Display",
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        Helvetica Neue,
+        Helvetica,
+        Arial,
+        sans-serif;
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.374px;
+    color: #fff;
+    z-index: 10;
+    position: relative;
+}
+
+.left-panel .logo svg {
+    width: 28px;
+    height: 28px;
+    background: rgba(255, 255, 255, 0.15);
+    backdrop-filter: blur(8px);
+    padding: 4px;
+    border-radius: 6px;
+}
+
+.characters-wrapper {
+    position: relative;
+    z-index: 10;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    height: 420px;
+}
+
+.left-panel .footer-links {
+    display: flex;
+    gap: 28px;
+    font-size: 13px;
+    color: rgba(80, 70, 90, 0.7);
+    z-index: 10;
+    position: relative;
+}
+
+.left-panel .footer-links a {
+    color: inherit;
+    text-decoration: none;
+    transition: color 0.2s;
+}
+
+.left-panel .footer-links a:hover {
+    color: #333;
+}
+
+/* ── Right Panel ── */
+
+.right-panel {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--color-light-gray);
+    padding: 40px;
+}
+
+.form-container {
+    width: 100%;
+    max-width: 400px;
+}
+
+.sparkle-icon {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 24px;
+}
+
+.sparkle-icon svg {
+    width: 32px;
+    height: 32px;
+}
+
+.form-header {
+    text-align: center;
+    margin-bottom: 36px;
+}
+
+.form-header h1 {
+    font-family:
+        "SF Pro Display",
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        Helvetica Neue,
+        Helvetica,
+        Arial,
+        sans-serif;
+    font-size: 28px;
+    font-weight: 600;
+    color: var(--color-near-black);
+    letter-spacing: -0.28px;
+    line-height: 1.14;
+    margin-bottom: 6px;
+}
+
+.form-header p {
+    font-size: 14px;
+    font-weight: 400;
+    letter-spacing: -0.224px;
+    color: rgba(0, 0, 0, 0.48);
+}
+
+/* ── Form Options ── */
+
+.form-options {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+}
+
+.forgot-link {
+    font-size: 14px;
+    font-weight: 400;
+    letter-spacing: -0.224px;
+    color: var(--color-link-blue);
+    text-decoration: none;
+    transition: opacity 0.2s;
+}
+
+.forgot-link:hover {
+    text-decoration: underline;
+}
+
+/* ── Error Message ── */
+
+.error-msg {
+    display: none;
+    padding: 10px 14px;
+    font-size: 14px;
+    font-weight: 400;
+    letter-spacing: -0.224px;
+    color: var(--color-error);
+    background: rgba(220, 38, 38, 0.06);
+    border: 1px solid rgba(220, 38, 38, 0.15);
+    border-radius: 8px;
+    margin-bottom: 16px;
+}
+
+.error-msg.show {
+    display: block;
+}
+
+/* ── Buttons ── */
+
+.btn-login,
+.btn-google {
+    position: relative;
+    width: 100%;
+    height: 50px;
+    border-radius: 25px;
+    font-family:
+        "SF Pro Text",
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        Helvetica Neue,
+        Helvetica,
+        Arial,
+        sans-serif;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: normal;
+    cursor: pointer;
+    overflow: hidden;
+    transition: all 0.3s;
+}
+
+.btn-login {
+    border: 1.5px solid var(--color-bg-dark);
+    background: var(--color-bg-dark);
+    color: #fff;
+    margin-bottom: 14px;
+}
+
+.btn-google {
+    border: 1.5px solid #e0e0e0;
+    background: #f5f5f5;
+    color: #333;
+}
+
+.btn-login:disabled,
+.btn-google:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+.btn-login .btn-text,
+.btn-google .btn-text {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    transition: all 0.3s;
+}
+
+.btn-login .btn-hover-content,
+.btn-google .btn-hover-content {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: var(--color-purple-hover);
+    color: #fff;
+    opacity: 0;
+    transition: all 0.3s;
+    border-radius: 25px;
+}
+
+.btn-login:hover .btn-text,
+.btn-google:hover .btn-text {
+    transform: translateX(40px);
+    opacity: 0;
+}
+
+.btn-login:hover .btn-hover-content,
+.btn-google:hover .btn-hover-content {
+    opacity: 1;
+}
+
+.google-icon {
+    width: 18px;
+    height: 18px;
+}
+
+.signup-link {
+    text-align: center;
+    font-size: 14px;
+    font-weight: 400;
+    letter-spacing: -0.224px;
+    color: rgba(0, 0, 0, 0.48);
+    margin-top: 32px;
+}
+
+.signup-link a {
+    color: var(--color-link-blue);
+    font-weight: 400;
+    text-decoration: none;
+}
+
+.signup-link a:hover {
+    text-decoration: underline;
+}
+
+/* ── Animated Characters ── */
+
+.characters-scene {
+    position: relative;
+    width: 480px;
+    height: 360px;
+    overflow: visible;
+}
+
+.character {
+    position: absolute;
+    bottom: 0;
+    transition: all 0.7s ease-in-out;
+    transform-origin: bottom center;
+}
+
+.char-purple {
+    left: 60px;
+    width: 170px;
+    height: 370px;
+    background: var(--color-char-blue);
+    border-radius: 10px 10px 0 0;
+    z-index: 1;
+}
+
+.char-black {
+    left: 220px;
+    width: 115px;
+    height: 290px;
+    background: var(--color-char-black);
+    border-radius: 8px 8px 0 0;
+    z-index: 2;
+}
+
+.char-orange {
+    left: 0;
+    width: 230px;
+    height: 190px;
+    background: var(--color-orange);
+    border-radius: 115px 115px 0 0;
+    z-index: 3;
+}
+
+.char-yellow {
+    left: 290px;
+    width: 135px;
+    height: 215px;
+    background: var(--color-yellow);
+    border-radius: 68px 68px 0 0;
+    z-index: 4;
+}
+
+.eyes {
+    position: absolute;
+    display: flex;
+    transition: all 0.7s ease-in-out;
+}
+
+.eyeball {
+    border-radius: 50%;
+    background: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: height 0.15s ease;
+    overflow: hidden;
+}
+
+.pupil {
+    border-radius: 50%;
+    background: var(--color-char-black);
+    transition: transform 0.1s ease-out;
+}
+
+.bare-pupil {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--color-char-black);
+    transition: transform 0.7s ease-in-out;
+}
+
+.yellow-mouth {
+    position: absolute;
+    width: 50px;
+    height: 4px;
+    background: var(--color-char-black);
+    border-radius: 2px;
+    transition: all 0.7s ease-in-out;
+}
+
+.orange-mouth {
+    position: absolute;
+    width: 28px;
+    height: 14px;
+    border: 3px solid var(--color-char-black);
+    border-top: none;
+    border-radius: 0 0 14px 14px;
+    opacity: 0;
+    transition: all 0.7s ease-in-out;
+}
+
+.orange-mouth.visible {
+    opacity: 1;
+}
+
+/* ── Animations ── */
+
+@keyframes shakeHead {
+    0%,
+    100% {
+        translate: 0 0;
+    }
+    10% {
+        translate: -9px 0;
+    }
+    20% {
+        translate: 7px 0;
+    }
+    30% {
+        translate: -6px 0;
+    }
+    40% {
+        translate: 5px 0;
+    }
+    50% {
+        translate: -4px 0;
+    }
+    60% {
+        translate: 3px 0;
+    }
+    70% {
+        translate: -2px 0;
+    }
+    80% {
+        translate: 1px 0;
+    }
+    90% {
+        translate: -0.5px 0;
+    }
+}
+
+.eyes.shake-head,
+.yellow-mouth.shake-head,
+.orange-mouth.shake-head {
+    animation: shakeHead 0.8s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+/* ── Responsive ── */
+
+@media (max-width: 900px) {
+    #login-page {
+        grid-template-columns: 1fr;
+    }
+
+    .left-panel {
+        display: none;
+    }
+}
