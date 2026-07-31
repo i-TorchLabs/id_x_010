@@ -1,11 +1,11 @@
 # id_x_010
 
-![Organization](https://img.shields.io/static/v1?label=Organization&message=TorchLabs&color=lightgray&style=flat-square&labelColor=black)
+![License](https://img.shields.io/static/v1?label=License&message=AGPL--3.0&color=lightgray&style=flat-square&labelColor=black)
 ![Author](https://img.shields.io/static/v1?label=Author&message=Ray&color=lightgray&style=flat-square&labelColor=black)
+![Organization](https://img.shields.io/static/v1?label=Organization&message=TorchLabs&color=lightgray&style=flat-square&labelColor=black)
 ![Engine](https://img.shields.io/static/v1?label=Engine&message=LangGraph%20%2B%20Litestar&color=lightgray&style=flat-square&labelColor=black)
 ![Language](https://img.shields.io/static/v1?label=Language&message=Python%20%E2%89%A5%203.10%20%2F%20TypeScript&color=lightgray&style=flat-square&labelColor=black)
 ![Database](https://img.shields.io/static/v1?label=Database&message=PostgreSQL&color=lightgray&style=flat-square&labelColor=black)
-![License](https://img.shields.io/static/v1?label=License&message=AGPL--3.0&color=lightgray&style=flat-square&labelColor=black)
 
 ---
 
