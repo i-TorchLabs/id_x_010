@@ -1,6 +1,6 @@
 -- PostgreSQL 初始化脚本
 -- 创建数据库表
--- psql -h 127.0.0.1 -p 15432 -U postgres -d id-x-010 -f init.sql
+-- psql -h 127.0.0.1 -p 15432 -U postgres -d id_x_010 -f init.sql
 
 -- ============================================
 -- 1. 用户表 (users)

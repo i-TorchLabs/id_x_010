@@ -9,7 +9,7 @@ export const BASE_URL =
 
 // API 版本
 export const SUB_VERSION =
-    process.env.NEXT_PUBLIC_SUB_VERSION || "/b/id-x-010/graphql";
+    process.env.NEXT_PUBLIC_SUB_VERSION || "/b/id_x_010/graphql";
 
 // 完整的 API 地址
 export const API_BASE_URL = `${BASE_URL}${SUB_VERSION}`;

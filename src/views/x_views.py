@@ -2,7 +2,7 @@ from typing import Dict, List, Optional
 
 from sqlalchemy import desc
 from utils.log_util import get_request_id, logger
-from x_models.id-x-010..models.x_models import ConversationLog, get_session
+from x_models.id_x_010..models.x_models import ConversationLog, get_session
 
 DEFAULT_MAX_ROUNDS = 5
 

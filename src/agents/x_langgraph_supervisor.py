@@ -17,12 +17,12 @@ from semantic_router import Route
 from semantic_router.encoders import OpenAIEncoder
 from semantic_router.routers import SemanticRouter as _SemanticRouter
 from utils.log_util import get_request_id, logger
-from x_models.id-x-010..agents.x_general_agent import (
+from x_models.id_x_010..agents.x_general_agent import (
     DEFAULT_SYSTEM_PROMPT,
     GeneralAgent,
 )
-from x_models.id-x-010..agents.x_sql_agent import SQLAgent
-from x_models.id-x-010..models.x_models import get_external_model_config
+from x_models.id_x_010..agents.x_sql_agent import SQLAgent
+from x_models.id_x_010..models.x_models import get_external_model_config
 
 
 class CustomOpenAIEncoder(OpenAIEncoder):

@@ -1,7 +1,7 @@
-# id-x-010_web.service: systemd 服务端启动配置
+# id_x_010_web.service: systemd 服务端启动配置
 # sudo systemctl daemon-reload
-# sudo systemctl start id-x-010_web.service
-# sudo systemctl status id-x-010_web.service
+# sudo systemctl start id_x_010_web.service
+# sudo systemctl status id_x_010_web.service
 [Unit]
 Description=ID X 010 Web Application
 After=network.target
@@ -10,7 +10,7 @@ After=network.target
 Type=simple
 User=master
 Group=master
-WorkingDirectory=/home/master/Desktop/codeSpace/id_x_000/x_models/id-x-010/web
+WorkingDirectory=/home/master/Desktop/codeSpace/id_x_000/x_models/id_x_010/web
 ExecStart=/usr/bin/cnpm run start
 Restart=always
 RestartSec=5

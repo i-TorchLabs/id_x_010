@@ -1,4 +1,4 @@
-# id-x-010（结构体-010）· 通用计算引擎
+# id_x_010（结构体-010）· 通用计算引擎
 
 ![License](https://img.shields.io/badge/License-AGPL--3.0-lightgray?style=flat-square&labelColor=black)
 ![Author](https://img.shields.io/badge/Author-Ray-lightgray?style=flat-square&labelColor=black)
@@ -17,10 +17,10 @@
 
 **Description**：
 
-`id-x-010` 是 `id_x_000` 引擎体系下的试验体（Trial Body），整体由三层构成：
+`id_x_010` 是 `id_x_000` 引擎体系下的试验体（Trial Body），整体由三层构成：
 
-- **引擎层**：`id-x-010` 主体，`main.py` + `adapt.py` 动态加载业务模块，自身不含业务逻辑。
-- **业务模块层**：`x_models/id-x-010` 智能问答系统，提供 LangGraph 编排、GraphQL API 与对话上下文管理。
+- **引擎层**：`id_x_010` 主体，`main.py` + `adapt.py` 动态加载业务模块，自身不含业务逻辑。
+- **业务模块层**：`x_models/id_x_010` 智能问答系统，提供 LangGraph 编排、GraphQL API 与对话上下文管理。
 - **前端应用层**：`web/` Next.js 16 单页应用（Single Page Application, SPA），遵循 Apple 人机界面指南（Human Interface Guidelines, HIG），提供服务器推送事件（Server-Sent Events, SSE）流式对话交互。
 
 其中业务模块采用分层解耦设计：Quart / Litestar 网关 → SemanticRouter 语义路由 → LangGraph StateGraph 编排（General / SQL Agent）→ 模型切换器（外部 EXTERNAL API 或本地 Ollama / vLLM）→ SSE 流式响应回写前端，并将对话日志持久化到 PostgreSQL。所有 API 通过 `/010/graphql` 暴露，模型表仅使用基础类型（Integer / String / Text / DateTime / JSON / Boolean），不依赖 pgcrypto 或 pgvector。
@@ -124,7 +124,7 @@ graph TB
         end
     end
 
-    subgraph Backend[引擎层 — id-x-010 主体]
+    subgraph Backend[引擎层 — id_x_010 主体]
         subgraph ASGI[Granian ASGI 服务器]
             Litestar[Litestar 应用]
         end
@@ -146,7 +146,7 @@ graph TB
     end
 
     subgraph XModels[业务模块层 — x_models/]
-        subgraph X010[id-x-010 智能问答系统]
+        subgraph X010[id_x_010 智能问答系统]
             subgraph Agents[多智能体]
                 Supervisor[LangGraph Supervisor<br/>意图路由]
                 GeneralAgent[General Agent<br/>通用问答]
@@ -185,8 +185,8 @@ graph TB
     NginxRoute -->|/b/*| ASGI
 
     Frontend --> APIClient
-    APIClient -->|GraphQL POST /b/id-x-010/graphql| Litestar
-    APIClient -->|SSE POST /b/id-x-010/graphql/stream| Litestar
+    APIClient -->|GraphQL POST /b/id_x_010/graphql| Litestar
+    APIClient -->|SSE POST /b/id_x_010/graphql/stream| Litestar
 
     Litestar --> MW
     MW --> Adapt
@@ -275,16 +275,16 @@ sequenceDiagram
 ## ⚫ 7. 目录结构
 
 ```text
-x_models/id-x-010/
+x_models/id_x_010/
 ├── docs/                              # 设计文档
 │   ├── intent-recognition-analysis.md
 │   ├── 实现要求.md
 │   └── 架构描述.md
 ├── ops/                               # 运维与部署
-│   ├── id-x-010.service               # 后端 systemd 服务
-│   ├── id-x-010_web.service           # 前端 systemd 服务
-│   ├── id-x-010[HAProxy].conf         # HAProxy 配置
-│   ├── id-x-010[Nginx].conf           # Nginx 配置（HTTPS 终止 + 反代前端 3000 / 后端 18080）
+│   ├── id_x_010.service               # 后端 systemd 服务
+│   ├── id_x_010_web.service           # 前端 systemd 服务
+│   ├── id_x_010[HAProxy].conf         # HAProxy 配置
+│   ├── id_x_010[Nginx].conf           # Nginx 配置（HTTPS 终止 + 反代前端 3000 / 后端 18080）
 │   └── init.sql                       # 业务库 DDL（6 张表 + 触发器）
 ├── src/
 │   ├── agents/
@@ -553,13 +553,13 @@ curl -X POST <BASE_URL>/010/graphql \
 
 ```bash
 # 1. 安装后端依赖（推荐在 miniconda 独立环境）
-conda create -n id-x-010 python=3.12 -y
-conda activate id-x-010
+conda create -n id_x_010 python=3.12 -y
+conda activate id_x_010
 pip install -r requirements.txt
 # 引擎层 litestar / granian / sqlalchemy / asyncpg 等基础依赖需预先安装
 
 # 2. 安装前端依赖
-cd x_models/id-x-010/web
+cd x_models/id_x_010/web
 cnpm install   # 或 npm install
 ```
 
@@ -575,7 +575,7 @@ DEBUG_MODE = true
 
 [EXTEND]
 MODELS = [
-    ["id-x-010", "/010"],
+    ["id_x_010", "/010"],
 ]
 ```
 
@@ -615,7 +615,7 @@ AGENT_DB_PASSWORD_ENC=encrypted_agent_db_password
 
 ```bash
 # 1. 初始化数据库表（手动 / 或由 main.py on_startup 自动创建）
-psql -h 127.0.0.1 -p 15432 -U postgres -d id-x-010 -f x_models/id-x-010/ops/init.sql
+psql -h 127.0.0.1 -p 15432 -U postgres -d id_x_010 -f x_models/id_x_010/ops/init.sql
 
 # 2. 启动后端
 cd id_x_000
@@ -623,7 +623,7 @@ python main.py
 # 应用将在 http://0.0.0.0:18080 启动
 
 # 3. 启动前端
-cd x_models/id-x-010/web
+cd x_models/id_x_010/web
 cnpm run dev    # next dev -p 3000
 # 或生产：cnpm run build && cnpm run start
 ```
@@ -636,26 +636,26 @@ cnpm run dev    # next dev -p 3000
 
 ```bash
 # 后端服务
-sudo cp x_models/id-x-010/ops/id-x-010.service /etc/systemd/system/
+sudo cp x_models/id_x_010/ops/id_x_010.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now id-x-010.service
+sudo systemctl enable --now id_x_010.service
 
 # 前端服务
-sudo cp x_models/id-x-010/ops/id-x-010_web.service /etc/systemd/system/
+sudo cp x_models/id_x_010/ops/id_x_010_web.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now id-x-010_web.service
+sudo systemctl enable --now id_x_010_web.service
 
 # Nginx 反代（HTTPS 终止，前端 :3000 / 后端 :18080）
-sudo cp x_models/id-x-010/ops/"id-x-010[Nginx].conf" /etc/nginx/conf.d/
+sudo cp x_models/id_x_010/ops/"id_x_010[Nginx].conf" /etc/nginx/conf.d/
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
 前端容器化构建（`web/Dockerfile`）：
 
 ```bash
-cd x_models/id-x-010/web
-docker build -t id-x-010-web:latest .
-docker run -d -p 3000:3000 --name id-x-010-web id-x-010-web:latest
+cd x_models/id_x_010/web
+docker build -t id_x_010-web:latest .
+docker run -d -p 3000:3000 --name id_x_010-web id_x_010-web:latest
 ```
 
 ---

@@ -1,4 +1,4 @@
-"""id-x-010 插件对外统一入口。
+"""id_x_010 插件对外统一入口。
 
 本模块是 id_x_000 主程序与插件之间的唯一耦合面。主程序通过
 `load_plugin()` 获取 ``PluginInterface``，调用其钩子完成：
@@ -29,13 +29,13 @@ from x_models._contracts import PluginInterface
 
 
 class _Idx010Plugin:
-    """id-x-010 插件实现。
+    """id_x_010 插件实现。
 
     懒加载内部 ``x_models`` 模块，避免主程序加载本插件时立即触发
     可能尚未就绪的 ORM 注册链。
     """
 
-    name = "id-x-010"
+    name = "id_x_010"
 
     def __init__(self) -> None:
         self._base: Any = None
@@ -43,7 +43,7 @@ class _Idx010Plugin:
     @property
     def base(self) -> Any:
         if self._base is None:
-            from x_models.id-x-010.src.models.x_models import Base
+            from x_models.id_x_010.src.models.x_models import Base
             self._base = Base
         return self._base
 
@@ -53,7 +53,7 @@ class _Idx010Plugin:
         return ()
 
     def set_session_maker(self, maker: async_sessionmaker[AsyncSession]) -> None:
-        from x_models.id-x-010.src.models.x_models import set_session_maker
+        from x_models.id_x_010.src.models.x_models import set_session_maker
         set_session_maker(maker)
 
     async def build_tables(self, conn: AsyncConnection) -> None:
@@ -61,5 +61,5 @@ class _Idx010Plugin:
 
 
 def load_plugin() -> PluginInterface:
-    """返回 id-x-010 插件实例。"""
+    """返回 id_x_010 插件实例。"""
     return _Idx010Plugin()

@@ -47,7 +47,7 @@ class StreamChatClient {
    * 获取 GraphQL 流式订阅 URL
    */
   private getStreamUrl(): string {
-    return `${BASE_URL}/b/id-x-010/graphql/stream`;
+    return `${BASE_URL}/b/id_x_010/graphql/stream`;
   }
 
   /**
@@ -250,7 +250,7 @@ class StreamChatClient {
     const { signal } = abortController;
 
     const baseUrl = BASE_URL.replace(/\/graphql.*$/, "");
-    const url = `${baseUrl}/b/id-x-010/sql-approval`;
+    const url = `${baseUrl}/b/id_x_010/sql-approval`;
 
     try {
       const response = await fetch(url, {
