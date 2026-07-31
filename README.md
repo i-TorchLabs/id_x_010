@@ -1,671 +1,429 @@
-# id_x_010（结构体-010）· 通用计算引擎
+# id_x_010
 
-![License](https://img.shields.io/badge/License-AGPL--3.0-lightgray?style=flat-square&labelColor=black)
-![Author](https://img.shields.io/badge/Author-Ray-lightgray?style=flat-square&labelColor=black)
-![Organization](https://img.shields.io/badge/Organization-TinderLab-lightgray?style=flat-square&labelColor=black)
-![Engine](https://img.shields.io/badge/Engine-React%2BLitestar-lightgray?style=flat-square&labelColor=black)
-![Database](https://img.shields.io/badge/Database-PostgreSQL-lightgray?style=flat-square&labelColor=black)
-![API](https://img.shields.io/badge/API-GraphQL-lightgray?style=flat-square&labelColor=black)
-
-> 全栈智能计算引擎 · 插件化架构 · Apple Design 设计范式
+![Organization](https://img.shields.io/static/v1?label=Organization&message=TorchLabs&color=lightgray&style=flat-square&labelColor=black)
+![Author](https://img.shields.io/static/v1?label=Author&message=Ray&color=lightgray&style=flat-square&labelColor=black)
+![Engine](https://img.shields.io/static/v1?label=Engine&message=LangGraph%20%2B%20Litestar&color=lightgray&style=flat-square&labelColor=black)
+![Language](https://img.shields.io/static/v1?label=Language&message=Python%20%E2%89%A5%203.10%20%2F%20TypeScript&color=lightgray&style=flat-square&labelColor=black)
+![Database](https://img.shields.io/static/v1?label=Database&message=PostgreSQL&color=lightgray&style=flat-square&labelColor=black)
+![License](https://img.shields.io/static/v1?label=License&message=AGPL--3.0&color=lightgray&style=flat-square&labelColor=black)
 
 ---
 
-## ⚫ 1. 项目简介
+## 1 项目简介
 
-**Slogan**：基于 LangGraph 多智能体编排的全栈智能问答与自然语言查询引擎。
+**Slogan**：面向企业级知识库与数据查询的智能体编排插件。
 
-**Description**：
+id_x_010 是 TorchLabs/i-Torch（id_x_000）主程序的智能体业务插件，定位为以 LangGraph 为核心的多智能体编排与对话服务。插件通过 `PluginInterface` 契约挂载到主程序，对外暴露 GraphQL 接口与 SSE 流式端点，对内编排 General、SQL、Code 三类 Agent，完成意图识别、自然语言转 SQL、安全审批、结果解释与流式回传的完整闭环。针对企业内部数据查询中的「模型选型混乱、SQL 注入风险、上下文断裂、流式体验差」等痛点，id_x_010 以统一的 Supervisor 状态图、白名单校验、人类审批节点与多轮上下文固化给出可复现方案，相较脚本式 LLM 调用具备更强的安全闭环与可维护性。
 
-`id_x_010` 是 `id_x_000` 引擎体系下的试验体（Trial Body），整体由三层构成：
+## 2 核心特性
 
-- **引擎层**：`id_x_010` 主体，`main.py` + `adapt.py` 动态加载业务模块，自身不含业务逻辑。
-- **业务模块层**：`x_models/id_x_010` 智能问答系统，提供 LangGraph 编排、GraphQL API 与对话上下文管理。
-- **前端应用层**：`web/` Next.js 16 单页应用（Single Page Application, SPA），遵循 Apple 人机界面指南（Human Interface Guidelines, HIG），提供服务器推送事件（Server-Sent Events, SSE）流式对话交互。
+- 多智能体编排：基于 LangGraph `StateGraph` 构建 `LangGraphSupervisor`，通过 `router` 节点分发至 `general_agent`、`sql_agent`、`code_agent`，节点命名与状态字段统一。
+- 双路由层意图识别：提供 `SemanticRouter`（基于 Semantic Router 向量匹配）与 `LLMRouter`（基于结构化输出 `IntentResult`）两类路由器，可按场景切换。
+- SQL 安全闭环：`SQLSecurityChecker` 白名单只放行 `SELECT`/`WITH`，对 `INSERT`/`DROP`/`TRUNCATE` 等 16 类危险关键字与注入模式拦截，并设 `human_approval` 节点等待人工批准。
+- GraphQL + SSE 双通道：Strawberry 暴露 Query/Mutation/Subscription，`/graphql/stream` 以 Server-Sent Events（服务器发送事件, SSE）转发订阅，`/sql-approval` 单独承载审批流。
+- 多轮上下文固库：对话以 `conversation_id` 关联，`ConversationLog` 落库后由 `merge_context` 合并历史与前端传入上下文，默认截断至最近 5 轮。
 
-其中业务模块采用分层解耦设计：Quart / Litestar 网关 → SemanticRouter 语义路由 → LangGraph StateGraph 编排（General / SQL Agent）→ 模型切换器（外部 EXTERNAL API 或本地 Ollama / vLLM）→ SSE 流式响应回写前端，并将对话日志持久化到 PostgreSQL。所有 API 通过 `/010/graphql` 暴露，模型表仅使用基础类型（Integer / String / Text / DateTime / JSON / Boolean），不依赖 pgcrypto 或 pgvector。
+## 3 项目亮点
 
-**适用场景**：企业内部知识问答、面向非技术人员的自然语言数据库查询、多模型对比评估、生产级大语言模型（Large Language Model, LLM）应用落地参考实现。
+1. **意图双引擎可热切** —— `LLMRouter` 使用 `with_structured_output(IntentResult)` 强约束 LLM 给出 `intent/confidence/reasoning`，`SemanticRouter` 以嵌入向量匹配样例 utterances，`use_llm_router` 一参切换，路由失败统一回退 `general`。
+2. **SQL 审批 human-in-the-loop** —— LangGraph 将 `human_approval` 设为节点而非边，`approval_status` 取 `approved/rejected/cancelled` 三态，拒绝后回到 `generate_query` 重写 SQL，取消则短路返回，形成可审计的人机协同链路。
+3. **白名单 + 注入双检** —— `SQLSecurityChecker.check` 先正则提取首关键字再扫描 14 类危险词与 6 类注入模式（`;\\w+`、`--$`、`UNION SELECT` 等），非 `SELECT`/`WITH` 一律拒绝，将安全决策前置到执行前。
+4. **DB 隔离连接** —— `DatabaseConnection` 使用 `AGENT_DB_*` 环境变量，与业务主库 `DB_*` 物理隔离，并通过 `pool_pre_ping`、独立 `create_async_engine` 防止 SQL Agent 慢查询拖垮主连接池。
+5. **实例缓存降本** —— `get_supervisor`、`get_sql_agent` 以 `model_type/model_name/db_name` 为键缓存编译后的 StateGraph，避免每次请求重新构图与建连，相同参数命中缓存即复用。
+6. **思考过程分离流** —— `StreamingHandler` 实时解析 `<thinking>...</thinking>` 标签，`thinking` 与 `content` 分通道输出，前端可独立渲染推理折叠区，不影响正文打字机效果。
+7. **模型配置热回退** —— `get_external_model_config` 优先读数据库 `external_models` 表，失败时回退环境变量并标注「回退模式」，模型列表接口在 DB 不可用时仍可用。
 
-**与同类项目相比的优势**：引擎与业务解耦的插件化架构、SQL 生成的人工审批安全闭环、全程异步链路、生产就绪的部署脚手架、Apple Design 级视觉品质。
+## 4 技术栈
 
----
-
-## ⚫ 2. 核心特性
-
-- **LangGraph 状态编排** —— 基于 `StateGraph` 构建 Supervisor（主管）+ General Agent（通用代理）+ SQL Agent（SQL 代理），支持多轮上下文与自我修正。
-- **SemanticRouter 语义路由** —— 向量相似度匹配意图，告别脆弱的条件分支路由。
-- **本地 / 外部模型热切换** —— 前端传参动态实例化模型对象（Ollama / vLLM 本地模型与 SiliconFlow / OpenRouter 等外部大模型）。
-- **流式响应（SSE）** —— 思考过程、推理内容、完成事件分片下发，前端打字机效果。
-- **对话日志持久化** —— `conversation_logs` 表保存 `user_query` / `model_response` / `thinking_process` / `intent` / 元数据。
-- **SQL 安全审批闭环** —— 自动检测危险操作 + 人工 approve / reject / cancel，reject 后自动重新生成。
-
----
-
-## ⚫ 3. 项目亮点
-
-1. **全链路异步架构**
-   — Granian（Rust ASGI）+ Litestar（异步框架）+ async SQLAlchemy + asyncpg，从网络 I/O 到数据库访问无同步阻塞，单进程事件循环利用率高，单机可支撑 50+ 并发用户。
-
-2. **LangGraph 状态机编排**
-   — 区别于简单的条件分支路由，采用 StateGraph 驱动多 Agent 协同，支持意图识别 → 分发 → 执行 → 审批 → 修正的完整状态流转，可观测、可调试、可扩展。
-
-3. **SQL 安全审批闭环**
-   — 自然语言生成 SQL 后，经过安全审查（危险模式检测）+ 人工审批（approve / reject / cancel），reject 后自动重新生成，形成安全修正闭环，兼顾便捷性与数据安全。
-
-4. **插件式业务热挂载**
-   — 引擎通过 `adapt.py` 读取配置表，动态导入业务模块并注册路由。新增业务模块只需实现 `register_routers()` 接口并在 TOML 中声明，零改动引擎代码。
-
-5. **Apple Design 暗色模式**
-   — 前端全量适配 Apple HIG 设计语言，CSS 变量双主题 + Fluent UI 映射 + 磨砂玻璃，暗色模式非简单反色而是独立设计的色彩层级，视觉品质对标 Apple 官网。
-
-6. **SSE 流式对话 + AbortController**
-   — 前端以 SSE 解析 GraphQL Subscription 流，支持 AbortController 随时中断响应；思考过程 / 内容 / SQL 审批三类流式事件统一处理，对话体验流畅且可控。
-
-7. **凭据加密管理**
-   — 数据库密码、API Key 等敏感信息以异或（XOR）+ Base64 加密后存入环境变量，运行时动态解密注入应用配置，杜绝明文泄露。
-
-8. **中间件分层短路**
-   — OPTIONS 预检零开销放行，白名单路径跳过鉴权，仅业务路径执行完整鉴权链路，减少不必要的对象构造与 CPU 开销。
-
----
-
-## ⚫ 4. 技术栈
-
-表 4-1　项目技术栈一览
+表 4-1 id_x_010 技术栈一览
 
 | 分类 | 名称 | 版本 | 用途 |
-| --- | --- | --- | --- |
-| 编程语言 | Python | 3.12 | 引擎层与业务插件运行时 |
-| 编程语言 | TypeScript / React | React 19 | 前端 SPA 构建 |
-| 后端框架 | Litestar | 2.x | ASGI 异步 Web 框架 |
-| 后端框架 | Granian | 最新稳定版 | Rust ASGI 服务器 |
-| 前端框架 | Next.js | 16 | App Router 前端框架 |
-| 前端 UI | Fluent UI + Framer Motion + Tailwind CSS | 最新稳定版 | 组件库与动画 / 原子化样式 |
-| API 规范 | Strawberry GraphQL | 0.x | GraphQL Schema + Subscription（SSE 流式） |
-| ORM / 驱动 | SQLAlchemy 2.x + asyncpg / psycopg2 | SQLAlchemy 2.x | 异步数据库会话与连接池 |
-| 数据库 | PostgreSQL | ≥ 14 | 业务库（对话日志 / 用户 / 令牌 / 模型配置） |
-| 向量库 | PgVector | 可选 | 语义路由向量索引 |
-| LLM 编排 | LangGraph / LangChain / langchain-openai / semantic-router | 最新稳定版 | 多智能体编排与意图路由 |
-| 外部模型 | SiliconFlow / OpenRouter 等 | OpenAI 兼容 API | 通过 EXTERNAL API 调用外部大模型 |
-| 本地模型 | Ollama / vLLM | 最新稳定版 | 本地大模型推理服务 |
-| 反向代理 | Nginx（HTTPS 终止）+ HAProxy | 最新稳定版 | 反向代理与负载均衡 |
+|---|---|---|---|
+| 编程语言 | Python | ≥ 3.10 | 服务端主语言 |
+| 编程语言 | TypeScript | ≥ 5.0 | 前端主语言 |
+| 后端框架 | Litestar | ≥ 2.24 | ASGI 路由与中间件宿主 |
+| 接口协议 | Strawberry GraphQL | ≥ 0.323 | Query/Mutation/Subscription |
+| 智能体编排 | LangGraph | ≥ 0.2 | StateGraph 工作流编排 |
+| LLM 调用 | LangChain / langchain-openai | ≥ 0.3 | 模型抽象与工具绑定 |
+| 语义路由 | Semantic Router | ≥ 0.1 | 向量意图识别 |
+| 数据库 | PostgreSQL | ≥ 14 | 业务库与对话日志 |
+| ORM | SQLAlchemy + asyncpg | ≥ 2.0 | 异步会话与连接池 |
+| 前端框架 | Next.js | 16.2.3 | React 服务端渲染 |
+| UI 组件 | HeroUI + Tailwind CSS | ^3.2 / ^4 | 组件库与样式 |
+| 反向代理 | HAProxy | — | SSL 终止与 `/b`、`/f` 路由分区 |
 
----
-
-## ⚫ 5. 整体架构图
+## 5 整体架构图
 
 ```mermaid
 graph TB
-    subgraph Client[客户端]
-        Browser[浏览器]
-    end
+  subgraph L1[表示层 web 表单与对话]
+    Browser[浏览器]
+    NextJS["Next.js<br/>React + HeroUI"]
+  end
 
-    subgraph Nginx[Nginx 反向代理]
-        NginxRoute{路由分流}
-    end
+  subgraph L2[网关层 SSL 终止]
+    HAProxy[HAProxy<br/>/: 重定向 /f/: 前端 /b/: 后端]
+  end
 
-    subgraph Frontend[前端应用层 — Next.js 16 SPA]
-        subgraph Pages[页面路由 /f/*]
-            Login[登录页]
-            Register[注册页]
-            Chat[聊天页]
-        end
-        subgraph FEComponents[核心组件]
-            ChatComp[Chat 组件族]
-            AnimComp[角色动画]
-            AuthComp[认证守卫]
-            ThemeComp[双主题系统]
-        end
-        subgraph APIClient[API 通信层]
-            GQL[GraphQL 客户端]
-            SSE[SSE 流式客户端]
-            REST[REST HTTP 客户端]
-        end
-    end
+  subgraph L3[接入层 主程序 i-Torch]
+    Granian[Granian ASGI Server]
+    MW[RequestMiddleware<br/>鉴权 / 请求ID]
+    Adapt[src/adapt.py 适配]
+  end
 
-    subgraph Backend[引擎层 — id_x_010 主体]
-        subgraph ASGI[Granian ASGI 服务器]
-            Litestar[Litestar 应用]
-        end
-        subgraph MW[请求中间件]
-            OptCORS[OPTIONS 预检放行]
-            Whitelist[白名单跳过鉴权]
-            Auth[Bearer Token 鉴权]
-        end
-        subgraph Core[引擎核心]
-            Adapt[adapt.py<br/>动态模块加载]
-            Config[base_config.toml<br/>全局配置]
-        end
-        subgraph Utils[工具集 utils/]
-            ConfigUtil[配置解析]
-            DBUtil[异步数据库连接器]
-            CryptoUtil[加解密工具]
-            LogUtil[分级日志]
-        end
-    end
+  subgraph L4[插件层 id_x_010 控制器]
+    GQL[Strawberry GraphQL<br/>Query/Mutation/Subscription]
+    SSE[graphql/stream<br/>SSE 流转发]
+    Approve[sql-approval<br/>审批端点]
+  end
 
-    subgraph XModels[业务模块层 — x_models/]
-        subgraph X010[id_x_010 智能问答系统]
-            subgraph Agents[多智能体]
-                Supervisor[LangGraph Supervisor<br/>意图路由]
-                GeneralAgent[General Agent<br/>通用问答]
-                SQLAgent[SQL Agent<br/>NL→SQL→审批→执行]
-            end
-            subgraph API[GraphQL API]
-                Query[Query<br/>查询接口]
-                Mutation[Mutation<br/>变更接口]
-                Subscription[Subscription<br/>流式推送]
-            end
-            subgraph Data[数据层]
-                Models[SQLAlchemy 异步模型]
-                Views[业务逻辑层]
-                Schemas[Strawberry 类型定义]
-            end
-        end
-    end
+  subgraph L5[编排层 LangGraphSupervisor]
+    Router{router 意图识别}
+    Router -->|general| GenA[general_agent]
+    Router -->|sql| SqlA[sql_agent]
+    Router -->|code| CodeA[code_agent]
+  end
 
-    subgraph Storage[数据存储]
-        PG[(PostgreSQL)]
-    end
+  subgraph L6[能力层 Agent]
+    General[GeneralAgent<br/>通用问答]
+    SQLAgent["SQLAgent<br/>NL2SQL + 审批"]
+    SACheck[SQLSecurityChecker<br/>白名单校验]
+  end
 
-    subgraph LLM[大模型服务]
-        External[外部模型<br/>GPT-4o / Claude / DeepSeek / Llama]
-        Local[本地模型<br/>Ollama / vLLM]
-    end
+  subgraph L7[数据层]
+    BizDB[(业务库 DB_*)]
+    AgentDB[(SQL 库 AGENT_DB_*)]
+    ConvLog[(ConversationLog 对话日志)]
+  end
 
-    subgraph Deploy[运维层]
-        SupervisorSvc[Supervisor 进程管理]
-        NginxConf[Nginx 配置]
-        Scripts[运维脚本]
-    end
+  subgraph L8[外部依赖 模型]
+    Ext[外部模型<br/>SiliconFlow / OpenRouter]
+    Local[本地模型<br/>Ollama]
+    Emb[嵌入服务<br/>Semantic Router]
+  end
 
-    Browser --> NginxRoute
-    NginxRoute -->|/f/*| Frontend
-    NginxRoute -->|/b/*| ASGI
-
-    Frontend --> APIClient
-    APIClient -->|GraphQL POST /b/id_x_010/graphql| Litestar
-    APIClient -->|SSE POST /b/id_x_010/graphql/stream| Litestar
-
-    Litestar --> MW
-    MW --> Adapt
-    Adapt -->|动态导入| X010
-
-    X010 --> Agents
-    Agents -->|意图路由| GeneralAgent
-    Agents -->|意图路由| SQLAgent
-
-    GeneralAgent --> LLM
-    SQLAgent --> LLM
-
-    Data --> PG
-    Agents --> Data
-    API --> Data
-
-    SupervisorSvc --> ASGI
+  Browser --> NextJS
+  NextJS -->|HTTP/SSE| HAProxy
+  HAProxy -->|/b/*| Granian
+  Granian --> MW
+  MW --> Adapt
+  Adapt --> GQL
+  GQL --> SSE
+  GQL --> Approve
+  GQL --> Router
+  GenA --> General
+  SqlA --> SQLAgent
+  SQLAgent --> SACheck
+  SACheck -->|SELECT/WITH 通过| AgentDB
+  SACheck -.->|危险词/注入| ConvLog
+  General --> ConvLog
+  SQLAgent --> ConvLog
+  General --> Ext
+  General --> Local
+  Router --> Emb
+  L4 -.->|写入/读取上下文| ConvLog
+  BizDB -.->|主程序注入| L4
 ```
 
-图 5-1　系统整体架构（自上至下分层）
+图 5-1 id_x_010 分层架构图
 
----
-
-## ⚫ 6. 请求流转图
+## 6 请求流转图
 
 ```mermaid
 sequenceDiagram
-    participant U as 用户浏览器
-    participant N as Nginx
-    participant G as Granian ASGI
-    participant L as Litestar
-    participant MW as RequestMiddleware
-    participant A as adapt.py 路由分发
-    participant AG as LangGraph Supervisor
-    participant LLM as 大模型服务
-    participant DB as PostgreSQL
+  participant C as Client
+  participant H as HAProxy
+  participant M as Granian + 中间件
+  participant G as GraphQL Controller
+  participant S as LangGraphSupervisor
+  participant R as Router
+  participant A as SQLAgent
+  participant DB as AGENT_DB_*
+  participant L as LLM
 
-    U->>N: HTTP Request
-    N->>N: /f/* → Next.js SSR
-    N->>G: /b/* → ASGI 转发
-    G->>L: 加载 ASGI 应用
-    L->>MW: 请求进入中间件
+  C->>H: POST /b/id_x_010/graphql (chat)
+  H->>M: 路由 /b/* 转发
+  M->>G: 鉴权通过，进入 GraphQL
+  G->>S: orchestrator.process(query)
+  S->>R: router.route(query)
 
-    alt OPTIONS 预检
-        MW-->>G: 零开销放行
-    else 白名单路径
-        MW->>A: 跳过鉴权，仅记录日志
-    else 业务路径
-        MW->>MW: Bearer Token 校验
-        MW->>A: 鉴权通过，继续处理
+  alt intent = general / code
+    R-->>S: general / code
+    S->>L: GeneralAgent.stream_chat
+    L-->>S: thinking + content 流
+  else intent = sql
+    R-->>S: sql
+    S->>A: stream_query(question)
+    A->>A: list_tables → get_schema → generate_query
+    A->>A: SQLSecurityChecker.check(sql)
+
+    alt 危险词 / 注入
+      A-->>S: error: 安全限制
+    else SELECT/WITH 通过
+      A-->>G: sql_approval(pending_sql)
+      G-->>C: SSE: sql_approval 待审批
+
+      alt action = approve
+        C->>G: POST /sql-approval action=approve
+        G->>A: continue_with_approval(approved=True)
+        A->>DB: 执行 SELECT
+        DB-->>A: rows
+        A->>L: _stream_explanation
+        L-->>A: 自然语言结果
+        A-->>C: SSE: result + done
+      else action = reject
+        C->>G: POST /sql-approval action=reject
+        G->>A: continue_with_approval(approved=False)
+        A->>A: 回到 generate_query 重写
+        A-->>C: SSE: sql_rejected + 新 SQL
+      else action = cancel
+        C->>G: POST /sql-approval action=cancel
+        G-->>C: SSE: sql_cancelled
+      end
     end
+  end
 
-    A->>AG: 路由到对应业务模块
-    AG->>AG: LLM 意图识别
-
-    alt General Agent
-        AG->>LLM: 通用问答请求
-        LLM-->>AG: 流式/非流式响应
-    else SQL Agent
-        AG->>LLM: NL → SQL 生成
-        LLM-->>AG: 生成 SQL
-        AG->>AG: SQL 安全审查
-        AG-->>U: 人工审批请求
-        U->>AG: approve / reject / cancel
-        AG->>DB: 执行安全 SQL
-        DB-->>AG: 查询结果
-        AG->>LLM: 自然语言解释
-    end
-
-    AG-->>U: 最终响应
-    AG->>DB: 对话日志持久化
+  S->>G: save_conversation_log
+  G-->>C: 最终响应 / complete
 ```
 
-图 6-1　一次完整请求的生命周期
+图 6-1 id_x_010 请求流转图
 
-核心交互流程文字说明：
-
-1. **接收用户请求**：Litestar 监听 `0.0.0.0:18080`。
-2. **网关接入**：GraphQL 接口接收请求。
-3. **意图识别**：Semantic Router 分析语义，将请求转发给 General / SQL Agent。
-4. **模型推理**：Agent 构造 Prompt，通过模型切换器调用不同大模型，并获取思考过程与反馈结果。
-5. **响应返回**：结果经由 SSE 流式返回前端展示。
-
----
-
-## ⚫ 7. 目录结构
+## 7 目录结构
 
 ```text
-x_models/id_x_010/
-├── docs/                              # 设计文档
-│   ├── intent-recognition-analysis.md
-│   ├── 实现要求.md
-│   └── 架构描述.md
-├── ops/                               # 运维与部署
-│   ├── id_x_010.service               # 后端 systemd 服务
-│   ├── id_x_010_web.service           # 前端 systemd 服务
-│   ├── id_x_010[HAProxy].conf         # HAProxy 配置
-│   ├── id_x_010[Nginx].conf           # Nginx 配置（HTTPS 终止 + 反代前端 3000 / 后端 18080）
-│   └── init.sql                       # 业务库 DDL（6 张表 + 触发器）
+id_x_010/
+├── plugin.py                    # 插件入口: load_plugin() 返回 _Idx010Plugin
+├── requirements.txt             # Python 依赖清单
+├── LICENSE                      # AGPL-3.0
 ├── src/
-│   ├── agents/
-│   │   ├── x_general_agent.py         # 通用代理：调用大模型
-│   │   ├── x_langgraph_supervisor.py  # LangGraph 编排器（StateGraph）
-│   │   └── x_sql_agent.py             # SQL 代理（Schema 检索 → SQL 生成 → 执行 → 自我修正）
 │   ├── controllers/
-│   │   └── x_controllers.py           # GraphQL Schema + Resolvers（Query / Mutation / Subscription）
-│   ├── graphql/                       # GraphQL 扩展（预留）
-│   │   └── __init__.py
+│   │   └── x_controllers.py     # Strawberry Query/Mutation/Subscription + register_routers
+│   ├── agents/
+│   │   ├── x_langgraph_supervisor.py  # LangGraphSupervisor + SemanticRouter + LLMRouter
+│   │   ├── x_sql_agent.py             # SQLAgent + SQLSecurityChecker + DatabaseConnection
+│   │   └── x_general_agent.py         # GeneralAgent + StreamingHandler
 │   ├── models/
-│   │   └── x_models.py                # 数据库模型（users / conversation_logs / external_models / local_models / ...）
+│   │   └── x_models.py         # SQLAlchemy ORM: User/ConversationLog/ExternalModel 等
 │   ├── schemas/
-│   │   └── x_schemas.py               # GraphQL 输入/输出类型定义
+│   │   └── x_schemas.py        # Strawberry 类型: ChatInput/StreamChunkType/AuthResponseType
 │   ├── views/
-│   │   └── x_views.py                 # 数据保存逻辑（save_conversation_log / 上下文合并等）
-│   └── __init__.py
-├── web/                               # Next.js 前端
-│   ├── package.json                   # Next 16 + React 19 + Fluent UI + Framer Motion + Tailwind
+│   │   └── x_views.py          # 对话日志存取 + 上下文合并
+│   └── graphql/
+│       └── __init__.py         # GraphQL 包占位
+├── web/                        # Next.js 前端
+│   ├── package.json            # next 16.2.3 / react 19.2.4 / HeroUI
 │   ├── next.config.ts
 │   ├── tsconfig.json
-│   ├── postcss.config.mjs
-│   ├── Dockerfile
-│   ├── public/                        # 静态资源
-│   └── src/
-│       ├── api/                       # 客户端 API 封装
-│       │   ├── graphql.ts
-│       │   ├── http.ts
-│       │   ├── streamChat.ts          # SSE 流式聊天客户端
-│       │   └── user.ts
-│       ├── app/                       # Next.js App Router
-│       │   ├── f/
-│       │   │   ├── forgot-password/page.tsx
-│       │   │   ├── home/page.tsx
-│       │   │   ├── login/page.tsx
-│       │   │   └── register/page.tsx
-│       │   ├── layout.tsx
-│       │   └── page.tsx
-│       ├── assets/                    # 全局样式
-│       ├── components/                # 业务组件
-│       │   ├── AnimatedCharacters/
-│       │   ├── ForgotPasswordForm/
-│       │   ├── LoginForm/
-│       │   ├── RegisterForm/
-│       │   ├── chat/                  # 聊天界面组件
-│       │   │   ├── AgentSelector.tsx
-│       │   │   ├── CenterHero.tsx
-│       │   │   ├── ChatHeader.tsx
-│       │   │   ├── ChatMessage.tsx
-│       │   │   ├── DatabaseSelector.tsx
-│       │   │   ├── MessageInput.tsx
-│       │   │   ├── MessageList.tsx
-│       │   │   ├── SqlApprovalPanel.tsx
-│       │   │   └── ThinkingDots.tsx
-│       │   ├── ui/LoadingDots.tsx
-│       │   ├── AuthGuard.tsx
-│       │   ├── ForgotPasswordPage.tsx
-│       │   ├── LeftPanel.tsx
-│       │   ├── LoginPage.tsx
-│       │   ├── RegisterPage.tsx
-│       │   └── ThemeToggle.tsx
-│       ├── context/ThemeContext.tsx   # 主题上下文
-│       ├── layout/                    # Providers / RootLayout
-│       ├── utils/config.ts
-│       └── views/                     # 页面视图
-│           ├── ChatHome.tsx
-│           ├── Home.tsx
-│           └── IntelligentQueryHome.tsx
-├── README.md
-├── __init__.py
-├── plugin.py                          # 插件对外统一入口（PluginInterface 契约）
-└── requirements.txt                   # Python 依赖
+│   ├── src/
+│   │   ├── app/                # Next.js App Router 页面
+│   │   ├── api/                # 前端 BFF 路由
+│   │   ├── components/         # React 组件
+│   │   ├── views/              # 视图组装
+│   │   ├── services/           # GraphQL/SSE 客户端封装
+│   │   ├── redux/              # 状态管理
+│   │   ├── hooks/              # 自定义 Hook
+│   │   ├── context/            # React Context
+│   │   ├── ui/                 # 通用 UI
+│   │   └── utils/              # 工具函数
+│   └── public/                 # 静态资源
+├── ops/
+│   ├── init.sql                # PostgreSQL 建表与触发器脚本
+│   ├── id_x_010_service.service      # 后端 systemd 单元
+│   ├── id_x_010_web.service          # 前端 systemd 单元
+│   └── id_x_010[HAProxy].conf        # HAProxy 反向代理配置
+└── docs/
+    ├── 架构描述.md              # 分层架构说明
+    ├── 实现要求.md              # 需求与验收点
+    └── intent-recognition-analysis.md  # 意图识别分析
 ```
 
-图 7-1　项目主要目录结构
+## 8 API 接口文档
 
----
+id_x_010 对外接口由 `register_routers` 统一注册至主程序 `/b/id_x_010` 前缀下，受主程序 `RequestMiddleware` 的 Bearer 鉴权保护（豁免路径除外）。下表汇总主要端点，详细字段以 Strawberry Schema 为准。
 
-## ⚫ 8. API 接口文档
+表 8-1 接口汇总
 
-本项目使用 GraphQL API，端点地址为 `/010/graphql`。访问 `http://localhost:18080/010/graphql` 可打开 GraphQL Playground 交互式界面。
+| 方法 | 路径 | 鉴权 | 说明 |
+|---|---|---|---|
+| POST | `/b/id_x_010/graphql` | Bearer | GraphQL 查询/变更主入口 |
+| POST | `/b/id_x_010/graphql/stream` | Bearer | GraphQL Subscription 的 SSE 转发 |
+| POST | `/b/id_x_010/sql-approval` | Bearer | SQL 审批流（approve/reject/cancel） |
 
-### 8.1 接口汇总
+### 8.1 GraphQL Query
 
-表 8-1　GraphQL 接口汇总
+- `health`：健康检查，返回 `{ status: "ok", service: "id_x_010" }`。
+- `getModels`：获取模型列表，优先查 `external_models`/`local_models` 表，失败回退环境变量 `EXTERNAL_BASE_URL`、`LOCAL_MODEL_BASE_URL`。
+- `getDatabases`：从 `AGENT_DB_LIST` 解析可用数据库，支持 JSON 与逗号分隔两种格式。
 
-| 类型 | 操作 | 路径 / 字段 | 说明 | 鉴权 |
-| --- | --- | --- | --- | --- |
-| Mutation | `chat` | `/010/graphql` | 非流式对话 | Bearer Token |
-| Subscription | `streamChat` | `/010/graphql/stream` | SSE 流式对话 | Bearer Token |
-| Query | `models` | `/010/graphql` | 获取模型列表 | 白名单 |
-| Query | `health` | `/010/graphql` | 健康检查 | 白名单 |
-| Mutation | `login` / `register` / `forgotPassword` / `logout` | `/010/graphql` | 用户认证 | 白名单 / Token |
-| Mutation | `sqlApproval` | `/010/graphql` | SQL 审批 approve / reject / cancel | Bearer Token |
+### 8.2 GraphQL Mutation
 
-### 8.2 聊天接口（Mutation — 非流式）
+- `chat(input: ChatInput!)`：非流式聊天。`ChatInput` 含 `query`、`model_type`（local/external）、`model_name`、`agent_type`（general/sql/code）、`conversation_id`、`db_name` 等字段，返回 `ChatResponseType{ response, thinking, conversation_id, model_used, success }`。
+- `login`/`register`/`logout`/`forgotPassword`：账户体系，令牌入库 `user_tokens`，24 小时过期。
 
-```graphql
-mutation Chat($input: ChatInput!) {
-  chat(input: $input) {
-    response
-    thinking
-    conversationId
-    modelUsed
-    success
-  }
-}
-```
+### 8.3 GraphQL Subscription
 
-Variables：
+- `streamChat`：流式聊天，通过 `/graphql/stream` 端点以 SSE 推送 `StreamChunkType`，`type` 枚举：`intent`、`thinking`、`content`、`sql_approval`、`sql_rejected`、`result`、`done`、`error`。
 
-```json
-{
-  "input": {
-    "query": "什么是量子计算？",
-    "modelType": "external",
-    "modelName": "gpt-4o-mini",
-    "conversationId": "optional-conversation-id",
-    "context": ["{\"role\": \"user\", \"content\": \"你好\"}"]
-  }
-}
-```
+### 8.4 SQL 审批
 
-表 8-2　入参字段说明
+`/sql-approval` 端点接收 JSON 体，`action` 取值 `approve` / `reject` / `cancel`。批准后执行 SQL 并流式回传结果；拒绝则回到 `generate_query` 节点重写 SQL；取消则返回 `sql_cancelled` 短路结束。
 
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `query` | String | 是 | 用户问题 |
-| `modelType` | String | 是 | `external` 或 `local` |
-| `modelName` | String | 否 | 模型名称，缺省时使用默认模型 |
-| `conversationId` | String | 否 | 会话 ID，用于上下文关联 |
-| `context` | [String] | 否 | 前端传入的上下文，JSON 字符串数组 |
+### 8.5 调用示例
 
-表 8-3　返回字段说明
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `response` | String | 模型回答 |
-| `thinking` | String | 思考过程 |
-| `conversationId` | String | 会话 ID |
-| `modelUsed` | String | 实际使用的模型 |
-| `success` | Boolean | 是否成功 |
-
-### 8.3 流式聊天接口（Subscription — SSE 流式）
-
-```graphql
-subscription StreamChat($query: String!, $modelType: String, $modelName: String, $conversationId: String, $context: [String]) {
-  streamChat(query: $query, modelType: $modelType, modelName: $modelName, conversationId: $conversationId, context: $context) {
-    type
-    content
-    modelUsed
-    conversationId
-  }
-}
-```
-
-表 8-4　响应分片类型
-
-| `type` | 说明 |
-| --- | --- |
-| `intent` | 意图识别结果 |
-| `thinking` | 思考过程分片 |
-| `content` | 正文内容分片 |
-| `done` | 完成事件 |
-
-### 8.4 获取模型列表（Query）
-
-```graphql
-query GetModels {
-  models {
-    name
-    type
-    description
-  }
-}
-```
-
-### 8.5 健康检查（Query）
-
-```graphql
-query Health {
-  health {
-    status
-    service
-  }
-}
-```
-
-### 8.6 调用示例
-
-以下示例中 `<BASE_URL>` 默认为 `http://localhost:18080`，`<TOKEN>` 为登录后获取的 Bearer Token。
+以下示例需替换占位符 `<BASE_URL>`、`<TOKEN>`。
 
 ```bash
-# 健康检查
-curl -X POST <BASE_URL>/010/graphql \
-  -H "Content-Type: application/json" \
-  -d '{"query": "{ health { status service } }"}'
-
-# 模型列表
-curl -X POST <BASE_URL>/010/graphql \
-  -H "Content-Type: application/json" \
-  -d '{"query": "{ models { name type description } }"}'
-
 # 非流式聊天
-curl -X POST <BASE_URL>/010/graphql \
-  -H "Content-Type: application/json" \
+curl -X POST "<BASE_URL>/b/id_x_010/graphql" \
   -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
   -d '{
-    "query": "mutation Chat($input: ChatInput!) { chat(input: $input) { response thinking conversationId modelUsed success } }",
-    "variables": {
-      "input": { "query": "你好", "modelType": "external" }
-    }
+    "query": "mutation { chat(input: { query: \"统计 users 表记录数\", modelType: \"external\", agentType: \"sql\" }) { response thinking conversationId modelUsed success } }"
+  }'
+
+# SSE 流式订阅
+curl -N -X POST "<BASE_URL>/b/id_x_010/graphql/stream" \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "subscription { streamChat(query: \"列出所有表\", modelType: \"external\") { type content sql conversationId modelUsed } }"
+  }'
+
+# SQL 审批
+curl -X POST "<BASE_URL>/b/id_x_010/sql-approval" \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "conversation_id": "conv-abc",
+    "sql": "SELECT count(*) FROM users;",
+    "action": "approve",
+    "question": "统计 users 表记录数",
+    "model_type": "external"
   }'
 ```
 
-### 8.7 支持的模型
+未携带合法 Bearer Token 时由主程序中间件返回：
 
-外部模型（通过 EXTERNAL API）：
+```json
+{"error": "Unauthorized access", "code": 401}
+```
 
-- GPT-4o：OpenAI 最强大的多模态模型。
-- GPT-4o Mini：快速且经济的模型。
-- Claude 3.5 Sonnet：卓越的推理能力。
-- DeepSeek Chat：强大的中文理解能力。
-- Llama 3.1 70B：Meta 的开源大模型。
+请求体大小上限由主程序 `[BASE].MAX_REQUEST_BODY_SIZE` 控制，默认 1 073 741 824 字节（1 GiB）。
 
-本地模型（通过 Ollama 或 vLLM）：
-
-- Qwen 2.5：通义千问 2.5。
-- Llama 3.1：Meta 的开源模型。
-- DeepSeek R1：DeepSeek 的推理模型。
-
-### 8.8 数据库模型
-
-业务库共 6 张表（仅基础类型，不依赖 pgcrypto / pgvector），表 8-5 给出说明。数据库表会在应用启动时由 `Base.metadata.create_all` 自动创建（与 `ops/init.sql` 形成双保险）。
-
-表 8-5　业务库表结构
-
-| 表名 | 作用 |
-| --- | --- |
-| `users` | 用户表（email 唯一，password_hash，is_active，触发器自动更新 updated_at） |
-| `conversation_logs` | 对话日志表（conversation_id / user_query / model_response / thinking_process / model_type / model_name / intent / extra_metadata JSON） |
-| `user_tokens` | 用户认证令牌（token 唯一，expires_at） |
-| `password_reset_tokens` | 密码重置令牌（used 标记，expires_at） |
-| `external_models` | 外部模型配置（name / provider / base_url / api_key） |
-| `local_models` | 本地模型配置（name / provider / base_url / api_key） |
-
----
-
-## ⚫ 9. 快速部署
+## 9 快速部署
 
 ### 9.1 环境准备
 
-表 9-1　运行环境要求
-
-| 依赖 | 版本要求 | 说明 |
-| --- | --- | --- |
-| Python | ≥ 3.12 | 引擎层与业务插件运行时 |
-| Node.js | ≥ 20（推荐 22） | Next.js 前端构建 |
-| PostgreSQL | ≥ 14 | 业务库（对话日志 / 用户 / 令牌 / 外部模型 / 本地模型） |
-| Miniconda / venv | 任意 | 推荐使用独立 Python 环境隔离 |
-| 外部 LLM | SiliconFlow / OpenRouter API Key | `modelType=external` 时使用 |
-| 本地 LLM | 可达的 Ollama / vLLM 服务 | `modelType=local` 时使用 |
-| 端口 | 18080（后端）/ 3000（前端） | 默认监听 `0.0.0.0:18080`，前端 `next dev -p 3000` |
+- Python ≥ 3.10（推荐 3.10）
+- Node.js ≥ 20（前端构建，Next.js 16 建议 Node 20+）
+- PostgreSQL ≥ 14（业务库与对话日志库，可分离部署）
+- 主程序 i-Torch（id_x_000）已就绪并配置 `AGENT_DB_*` 凭据
 
 ### 9.2 安装
 
 ```bash
-# 1. 安装后端依赖（推荐在 miniconda 独立环境）
-conda create -n id_x_010 python=3.12 -y
-conda activate id_x_010
-pip install -r requirements.txt
-# 引擎层 litestar / granian / sqlalchemy / asyncpg 等基础依赖需预先安装
+# 在主程序 x_models/ 下放置插件
+cp -r id_x_010 <ID_X_000>/x_models/
 
-# 2. 安装前端依赖
+# 安装 Python 依赖（建议使用主程序虚拟环境）
+pip install -r x_models/id_x_010/requirements.txt
+
+# 前端依赖
 cd x_models/id_x_010/web
-cnpm install   # 或 npm install
+cnpm install
 ```
 
-### 9.3 配置说明
-
-引擎层配置 `id_x_000/config/base_config.toml`：
+在主程序 `config/base_config.toml` 注册插件：
 
 ```toml
-[BASE]
-LISTEN_ADDRESS = "0.0.0.0"
-LISTEN_PORT = "18080"
-DEBUG_MODE = true
-
 [EXTEND]
 MODELS = [
-    ["id_x_010", "/010"],
+    ["id_x_010", "/id_x_010"],
 ]
 ```
 
-- `BASE.LISTEN_ADDRESS` / `BASE.LISTEN_PORT`：引擎层监听地址与端口。
-- `BASE.DEBUG_MODE`：调试模式开关。
-- `EXTEND.MODELS`：动态加载的业务模块列表，格式为 `[模块名, 路由前缀]`。
+### 9.3 配置
 
-环境变量 `.env`：
+初始化业务库表结构（替换连接参数）：
 
-```env
-# 外部 API 配置
-EXTERNAL_API_KEY=your_EXTERNAL_API_KEY_here
-EXTERNAL_BASE_URL=https://api.siliconflow.cn/v1
-
-# 本地模型配置
-LOCAL_MODEL_BASE_URL=http://localhost:11434/v1
-LOCAL_MODEL_API_KEY=ollama
-
-# 业务数据库配置（加密环境变量，由引擎层 [ENCRYPTED_ENV] 解密）
-DB_NAME_ENC=encrypted_db_name
-DB_HOST_ENC=encrypted_db_host
-DB_PORT_ENC=encrypted_db_port
-DB_USERNAME_ENC=encrypted_db_username
-DB_PASSWORD_ENC=encrypted_db_password
-
-# SQL Agent 数据库配置（加密环境变量，与业务数据库隔离）
-AGENT_DB_NAME_ENC=encrypted_agent_db_name
-AGENT_DB_HOST_ENC=encrypted_agent_db_host
-AGENT_DB_PORT_ENC=encrypted_agent_db_port
-AGENT_DB_USERNAME_ENC=encrypted_agent_db_username
-AGENT_DB_PASSWORD_ENC=encrypted_agent_db_password
+```bash
+psql -h 127.0.0.1 -p 15432 -U postgres -d id_x_010 \
+  -f x_models/id_x_010/ops/init.sql
 ```
 
-> 数据库配置会在应用启动时自动解密并存入 Litestar 的 `app.config`，后续模块从 `app.config` 中读取。
+在主程序 `.env` 或模块 `x_models/id_x_010/.env` 中配置 SQL Agent 目标库（与业务库隔离）：
+
+```bash
+AGENT_DB_HOST_ENC=<加密后主机>
+AGENT_DB_PORT_ENC=<加密后端口>
+AGENT_DB_NAME_ENC=<加密后库名>
+AGENT_DB_USERNAME_ENC=<加密后用户>
+AGENT_DB_PASSWORD_ENC=<加密后密码>
+AGENT_DB_LIST=primary,analytics
+```
+
+加密使用主程序 `utils/encrypt_util.py`。前端环境变量写入 `web/.env.local`，至少包含 `NEXT_PUBLIC_API_BASE`。
 
 ### 9.4 运行
 
 ```bash
-# 1. 初始化数据库表（手动 / 或由 main.py on_startup 自动创建）
-psql -h 127.0.0.1 -p 15432 -U postgres -d id_x_010 -f x_models/id_x_010/ops/init.sql
-
-# 2. 启动后端
-cd id_x_000
+# 启动后端（在主程序根目录）
 python main.py
-# 应用将在 http://0.0.0.0:18080 启动
 
-# 3. 启动前端
+# 启动前端
 cd x_models/id_x_010/web
-cnpm run dev    # next dev -p 3000
-# 或生产：cnpm run build && cnpm run start
+cnpm run dev      # 开发模式
+# 或
+cnpm run build && cnpm run start   # 生产模式
 ```
 
-访问 `http://localhost:3000/f/login` 进入登录页。
+后端默认监听主程序配置端口（如 `0.0.0.0:8000`），前端 Next.js 默认监听 `3000`。生产环境通过 HAProxy 将 `/b/*` 路由到后端、`/f/*` 与 `/_next/*` 路由到前端，配置见 `ops/id_x_010[HAProxy].conf`。
 
-### 9.5 容器与系统服务部署
+### 9.5 容器部署（可选）
 
-仓库内置 systemd 服务配置，便于裸机生产部署：
+项目当前未内置 Dockerfile，可参考以下方式构建（以 Podman 为例，Docker 同理）：
 
 ```bash
-# 后端服务
-sudo cp x_models/id_x_010/ops/id_x_010.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now id_x_010.service
+cat > Dockerfile <<'EOF'
+FROM python:3.10-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+CMD ["python", "../../main.py"]
+EOF
 
-# 前端服务
-sudo cp x_models/id_x_010/ops/id_x_010_web.service /etc/systemd/system/
+podman build -t id_x_010:latest .
+podman run -d --name id_x_010 -p 8000:8000 \
+  --env-file .env id_x_010:latest
+```
+
+若使用 systemd 裸机部署，已提供单元文件：
+
+```bash
+sudo cp ops/id_x_010_service.service /etc/systemd/system/
+sudo cp ops/id_x_010_web.service /etc/systemd/system/
 sudo systemctl daemon-reload
+sudo systemctl enable --now id_x_010_service.service
 sudo systemctl enable --now id_x_010_web.service
-
-# Nginx 反代（HTTPS 终止，前端 :3000 / 后端 :18080）
-sudo cp x_models/id_x_010/ops/"id_x_010[Nginx].conf" /etc/nginx/conf.d/
-sudo nginx -t && sudo systemctl reload nginx
 ```
 
-前端容器化构建（`web/Dockerfile`）：
+若使用 Kubernetes，可用 `kubectl` 部署：
 
 ```bash
-cd x_models/id_x_010/web
-docker build -t id_x_010-web:latest .
-docker run -d -p 3000:3000 --name id_x_010-web id_x_010-web:latest
+kubectl apply -f ops/deployment.yaml
+kubectl rollout status deployment/id_x_010
 ```
 
----
-
-## ⚫ 贡献
-
-欢迎提交 Issue 和 Pull Request。
+部署清单需自行补全数据库连接、卷挂载与 `.env` 的 Secret 映射。
 
 ---
 
-## ⚫ 许可证
+## 参考文献
 
-本项目采用 GNU Affero General Public License v3.0（AGPL-3.0）许可证。
+- [1] LangChain. LangGraph: Build multi-actor applications with LLMs[EB/OL]. https://langchain-ai.github.io/langgraph, 2025.
+- [2] Strawberry GraphQL. Strawberry Framework Documentation[EB/OL]. https://strawberry.rocks, 2025.
+- [3] Litestar Project. Litestar Framework Documentation[EB/OL]. https://docs.litestar.dev, 2025.
+- [4] Vercel. Next.js Documentation[EB/OL]. https://nextjs.org/docs, 2025.
+- [5] Semantic Router. Semantic Router Documentation[EB/OL]. https://github.com/aurelio-labs/semantic-router, 2025.
