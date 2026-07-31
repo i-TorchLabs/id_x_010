@@ -1,4 +1,8 @@
-# id_x_010
+<div align="center">
+
+# id_x_010: 通用计算智能体
+
+**面向企业级知识库与数据查询的 LangGraph 智能体编排插件**
 
 ![License](https://img.shields.io/static/v1?label=License&message=AGPL--3.0&color=lightgray&style=flat-square&labelColor=black)
 ![Author](https://img.shields.io/static/v1?label=Author&message=Ray&color=lightgray&style=flat-square&labelColor=black)
@@ -6,6 +10,8 @@
 ![Engine](https://img.shields.io/static/v1?label=Engine&message=LangGraph%20%2B%20Litestar&color=lightgray&style=flat-square&labelColor=black)
 ![Language](https://img.shields.io/static/v1?label=Language&message=Python%20%2F%20TypeScript&color=lightgray&style=flat-square&labelColor=black)
 ![Database](https://img.shields.io/static/v1?label=Database&message=PostgreSQL&color=lightgray&style=flat-square&labelColor=black)
+
+</div>
 
 ---
 
