@@ -4,7 +4,7 @@
 
 **面向科研级知识库与数据查询的 LangGraph 智能体编排插件**
 
-![编号](https://img.shields.io/static/v1?label=编号&message=id_x_010&color=lightgray&style=flat-square&labelColor=black)
+![编号](https://img.shields.io/static/v1?label=编号&message=010&color=lightgray&style=flat-square&labelColor=black)
 ![协议](https://img.shields.io/static/v1?label=协议&message=AGPL-3.0&color=lightgray&style=flat-square&labelColor=black)
 ![作者](https://img.shields.io/static/v1?label=作者&message=Ray&color=lightgray&style=flat-square&labelColor=black)
 ![组织](https://img.shields.io/static/v1?label=组织&message=TorchLabs&color=lightgray&style=flat-square&labelColor=black)
