@@ -1,6 +1,6 @@
 <div align="center">
 
-# id_x_010: 通用计算智能体
+# 结构体_010: 通用计算智能体
 
 **面向科研级知识库与数据查询的 LangGraph 智能体编排插件**
 
@@ -9,7 +9,7 @@
 ![作者](https://img.shields.io/static/v1?label=作者&message=Ray&color=lightgray&style=flat-square&labelColor=black)
 ![组织](https://img.shields.io/static/v1?label=组织&message=TorchLabs&color=lightgray&style=flat-square&labelColor=black)
 ![引擎](https://img.shields.io/static/v1?label=引擎&message=LangGraph%20%2B%20Litestar&color=lightgray&style=flat-square&labelColor=black)
-![语言](https://img.shields.io/static/v1?label=语言&message=Python%20%2F%20TypeScript&color=lightgray&style=flat-square&labelColor=black)
+![语言](https://img.shields.io/static/v1?label=语言&message=Python%20%2B%20TypeScript&color=lightgray&style=flat-square&labelColor=black)
 ![数据库](https://img.shields.io/static/v1?label=数据库&message=PostgreSQL&color=lightgray&style=flat-square&labelColor=black)
 
 </div>
