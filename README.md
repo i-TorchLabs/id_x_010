@@ -4,13 +4,13 @@
 
 **面向科研级知识库与数据查询的 LangGraph 智能体编排插件**
 
-![Number](https://img.shields.io/static/v1?label=Number&message=id_x_010&color=lightgray&style=flat-square&labelColor=black)
-![License](https://img.shields.io/static/v1?label=License&message=AGPL-3.0&color=lightgray&style=flat-square&labelColor=black)
-![Author](https://img.shields.io/static/v1?label=Author&message=Ray&color=lightgray&style=flat-square&labelColor=black)
-![Organization](https://img.shields.io/static/v1?label=Organization&message=TorchLabs&color=lightgray&style=flat-square&labelColor=black)
-![Engine](https://img.shields.io/static/v1?label=Engine&message=LangGraph%20%2B%20Litestar&color=lightgray&style=flat-square&labelColor=black)
-![Language](https://img.shields.io/static/v1?label=Language&message=Python%20%2F%20TypeScript&color=lightgray&style=flat-square&labelColor=black)
-![Database](https://img.shields.io/static/v1?label=Database&message=PostgreSQL&color=lightgray&style=flat-square&labelColor=black)
+![编号](https://img.shields.io/static/v1?label=编号&message=id_x_010&color=lightgray&style=flat-square&labelColor=black)
+![协议](https://img.shields.io/static/v1?label=协议&message=AGPL-3.0&color=lightgray&style=flat-square&labelColor=black)
+![作者](https://img.shields.io/static/v1?label=作者&message=Ray&color=lightgray&style=flat-square&labelColor=black)
+![组织](https://img.shields.io/static/v1?label=组织&message=TorchLabs&color=lightgray&style=flat-square&labelColor=black)
+![引擎](https://img.shields.io/static/v1?label=引擎&message=LangGraph%20%2B%20Litestar&color=lightgray&style=flat-square&labelColor=black)
+![语言](https://img.shields.io/static/v1?label=语言&message=Python%20%2F%20TypeScript&color=lightgray&style=flat-square&labelColor=black)
+![数据库](https://img.shields.io/static/v1?label=数据库&message=PostgreSQL&color=lightgray&style=flat-square&labelColor=black)
 
 </div>
 
