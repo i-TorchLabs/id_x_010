@@ -387,7 +387,7 @@ cnpm run dev      # 开发模式
 cnpm run build && cnpm run start   # 生产模式
 ```
 
-后端默认监听主程序配置端口（如 `0.0.0.0:8000`），前端 Next.js 默认监听 `3000`。生产环境通过 HAProxy 将 `/b/*` 路由到后端、`/f/*` 与 `/_next/*` 路由到前端，配置见 `ops/id_x_010[HAProxy].conf`。
+后端默认监听主程序配置端口（如 `0.0.0.0:7000`），前端 Next.js 默认监听 `2000`。生产环境通过 HAProxy 将 `/b/*` 路由到后端、`/f/*` 与 `/_next/*` 路由到前端，配置见 `ops/id_x_010[HAProxy].conf`。
 
 ### 9.5 容器部署
 
@@ -404,7 +404,7 @@ CMD ["python", "../../main.py"]
 EOF
 
 podman build -t id_x_010:latest .
-podman run -d --name id_x_010 -p 8000:8000 \
+podman run -d --name id_x_010 -p 7000:7000 \
   --env-file .env id_x_010:latest
 ```
 
