@@ -56,21 +56,16 @@ export default function LoginPage() {
 
                 console.log("Login result:", result);
 
-                // 检查是否登录成功
                 if (!result.login.success) {
-                    setPasswordError(true);
                     setErrorMsg(result.login.message || "邮箱或密码错误");
                     return;
                 }
 
-                // 检查用户是否存在
                 if (!result.login.user) {
-                    setPasswordError(true);
                     setErrorMsg("登录失败，请重试");
                     return;
                 }
 
-                // 如果通过所有检查，保存 token 并跳转
                 if (typeof window !== "undefined") {
                     localStorage.setItem("token", result.login.token || "");
                     localStorage.setItem(
@@ -82,7 +77,6 @@ export default function LoginPage() {
                 router.push("/f/home");
             } catch (error: any) {
                 console.error("Login failed:", error);
-                setPasswordError(true);
                 setErrorMsg(error.message || "邮箱或密码错误，请重试");
             } finally {
                 setIsSubmitting(false);

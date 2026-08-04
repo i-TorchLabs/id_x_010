@@ -59,7 +59,7 @@ export function ChatSidebar({
                 </div>
                 <div className="flex flex-col">
                     <span className="text-sm font-semibold text-foreground leading-tight">
-                        SME AI Labs
+                      TorchLabs
                     </span>
                     <span className="text-[11px] text-muted leading-tight">
                         智能问数系统

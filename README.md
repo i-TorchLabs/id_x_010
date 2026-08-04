@@ -202,7 +202,7 @@ sequenceDiagram
 
 ```text
 id_x_010/
-├── plugin.py                    # 插件入口: load_plugin() 返回插件实例
+├── x_plugin.py                  # 插件入口: load_plugin() 返回插件实例
 ├── requirements.txt             # Python 依赖清单
 ├── LICENSE                      # AGPL-3.0 许可证
 ├── src/

@@ -170,7 +170,7 @@ export function CenterHero({
                                     "'Times New Roman', Times, Georgia, serif",
                             }}
                         >
-                            SME AI Labs
+                          TorchLabs
                         </h1>
                         <motion.p
                             className="mt-6"

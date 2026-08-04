@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Image from "next/image";
 import {
     Alert,
     Button,
@@ -86,12 +87,23 @@ export default function ForgotPasswordForm({
     return (
         <div className="w-full max-w-100">
             <div className="flex justify-center mb-6">
-                <svg viewBox="0 0 24 24" fill="none" className="w-8 h-8">
-                    <path d="M12 2L13.5 9H10.5L12 2Z" fill="#1d1d1f" />
-                    <path d="M12 22L10.5 15H13.5L12 22Z" fill="#1d1d1f" />
-                    <path d="M2 12L9 10.5V13.5L2 12Z" fill="#1d1d1f" />
-                    <path d="M22 12L15 13.5V10.5L22 12Z" fill="#1d1d1f" />
-                </svg>
+                <div
+                    className="flex items-center justify-center"
+                    style={{
+                        width: 56,
+                        height: 56,
+                        borderRadius: "16px",
+                    }}
+                >
+                    <Image
+                        src="/favicon.ico"
+                        alt="Logo"
+                        width={28}
+                        height={28}
+                        className="w-7 h-7"
+                        priority
+                    />
+                </div>
             </div>
 
             <div className="text-center mb-9">

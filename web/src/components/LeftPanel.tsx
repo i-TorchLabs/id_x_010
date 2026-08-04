@@ -20,14 +20,13 @@ export default function LeftPanel({
 }: LeftPanelProps) {
   const overlayBg = isDark
     ? "rgba(28, 28, 30, 0.55)"
-    : "rgba(200, 200, 200, 0.55)";
-  const brandColor = isDark ? "#fff" : "#1d1d1f";
+    : "rgba(212, 212, 218, 0.42)";
   const linkColor = isDark
     ? "rgba(200, 200, 200, 0.7)"
     : "rgba(60, 60, 60, 0.7)";
 
   return (
-    <div className="relative hidden md:flex flex-col justify-between p-4 overflow-hidden">
+    <div className="relative hidden md:flex flex-col justify-between px-10 py-10 overflow-hidden">
       {/* ── Background: vivid color blobs as blur source ── */}
       <div className="absolute inset-0 z-0">
         <div
@@ -35,7 +34,7 @@ export default function LeftPanel({
           style={{
             background: isDark
               ? "rgba(60, 60, 60, 0.4)"
-              : "rgba(120, 120, 120, 0.6)",
+              : "rgba(175, 175, 182, 0.6)",
             filter: "blur(80px)",
           }}
         />
@@ -44,7 +43,7 @@ export default function LeftPanel({
           style={{
             background: isDark
               ? "rgba(80, 80, 80, 0.3)"
-              : "rgba(100, 100, 100, 0.5)",
+              : "rgba(180, 180, 187, 0.55)",
             filter: "blur(80px)",
           }}
         />
@@ -53,7 +52,7 @@ export default function LeftPanel({
           style={{
             background: isDark
               ? "rgba(50, 50, 50, 0.25)"
-              : "rgba(90, 90, 90, 0.45)",
+              : "rgba(190, 190, 197, 0.5)",
             filter: "blur(100px)",
           }}
         />
@@ -62,7 +61,7 @@ export default function LeftPanel({
           style={{
             background: isDark
               ? "rgba(70, 70, 70, 0.3)"
-              : "rgba(110, 110, 110, 0.5)",
+              : "rgba(178, 178, 185, 0.55)",
             filter: "blur(70px)",
           }}
         />
@@ -79,27 +78,18 @@ export default function LeftPanel({
       />
 
       {/* Logo */}
-      <div
-        className="flex items-center gap-2.5 text-base font-semibold z-10 relative"
-        style={{ color: brandColor }}
-      >
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          className="w-7 h-7 bg-black/10 dark:bg-white/15 backdrop-blur-sm p-1 rounded-md"
-        >
-          <path d="M12 2L15 9H9L12 2Z" />
-          <path d="M12 22L9 15H15L12 22Z" />
-          <path d="M2 12L9 9V15L2 12Z" />
-          <path d="M22 12L15 15V9L22 12Z" />
-        </svg>
-        <span>SME AI Labs</span>
+      <div className="absolute top-4 left-4 z-10 flex items-center gap-2.5 px-3 py-2 rounded-lg">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/favicon.ico"
+          alt="TorchLabs logo"
+          className="w-7 h-7"
+        />
+        <span className="text-base font-semibold text-white">TorchLabs</span>
       </div>
 
       {/* Animated Characters */}
-      <div className="relative z-10 flex items-end justify-center h-105">
+      <div className="relative z-10 flex-1 flex items-center justify-center min-h-0">
         <AnimatedCharacters
           isTyping={isTyping}
           isPasswordFocused={isPasswordFocused}
@@ -108,30 +98,18 @@ export default function LeftPanel({
         />
       </div>
 
-      {/* Footer: Brand + Links */}
+      {/* Footer Links */}
       <div
-        className="flex items-center gap-7 text-[13px] z-10 relative"
+        className="absolute left-2 bottom-2 flex gap-7 text-[13px] z-10"
         style={{ color: linkColor }}
       >
-        <a
-          href="#"
-          className="hover:transition-colors duration-200"
-          style={{ color: linkColor }}
-        >
+        <a href="#" className="hover:transition-colors duration-200" style={{ color: linkColor }}>
           Privacy Policy
         </a>
-        <a
-          href="#"
-          className="hover:transition-colors duration-200"
-          style={{ color: linkColor }}
-        >
+        <a href="#" className="hover:transition-colors duration-200" style={{ color: linkColor }}>
           Terms of Service
         </a>
-        <a
-          href="#"
-          className="hover:transition-colors duration-200"
-          style={{ color: linkColor }}
-        >
+        <a href="#" className="hover:transition-colors duration-200" style={{ color: linkColor }}>
           Contact
         </a>
       </div>
