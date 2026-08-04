@@ -11,12 +11,12 @@ type Message = {
   type: "user" | "assistant";
   content: string;
   timestamp: Date;
-  thinking?: string; // 思考过程内容
-  thinkingTime?: number; // 思考时间（秒）
-  modelUsed?: string; // 使用的模型
-  pendingSql?: string; // SQL waiting for approval
-  sqlApprovalStatus?: "pending" | "approved" | "rejected" | "cancelled"; // approval status
-  contentType?: "sql"; // when set to "sql", content is SQL code
+  thinking?: string;
+  thinkingTime?: number;
+  modelUsed?: string;
+  pendingSql?: string;
+  sqlApprovalStatus?: "pending" | "approved" | "rejected" | "cancelled";
+  contentType?: "sql";
 };
 
 interface ChatMessageProps {
@@ -29,78 +29,59 @@ interface ChatMessageProps {
   isSqlProcessing?: boolean;
 }
 
-// 格式化思考内容 - 支持编号列表和嵌套要点
-function formatThinkingContent(
-  content: string,
-  isDark: boolean,
-): React.ReactElement[] {
-  const lines = content.split("\n");
-  const elements: React.ReactElement[] = [];
-  let currentNumberedItem: { number: string; content: string[] } | null = null;
+// 格式化思考内容
+function formatThinkingContent(thinking: string, isDark: boolean) {
+  const lines = thinking.split("\n");
+  const elements: React.ReactNode[] = [];
+  let currentNumberedItem: {
+    number: string;
+    content: string;
+    bullets: string[];
+  } | null = null;
   let keyIndex = 0;
 
   const flushNumberedItem = () => {
     if (currentNumberedItem) {
       elements.push(
-        <div key={`num-${keyIndex++}`} className="mb-2 last:mb-0">
-          <div className="flex gap-1.5">
+        <div key={`item-${keyIndex++}`} style={{ marginBottom: "10px" }}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}>
             <span
-              className="font-bold shrink-0"
               style={{
-                color: isDark ? "rgba(255,255,255,0.9)" : "#1d1d1f",
-                minWidth: "20px",
+                color: isDark ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.4)",
+                fontWeight: 600,
+                minWidth: "18px",
+                flexShrink: 0,
               }}
             >
-              {currentNumberedItem.number}
+              {currentNumberedItem.number}.
             </span>
-            <div className="flex-1">
-              {currentNumberedItem.content.map((line, idx) => {
-                // 检查是否是嵌套要点
-                const bulletMatch = line.match(/^(\s*)[\*\-]\s+(.+)$/);
-                if (bulletMatch) {
-                  return (
-                    <div
-                      key={idx}
-                      className="flex gap-1.5 mb-1"
-                      style={{ marginLeft: "6px" }}
-                    >
-                      <span
-                        style={{
-                          color: isDark
-                            ? "rgba(255,255,255,0.5)"
-                            : "rgba(0,0,0,0.5)",
-                        }}
-                      >
-                        •
-                      </span>
-                      <span
-                        style={{
-                          color: isDark
-                            ? "rgba(255,255,255,0.7)"
-                            : "rgba(0,0,0,0.7)",
-                        }}
-                      >
-                        {bulletMatch[2]}
-                      </span>
-                    </div>
-                  );
-                }
+            <span style={{ color: isDark ? "rgba(255,255,255,0.7)" : "rgba(0,0,0,0.7)" }}>
+              {currentNumberedItem.content}
+            </span>
+          </div>
+          {currentNumberedItem.bullets.length > 0 && (
+            <div style={{ marginLeft: "26px", marginTop: "4px" }}>
+              {currentNumberedItem.bullets.map((bullet, idx) => {
+                const bulletMatch = bullet.match(/^([a-z]\)|-|\*)\s*(.*)/);
+                const bulletText = bulletMatch ? bulletMatch[2] : bullet;
                 return (
-                  <span
-                    key={idx}
-                    className="block leading-relaxed"
+                  <div
+                    key={`bullet-${idx}`}
                     style={{
-                      color: isDark
-                        ? "rgba(255,255,255,0.8)"
-                        : "rgba(0,0,0,0.8)",
+                      display: "flex",
+                      alignItems: "flex-start",
+                      gap: "6px",
+                      marginBottom: "2px",
+                      color: isDark ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.45)",
                     }}
                   >
-                    {line}
-                  </span>
+                    <span style={{ flexShrink: 0, marginTop: "1px" }}>•</span>
+                    <span>{bulletText}</span>
+                  </div>
                 );
               })}
             </div>
-          </div>
+          )}
         </div>,
       );
       currentNumberedItem = null;
@@ -108,87 +89,77 @@ function formatThinkingContent(
   };
 
   for (const line of lines) {
-    // 检查是否是编号行 (如 "1.  内容" 或 "1.内容")
-    const numberMatch = line.match(/^(\d+)\.\s*(.*)$/);
-
-    if (numberMatch) {
-      // 先刷新之前的编号项
+    const trimmed = line.trim();
+    if (!trimmed) {
       flushNumberedItem();
-
-      // 开始新的编号项
-      currentNumberedItem = {
-        number: `${numberMatch[1]}.`,
-        content: numberMatch[2] ? [numberMatch[2]] : [],
-      };
-    } else if (currentNumberedItem) {
-      // 添加到当前编号项的内容
-      if (line.trim()) {
-        currentNumberedItem.content.push(line);
-      }
-    } else if (line.trim()) {
-      // 非编号内容，直接添加
-      flushNumberedItem();
-      elements.push(
-        <p
-          key={`p-${keyIndex++}`}
-          className="mb-2 last:mb-0 leading-relaxed"
-          style={{
-            color: isDark ? "rgba(255,255,255,0.8)" : "rgba(0,0,0,0.8)",
-          }}
-        >
-          {line}
-        </p>,
-      );
+      continue;
     }
+
+    const numberMatch = trimmed.match(/^(\d+)\.\s*(.*)/);
+    if (numberMatch) {
+      flushNumberedItem();
+      currentNumberedItem = {
+        number: numberMatch[1],
+        content: numberMatch[2],
+        bullets: [],
+      };
+      continue;
+    }
+
+    const bulletMatch = trimmed.match(/^([-*•]|[a-z]\))\s*(.*)/);
+    if (bulletMatch && currentNumberedItem) {
+      currentNumberedItem.bullets.push(trimmed);
+      continue;
+    }
+
+    flushNumberedItem();
+    elements.push(
+      <p
+        key={`p-${keyIndex++}`}
+        style={{
+          color: isDark ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.45)",
+          marginBottom: "6px",
+        }}
+      >
+        {trimmed}
+      </p>,
+    );
   }
 
-  // 刷新最后一个编号项
   flushNumberedItem();
-
   return elements;
 }
 
-// 从内容中提取思考过程（完全隐形转换，支持多个 thinking 块）
+// 从内容中提取 <thinking> 标签
 function extractThinkingContent(content: string): {
   thinking: string | null;
   mainContent: string;
 } {
-  // 匹配所有 <thinking>...</thinking> 标签（支持多行，忽略大小写）
-  const thinkingRegex = /<thinking\s*>([\s\S]*?)<\/thinking>/gi;
-
+  const thinkingRegex = /<thinking>([\s\S]*?)<\/thinking>/g;
   const thinkingParts: string[] = [];
   let match;
 
-  // 收集所有思考内容
   while ((match = thinkingRegex.exec(content)) !== null) {
-    const thinkingContent = match[1].trim();
-    if (thinkingContent) {
-      thinkingParts.push(thinkingContent);
+    thinkingParts.push(match[1].trim());
+  }
+
+  let thinking = thinkingParts.length > 0 ? thinkingParts.join("\n\n") : null;
+
+  if (!thinking) {
+    const unclosedMatch = content.match(/<thinking>([\s\S]*)$/);
+    if (unclosedMatch) {
+      thinking = unclosedMatch[1].trim();
     }
   }
 
-  if (thinkingParts.length > 0) {
-    // 合并所有思考内容
-    const thinkingContent = thinkingParts.join("\n\n");
+  const removeRegex = /<thinking>[\s\S]*?(<\/thinking>|$)/g;
+  let mainContent = content.replace(removeRegex, "").trim();
 
-    // 从原内容中完全移除所有思考标签部分
-    const removeRegex = /<thinking\s*>[\s\S]*?<\/thinking>/gi;
-    let mainContent = content.replace(removeRegex, "");
-
-    // 彻底清理多余内容
-    mainContent = mainContent
-      .replace(/^\s*\n+/, "") // 移除开头的所有空行
-      .replace(/\n+\s*$/, "") // 移除结尾的所有空行
-      .replace(/\n{3,}/g, "\n\n") // 3个以上换行变为2个
-      .split("\n")
-      .map((line) => line.trimEnd()) // 移除每行末尾的空白
-      .join("\n")
-      .trim();
-
-    return { thinking: thinkingContent, mainContent };
+  if (!thinking && !mainContent) {
+    return { thinking: null, mainContent: "" };
   }
 
-  return { thinking: null, mainContent: content };
+  return { thinking, mainContent };
 }
 
 export function ChatMessage({
@@ -206,22 +177,18 @@ export function ChatMessage({
   const [copied, setCopied] = useState(false);
   const [isThinkingExpanded, setIsThinkingExpanded] = useState(true);
 
-  // 解析内容，提取思考过程
   const parsedContent = useMemo(() => {
-    // 如果已经有 thinking 字段，直接使用
     if (message.thinking) {
       return {
         thinking: message.thinking,
         mainContent: message.content,
       };
     }
-    // 否则从 content 中提取 <thinking> 标签
     return extractThinkingContent(message.content);
   }, [message.content, message.thinking]);
 
   const hasThinking = !!(parsedContent.thinking || message.thinkingTime);
 
-  // 当回答完毕时，自动收起思考过程
   useEffect(() => {
     if (!isStreaming && hasThinking) {
       setIsThinkingExpanded(false);
@@ -230,11 +197,9 @@ export function ChatMessage({
 
   const handleCopy = async () => {
     try {
-      // 优先使用 navigator.clipboard API
       if (navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(message.content);
       } else {
-        // 降级方案：使用 execCommand
         const textArea = document.createElement("textarea");
         textArea.value = message.content;
         textArea.style.position = "fixed";
@@ -259,6 +224,24 @@ export function ChatMessage({
       second: "2-digit",
     });
 
+  // Shared code block style
+  const codeBlockStyle = {
+    borderRadius: "12px",
+    border: isDark
+      ? "1px solid rgba(255,255,255,0.06)"
+      : "1px solid rgba(0,0,0,0.04)",
+    background: isDark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.02)",
+    padding: "8px",
+  };
+
+  const codeTextStyle: React.CSSProperties = {
+    fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', 'Menlo', monospace",
+    fontSize: "13px",
+    lineHeight: "1.65",
+    letterSpacing: "0.01em",
+    color: isDark ? "rgba(255,255,255,0.8)" : "#1d1d1f",
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0, x: isUser ? 20 : -20 }}
@@ -266,35 +249,31 @@ export function ChatMessage({
       className={`flex mb-4 ${isUser ? "justify-end" : "justify-start"}`}
       style={{ padding: "12px 16px" }}
     >
-      {/* AI Message - 单一气泡，头像内嵌 */}
+      {/* AI Message */}
       {!isUser && (
         <div
           style={{ maxWidth: "70%", minWidth: "512px" }}
           className="flex flex-col gap-3"
         >
-          {/* AI 统一气泡 */}
           <div className="relative group w-full">
             <div
-              className={`rounded-2xl ${
-                isDark ? "bg-[#1c1c1e] text-white" : "bg-white text-[#1d1d1f]"
-              }`}
               style={{
+                borderRadius: "16px",
+                background: isDark ? "#1c1c1e" : "#ffffff",
+                boxShadow: isDark
+                  ? "none"
+                  : "0 4px 48px rgba(0,0,0,0.08)",
                 minWidth: "512px",
                 paddingBottom:
                   message.pendingSql && message.sqlApprovalStatus === "pending"
                     ? "8px"
                     : "0",
-                boxShadow: isDark
-                  ? "none"
-                  : "rgba(0, 0, 0, 0.22) 3px 5px 30px 0px",
               }}
             >
-              {/* 气泡头部：头像 + 时间 + 复制按钮 */}
+              {/* Header: dot + time */}
               <div
                 className="flex items-center gap-2.5"
-                style={{
-                  padding: "10px 14px 0 14px",
-                }}
+                style={{ padding: "10px 14px 0 14px" }}
               >
                 <motion.div
                   initial={{ scale: 0 }}
@@ -303,39 +282,37 @@ export function ChatMessage({
                 >
                   <div
                     className="w-3.25 h-3.25 rounded-full"
-                    style={{
-                      background: isDark ? "#ffffff" : "#1d1d1f",
-                    }}
+                    style={{ background: isDark ? "#ffffff" : "#1d1d1f" }}
                   />
                 </motion.div>
                 <span
-                  className={`text-xs ${
-                    isDark
-                      ? "text-[rgba(255,255,255,0.48)]"
-                      : "text-[rgba(0,0,0,0.48)]"
-                  }`}
+                  className="font-text"
+                  style={{
+                    fontSize: "12px",
+                    color: isDark
+                      ? "rgba(255,255,255,0.45)"
+                      : "rgba(0,0,0,0.45)",
+                  }}
                 >
                   {formatTime(message.timestamp)}
                 </span>
               </div>
 
-              {/* Thinking Process - 内嵌在气泡中，支持展开/收起 */}
+              {/* Thinking Process */}
               {hasThinking && parsedContent.thinking && (
                 <div style={{ padding: "6px 14px 0 14px" }}>
                   <div
-                    className="rounded-xl"
                     style={{
+                      borderRadius: "12px",
                       padding: "8px",
-                      fontFamily: "'Times New Roman', Times, serif",
                       background: isDark
                         ? "rgba(255,255,255,0.05)"
                         : "rgba(0,0,0,0.03)",
                       border: isDark
-                        ? "1px solid rgba(255,255,255,0.1)"
+                        ? "1px solid rgba(255,255,255,0.08)"
                         : "1px solid rgba(0,0,0,0.06)",
                     }}
                   >
-                    {/* Thinking Header - Clickable to toggle */}
                     <button
                       onClick={() => setIsThinkingExpanded(!isThinkingExpanded)}
                       className="w-full flex items-center justify-between"
@@ -355,26 +332,32 @@ export function ChatMessage({
                           <path
                             strokeLinecap="round"
                             strokeLinejoin="round"
-                            strokeWidth={2}
+                            strokeWidth={1.5}
                             d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
                           />
                         </svg>
                         <span
-                          className={`text-[11px] font-semibold tracking-wide uppercase ${
-                            isDark
-                              ? "text-[rgba(255,255,255,0.5)]"
-                              : "text-[rgba(0,0,0,0.4)]"
-                          }`}
+                          className="font-text"
+                          style={{
+                            fontSize: "11px",
+                            fontWeight: 600,
+                            letterSpacing: "0.08em",
+                            textTransform: "uppercase",
+                            color: isDark
+                              ? "rgba(255,255,255,0.5)"
+                              : "rgba(0,0,0,0.4)",
+                          }}
                         >
                           Thinking
                         </span>
                         {message.thinkingTime != null && (
                           <span
-                            className={`text-[10px] ${
-                              isDark
-                                ? "text-[rgba(255,255,255,0.35)]"
-                                : "text-[rgba(0,0,0,0.3)]"
-                            }`}
+                            style={{
+                              fontSize: "10px",
+                              color: isDark
+                                ? "rgba(255,255,255,0.35)"
+                                : "rgba(0,0,0,0.3)",
+                            }}
                           >
                             {message.thinkingTime}s
                           </span>
@@ -393,13 +376,12 @@ export function ChatMessage({
                         <path
                           strokeLinecap="round"
                           strokeLinejoin="round"
-                          strokeWidth={2}
+                          strokeWidth={1.5}
                           d="M19 9l-7 7-7-7"
                         />
                       </motion.svg>
                     </button>
 
-                    {/* Thinking Content - Collapsible */}
                     <AnimatePresence initial={false}>
                       {isThinkingExpanded && (
                         <motion.div
@@ -418,7 +400,10 @@ export function ChatMessage({
                                 : "1px solid rgba(0,0,0,0.04)",
                             }}
                           >
-                            <div className="text-[13px] leading-relaxed">
+                            <div
+                              className="font-text"
+                              style={{ fontSize: "13px", lineHeight: 1.4 }}
+                            >
                               {formatThinkingContent(
                                 parsedContent.thinking,
                                 isDark,
@@ -434,10 +419,11 @@ export function ChatMessage({
 
               {/* Message Text */}
               <div
-                className="text-base leading-relaxed whitespace-pre-wrap"
+                className="font-text leading-relaxed whitespace-pre-wrap"
                 style={{
                   padding: "8px 14px 12px 14px",
-                  fontFamily: "inherit",
+                  fontSize: "16px",
+                  letterSpacing: "-0.20px",
                 }}
               >
                 {!parsedContent.mainContent ? (
@@ -458,67 +444,39 @@ export function ChatMessage({
                             repeat: Infinity,
                             delay: i * 0.15,
                           }}
-                          className={`w-2.5 h-2.5 rounded-full ${
-                            isDark ? "bg-gray-400" : "bg-gray-600"
-                          }`}
+                          className="w-2.5 h-2.5 rounded-full"
+                          style={{
+                            background: isDark
+                              ? "rgba(255,255,255,0.5)"
+                              : "rgba(0,0,0,0.45)",
+                          }}
                         />
                       ))}
                     </div>
                   </div>
                 ) : message.contentType === "sql" ? (
                   <div className="space-y-2">
-                    <div
-                      className={`rounded-xl overflow-hidden ${isDark ? "bg-[#0d0d0d]" : "bg-[#e9e9ee]"}`}
-                      style={{
-                        border: isDark
-                          ? "1px solid rgba(255,255,255,0.06)"
-                          : "1px solid rgba(0,0,0,0.04)",
-                      }}
-                    >
-                      <div style={{ padding: "8px" }}>
-                        <pre
-                          className={`text-[13px] whitespace-pre-wrap wrap-break-word font-mono ${isDark ? "text-[#e5e5e5]" : "text-[#1d1d1f]"}`}
-                          style={{
-                            fontFamily:
-                              "'SF Mono', 'Fira Code', 'Cascadia Code', 'Menlo', monospace",
-                            lineHeight: "1.65",
-                            letterSpacing: "0.01em",
-                          }}
-                        >
-                          {parsedContent.mainContent}
-                        </pre>
-                      </div>
+                    <div style={codeBlockStyle}>
+                      <pre
+                        className="whitespace-pre-wrap wrap-break-word"
+                        style={codeTextStyle}
+                      >
+                        {parsedContent.mainContent}
+                      </pre>
                     </div>
-                    {/* SQL 已生成但还未弹出人工审批时，显示 Thinking */}
                     <ThinkingDots visible={!!isStreaming} label="Thinking" />
                   </div>
                 ) : message.pendingSql &&
                   message.sqlApprovalStatus === "pending" ? (
                   <div className="space-y-3">
-                    {/* SQL 代码块 - 内嵌在气泡中 */}
-                    <div
-                      className={`rounded-xl overflow-hidden ${isDark ? "bg-[#0d0d0d]" : "bg-[#e9e9ee]"}`}
-                      style={{
-                        border: isDark
-                          ? "1px solid rgba(255,255,255,0.06)"
-                          : "1px solid rgba(0,0,0,0.04)",
-                      }}
-                    >
-                      <div style={{ padding: "8px" }}>
-                        <pre
-                          className={`text-[13px] whitespace-pre-wrap wrap-break-word font-mono ${isDark ? "text-[#e5e5e5]" : "text-[#1d1d1f]"}`}
-                          style={{
-                            fontFamily:
-                              "'SF Mono', 'Fira Code', 'Cascadia Code', 'Menlo', monospace",
-                            lineHeight: "1.65",
-                            letterSpacing: "0.01em",
-                          }}
-                        >
-                          {message.pendingSql}
-                        </pre>
-                      </div>
+                    <div style={codeBlockStyle}>
+                      <pre
+                        className="whitespace-pre-wrap wrap-break-word"
+                        style={codeTextStyle}
+                      >
+                        {message.pendingSql}
+                      </pre>
                     </div>
-                    {/* 自然语言内容 */}
                     {parsedContent.mainContent.trim() &&
                       parsedContent.mainContent
                         .split("\n")
@@ -606,7 +564,7 @@ export function ChatMessage({
                   />
                 )}
 
-              {/* 执行中 - SQL 审批通过后执行中显示 */}
+              {/* Executing indicator */}
               <ThinkingDots
                 visible={
                   !!isSqlProcessing &&
@@ -620,55 +578,51 @@ export function ChatMessage({
         </div>
       )}
 
-      {/* User Message Bubble */}
+      {/* User Message */}
       {isUser && (
         <div
           className="relative group w-full flex flex-col items-end"
           style={{ maxWidth: "50%" }}
         >
           <div
-            className={`rounded-2xl ${
-              isDark ? "bg-[#3a3a3c] text-white" : "bg-[#1d1d1f] text-white"
-            }`}
             style={{
+              borderRadius: "16px",
+              background: isDark ? "#3a3a3c" : "#1d1d1f",
               padding: "10px 14px 12px 14px",
             }}
           >
-            {/* 气泡头部：红点 + 时间 */}
             <div
               className="flex items-center justify-end gap-2.5"
-              style={{
-                paddingBottom: "4px",
-              }}
+              style={{ paddingBottom: "4px" }}
             >
               <span
-                className={`text-xs ${
-                  isDark
-                    ? "text-[rgba(255,255,255,0.48)]"
-                    : "text-[rgba(255,255,255,0.6)]"
-                }`}
+                className="font-text"
+                style={{
+                  fontSize: "12px",
+                  color: isDark
+                    ? "rgba(255,255,255,0.48)"
+                    : "rgba(255,255,255,0.6)",
+                }}
               >
                 {formatTime(message.timestamp)}
               </span>
               <div
                 className="w-3.25 h-3.25 rounded-full"
-                style={{
-                  background: "#ffffff",
-                }}
+                style={{ background: "#ffffff" }}
               />
             </div>
 
-            {/* Message Text */}
             <div
-              className="text-base leading-relaxed whitespace-pre-wrap"
+              className="font-text leading-relaxed whitespace-pre-wrap"
               style={{
-                fontFamily: "'Times New Roman', Times, serif",
+                fontSize: "16px",
+                letterSpacing: "-0.20px",
+                color: "#ffffff",
               }}
             >
               {parsedContent.mainContent.split("\n").map((paragraph, index) => {
                 if (!paragraph.trim()) return <br key={index} />;
 
-                // Simple formatting for bold text
                 const formattedText = paragraph
                   .split(/(\*\*[^*]+\*\*)/)
                   .map((part, i) => {
@@ -678,7 +632,6 @@ export function ChatMessage({
                     return part;
                   });
 
-                // Check if it's a list item
                 if (
                   paragraph.trim().match(/^\d+\.\s/) ||
                   paragraph.trim().startsWith("- ") ||
@@ -704,11 +657,13 @@ export function ChatMessage({
           {onRegenerate && (
             <button
               onClick={onRegenerate}
-              className={`mt-1.75 p-0.75 rounded-md transition-all duration-200 ${
-                isDark
-                  ? "bg-[#2c2c2e] hover:bg-[#3a3a3c] text-[rgba(255,255,255,0.6)] hover:text-white"
-                  : "bg-[#e8e8ed] hover:bg-[#d1d1d6] text-[rgba(0,0,0,0.5)] hover:text-[rgba(0,0,0,0.8)]"
-              }`}
+              className="mt-1.75 p-0.75 rounded-md transition-all duration-200"
+              style={{
+                background: isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.05)",
+                color: isDark
+                  ? "rgba(255,255,255,0.6)"
+                  : "rgba(0,0,0,0.5)",
+              }}
             >
               <svg
                 className="w-3.5 h-3.5"
@@ -719,7 +674,7 @@ export function ChatMessage({
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  strokeWidth={2}
+                  strokeWidth={1.5}
                   d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
                 />
               </svg>

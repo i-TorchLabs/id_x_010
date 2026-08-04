@@ -12,17 +12,24 @@ export function ThemeToggle({ className = "", ...props }: ThemeToggleProps) {
     return (
         <button
             onClick={toggleTheme}
-            className={`p-3 rounded-full transition-colors duration-200 ${
-                isDark
-                    ? "hover:bg-[rgba(255,255,255,0.08)]"
-                    : "hover:bg-[rgba(0,0,0,0.05)]"
-            } ${className}`}
+            className={`p-3 rounded-full transition-colors duration-200 ${className}`}
+            style={{
+                color: "var(--fg)",
+            }}
+            onMouseEnter={(e) => {
+                e.currentTarget.style.background = isDark
+                    ? "rgba(255,255,255,0.08)"
+                    : "rgba(0,0,0,0.05)";
+            }}
+            onMouseLeave={(e) => {
+                e.currentTarget.style.background = "transparent";
+            }}
             aria-label={`Switch to ${isDark ? "light" : "dark"} mode`}
             {...props}
         >
             {isDark ? (
                 <svg
-                    className="w-8 h-8 text-white"
+                    className="w-8 h-8"
                     fill="none"
                     stroke="currentColor"
                     strokeWidth={1.5}
@@ -36,7 +43,7 @@ export function ThemeToggle({ className = "", ...props }: ThemeToggleProps) {
                 </svg>
             ) : (
                 <svg
-                    className="w-8 h-8 text-black"
+                    className="w-8 h-8"
                     fill="none"
                     stroke="currentColor"
                     strokeWidth={1.5}

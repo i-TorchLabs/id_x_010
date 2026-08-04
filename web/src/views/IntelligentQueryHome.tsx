@@ -21,9 +21,9 @@ type ChatMessage = {
   sql?: string;
   code?: string;
   intent?: string;
-  thinking?: string; // 思考过程内容
-  thinkingTime?: number; // 思考时间（秒）
-  modelUsed?: string; // 使用的模型
+  thinking?: string;
+  thinkingTime?: number;
+  modelUsed?: string;
 };
 
 export default function IntelligentQueryHome() {
@@ -77,7 +77,7 @@ export default function IntelligentQueryHome() {
         const reply: ChatMessage = {
           id: String(Date.now() + 1),
           type: "assistant",
-          content: data.answer || data.code || "抱歉,处理您的请求时出现错误。",
+          content: data.answer || data.code || "抱歉，处理您的请求时出现错误。",
           timestamp: new Date(),
           sql: data.sql,
           code: data.code,
@@ -92,7 +92,7 @@ export default function IntelligentQueryHome() {
         const errorMessage: ChatMessage = {
           id: String(Date.now() + 1),
           type: "assistant",
-          content: "抱歉,连接服务器失败。请确保后端服务正在运行。",
+          content: "抱歉，连接服务器失败。请确保后端服务正在运行。",
           timestamp: new Date(),
         };
         setMessages((prev) => [...prev, errorMessage]);
@@ -112,9 +112,10 @@ export default function IntelligentQueryHome() {
 
   return (
     <div
-      className={`flex h-screen ${isDark ? "bg-[#000000]" : "bg-[#f5f5f7]"}`}
+      className="flex h-screen theme-transition"
+      style={{ background: "var(--bg)" }}
     >
-      {/* ── Left Panel: Sidebar ── */}
+      {/* ── Sidebar ── */}
       <AnimatePresence initial={false}>
         {isSidebarOpen && (
           <ChatSidebar
@@ -139,16 +140,14 @@ export default function IntelligentQueryHome() {
           </>
         ) : (
           <>
+            {/* ── NavBar (56px, glass) ── */}
             <motion.header
               initial={{ y: -20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
-              className={`px-4 py-3 border-b backdrop-blur-md ${
-                isDark
-                  ? "bg-[#000000]/80 border-[#333333]"
-                  : "bg-white/80 border-gray-200"
-              }`}
+              className="nav-glass"
+              style={{ height: "56px" }}
             >
-              <div className="w-full flex items-center justify-between px-2">
+              <div className="w-full h-full flex items-center justify-between px-6.75">
                 <div className="flex items-center gap-3">
                   <Button
                     isIconOnly
@@ -156,17 +155,18 @@ export default function IntelligentQueryHome() {
                     size="sm"
                     onPress={() => setIsSidebarOpen(!isSidebarOpen)}
                     aria-label={isSidebarOpen ? "收起侧边栏" : "展开侧边栏"}
+                    className="icon-btn"
                   >
                     <svg
-                      className="w-5 h-5"
+                      className="w-8 h-8"
                       fill="none"
                       stroke="currentColor"
+                      strokeWidth={1.5}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
                       viewBox="0 0 24 24"
                     >
                       <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
                         d={
                           isSidebarOpen
                             ? "M6 18L18 6M6 6l12 12"
@@ -177,12 +177,24 @@ export default function IntelligentQueryHome() {
                   </Button>
                   <div>
                     <h2
-                      className={`text-base font-semibold ${isDark ? "text-white" : "text-[#1d1d1f]"}`}
+                      className="font-display"
+                      style={{
+                        fontSize: "17px",
+                        fontWeight: 600,
+                        letterSpacing: "-0.374px",
+                        color: "var(--fg)",
+                      }}
                     >
                       智能问数助手
                     </h2>
                     <p
-                      className={`text-xs ${isDark ? "text-gray-400" : "text-gray-500"}`}
+                      style={{
+                        fontSize: "12px",
+                        fontWeight: 600,
+                        letterSpacing: "0.04em",
+                        textTransform: "uppercase",
+                        color: "var(--fg3)",
+                      }}
                     >
                       {isTyping
                         ? "思考中..."
@@ -190,26 +202,25 @@ export default function IntelligentQueryHome() {
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-4">
                   <Button
                     isIconOnly
                     variant="ghost"
                     size="sm"
                     onPress={handleNewChat}
                     aria-label="清空对话"
+                    className="icon-btn"
                   >
                     <svg
-                      className="w-5 h-5"
+                      className="w-8 h-8"
                       fill="none"
                       stroke="currentColor"
+                      strokeWidth={1.5}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
                       viewBox="0 0 24 24"
                     >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                      />
+                      <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                     </svg>
                   </Button>
                   <ThemeToggle />
@@ -229,7 +240,8 @@ export default function IntelligentQueryHome() {
                     className="px-8 pb-4"
                   >
                     <div
-                      className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg ${isDark ? "bg-[#1d1d1f]" : "bg-gray-100"}`}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg"
+                      style={{ background: "var(--input-bg)" }}
                     >
                       <div className="flex gap-1">
                         {[0, 0.2, 0.4].map((delay, i) => (
@@ -243,7 +255,8 @@ export default function IntelligentQueryHome() {
                               repeat: Infinity,
                               delay,
                             }}
-                            className={`w-2 h-2 rounded-full ${isDark ? "bg-white" : "bg-black"}`}
+                            className="w-2 h-2 rounded-full"
+                            style={{ background: "var(--fg)" }}
                           />
                         ))}
                       </div>

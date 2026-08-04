@@ -27,7 +27,6 @@ function ModelSelector({
   const measureRef = useRef<HTMLSpanElement>(null);
   const [width, setWidth] = useState<number | null>(null);
 
-  // 当前在触发器中显示的文字：选中项的 "name (provider)"；未选中用 placeholder
   const displayText = selectedModel
     ? `${selectedModel.name} (${selectedModel.provider})`
     : isLoadingModels
@@ -36,13 +35,10 @@ function ModelSelector({
 
   useLayoutEffect(() => {
     if (measureRef.current) {
-      // offsetWidth 已含 padding，测量 span 不带 padding，所以只测文字
       setWidth(measureRef.current.offsetWidth);
     }
   }, [displayText, isSmall]);
 
-  // 文字宽度 + 触发器左右 padding(各 12px) + indicator(约 20px) + 冗余
-  // 给下限避免过窄,给上限避免撑爆输入框；冗余确保不触发省略号换行
   const minW = isSmall ? 96 : 120;
   const maxW = isSmall ? 220 : 280;
   const triggerWidth =
@@ -75,12 +71,14 @@ function ModelSelector({
         className={`${isSmall ? "h-9 px-1.5" : "h-11 px-2"} whitespace-nowrap overflow-hidden flex items-center`}
       >
         <Select.Value
-          className={`!flex !flex-1 !min-w-0 h-auto ${isSmall ? "h-7 text-xs" : "h-9 text-sm"} px-2.5 !items-center !justify-center !text-center rounded-md font-medium truncate bg-default/60 text-foreground`}
+          className={`flex! flex-1! min-w-0! h-auto ${isSmall ? "h-7 text-xs" : "h-9 text-sm"} px-2.5 items-center! justify-center! text-center! rounded-md font-medium truncate bg-default/60 text-foreground`}
         >
           {({ selectedText, isPlaceholder }) => (
             <span className="block w-full text-center truncate">
               {isPlaceholder
-                ? (isLoadingModels ? "加载中..." : "无可用模型")
+                ? isLoadingModels
+                  ? "加载中..."
+                  : "无可用模型"
                 : selectedText}
             </span>
           )}
@@ -98,8 +96,9 @@ function ModelSelector({
                 <span className="flex items-center gap-2 w-full">
                   <span
                     className={`inline-block w-2 h-2 rounded-full shrink-0 transition-opacity ${
-                      isSelected ? "bg-green-500 opacity-100" : "opacity-0"
+                      isSelected ? "opacity-100" : "opacity-0"
                     }`}
+                    style={{ background: "var(--fg)" }}
                   />
                   <span className="flex-1">
                     {model.name} ({model.provider})
@@ -110,7 +109,6 @@ function ModelSelector({
           ))}
         </ListBox>
       </Select.Popover>
-      {/* 隐藏测量元素：与 Trigger 文字字体一致,用于计算自适应宽度 */}
       <span
         ref={measureRef}
         aria-hidden
@@ -139,15 +137,13 @@ interface MessageInputProps {
   ) => void;
   variant?: Variant;
   dark?: boolean;
-  isStreaming?: boolean; // 流式传输状态，为 true 时禁用提交
+  isStreaming?: boolean;
   selectedDb?: string | null;
   onDbChange?: (dbName: string | null) => void;
-  // 受控模式：由父组件管理选中状态
   selectedModel?: ModelInfo | null;
   onModelChange?: (model: ModelInfo | null) => void;
   selectedAgent?: AgentType;
   onAgentChange?: (agent: AgentType) => void;
-  // 模型列表（受控模式，由父组件传入）
   models?: ModelInfo[];
   isLoadingModels?: boolean;
 }
@@ -155,7 +151,7 @@ interface MessageInputProps {
 export function MessageInput({
   onSendMessage,
   variant = "footer",
-  isStreaming = false, // 默认 false
+  isStreaming = false,
   selectedDb = null,
   onDbChange,
   selectedModel: controlledModel,
@@ -176,7 +172,6 @@ export function MessageInput({
   const { theme } = useTheme();
   const isDark = theme === "dark";
 
-  // 受控/非受控模式切换
   const models =
     controlledModels !== undefined ? controlledModels : internalModels;
   const selectedModel =
@@ -190,14 +185,13 @@ export function MessageInput({
       ? controlledIsLoadingModels
       : internalIsLoadingModels;
 
-  // 加载模型列表（仅非受控模式时内部加载；受控模式由父组件管理）
   useEffect(() => {
     if (controlledModels !== undefined) return;
 
     let cancelled = false;
     const MAX_RETRIES = 5;
-    const BASE_DELAY = 1000; // 基础重试延迟
-    const REQUEST_TIMEOUT = 10000; // 10秒超时
+    const BASE_DELAY = 1000;
+    const REQUEST_TIMEOUT = 10000;
 
     const loadModels = async (attempt = 0) => {
       if (cancelled) return;
@@ -296,17 +290,15 @@ export function MessageInput({
       aria-label="添加附件"
     >
       <svg
-        className={isSmall ? "w-4 h-4" : "w-6 h-6"}
+        className={isSmall ? "w-4 h-4" : "w-5 h-5"}
         fill="none"
         stroke="currentColor"
+        strokeWidth={1.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
         viewBox="0 0 24 24"
       >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
-        />
+        <path d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
       </svg>
     </Button>
   );
@@ -319,9 +311,10 @@ export function MessageInput({
       onPress={handleSend}
       isDisabled={!input.trim() || isStreaming}
       aria-label="发送"
+      className="rounded-full"
     >
       <svg
-        className={isSmall ? "w-4 h-4" : "w-6 h-6"}
+        className={isSmall ? "w-4 h-4" : "w-5 h-5"}
         fill="currentColor"
         viewBox="0 0 20 20"
       >
@@ -333,18 +326,18 @@ export function MessageInput({
   if (variant === "hero") {
     return (
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.2 }}
+        transition={{ delay: 0.2, duration: 0.6, ease: [0.25, 0.4, 0.25, 1] }}
         className="w-full"
       >
         <div className="relative w-full">
           <motion.div
-            className={`w-full rounded-2xl transition-all duration-300 ${
-              isDark ? "bg-[#1c1c1e]" : "bg-white"
-            }`}
+            className="w-full transition-all duration-300"
             style={{
-              boxShadow: "rgba(0, 0, 0, 0.22) 3px 5px 30px 0px",
+              background: isDark ? "#1c1c1e" : "#ffffff",
+              borderRadius: "20px",
+              boxShadow: "var(--shadow-card)",
               minHeight: "210px",
             }}
           >
@@ -352,7 +345,6 @@ export function MessageInput({
               className="flex flex-col justify-between h-full p-4"
               style={{ minHeight: "210px" }}
             >
-              {/* Middle - textarea with bottom action buttons */}
               <div className="flex-1 min-h-0 relative">
                 <textarea
                   ref={textareaRef}
@@ -361,14 +353,12 @@ export function MessageInput({
                   onKeyDown={handleKeyDown}
                   placeholder="Ask me anything..."
                   rows={1}
-                  className={`w-full h-full bg-transparent border-none outline-none resize-none font-medium text-lg ${
-                    isDark
-                      ? "text-white placeholder-[rgba(255,255,255,0.48)]"
-                      : "text-[#1d1d1f] placeholder-[rgba(0,0,0,0.48)]"
-                  } transition-all duration-200`}
+                  className="w-full h-full bg-transparent border-none outline-none resize-none font-text"
                   style={{
-                    fontFamily: "'Times New Roman', Times, serif",
-                    lineHeight: "normal",
+                    fontSize: "16px",
+                    letterSpacing: "-0.20px",
+                    color: isDark ? "#ffffff" : "#1d1d1f",
+                    lineHeight: "1.47",
                     maxHeight: "200px",
                     minHeight: "80px",
                     minWidth: "312px",
@@ -378,14 +368,11 @@ export function MessageInput({
                   }}
                 />
 
-                {/* Left bottom - attachment button */}
                 <div className="absolute left-3 bottom-3 flex items-center">
                   {renderAttachmentButton(false)}
                 </div>
 
-                {/* Right bottom - Database selector, Agent selector, model selector and send button */}
                 <div className="absolute right-3 bottom-3 flex items-center gap-3">
-                  {/* Database Selector - 仅 SQL/Code Agent 时显示 */}
                   {selectedAgent !== "general" && (
                     <DatabaseSelector
                       selectedDb={selectedDb}
@@ -393,14 +380,12 @@ export function MessageInput({
                     />
                   )}
 
-                  {/* Agent Selector */}
                   <AgentSelector
                     selectedAgent={selectedAgent}
                     onAgentChange={setSelectedAgent}
                     variant="dropdown"
                   />
 
-                  {/* Model Selector */}
                   {renderModelSelector(false)}
 
                   {renderSendButton(false)}
@@ -418,28 +403,30 @@ export function MessageInput({
     <motion.div
       initial={{ y: 100 }}
       animate={{ y: 0 }}
-      className={`w-full backdrop-blur-sm ${
-        isDark ? "bg-[#000000]/80" : "bg-[#f5f5f7]/80"
-      }`}
+      className="w-full"
       style={{
-        borderTop: isDark ? "none" : "1px solid rgba(0, 0, 0, 0.08)",
+        background: isDark ? "rgba(0,0,0,0.72)" : "rgba(255,255,255,0.72)",
+        backdropFilter: "saturate(180%) blur(20px)",
+        WebkitBackdropFilter: "saturate(180%) blur(20px)",
+        borderTop: isDark
+          ? "none"
+          : "0.5px solid rgba(0,0,0,0.06)",
       }}
     >
-      <div
-        className="py-3 pb-4"
-        style={{ paddingLeft: "27px", paddingRight: "27px" }}
-      >
-        <div className="w-full">
+      <div className="py-3 pb-4 px-6.75">
+        <div className="w-full max-w-270 mx-auto">
           <div className="flex items-end gap-3">
             <div
-              className={`flex-1 relative rounded-2xl ${
-                isDark ? "bg-[#1c1c1e]" : "bg-white"
-              } focus-within:ring-2 focus-within:ring-opacity-50 ${
-                isDark
-                  ? "focus-within:ring-[#48484a]"
-                  : "focus-within:ring-[#1d1d1f]"
-              } transition-all duration-200`}
-              style={{ minHeight: "120px", margin: "8px" }}
+              className="flex-1 relative transition-all duration-200"
+              style={{
+                background: isDark ? "#1c1c1e" : "#ffffff",
+                borderRadius: "16px",
+                minHeight: "120px",
+                margin: "8px",
+                boxShadow: isDark
+                  ? "none"
+                  : "0 4px 48px rgba(0,0,0,0.08)",
+              }}
             >
               <textarea
                 ref={textareaRef}
@@ -448,13 +435,11 @@ export function MessageInput({
                 onKeyDown={handleKeyDown}
                 placeholder="Type your message..."
                 rows={1}
-                className={`w-full bg-transparent resize-none outline-none text-base ${
-                  isDark
-                    ? "text-white placeholder-[rgba(255,255,255,0.48)]"
-                    : "text-[#1d1d1f] placeholder-[rgba(0,0,0,0.48)]"
-                }`}
+                className="w-full bg-transparent resize-none outline-none font-text"
                 style={{
-                  fontFamily: "'Times New Roman', Times, serif",
+                  fontSize: "16px",
+                  letterSpacing: "-0.20px",
+                  color: isDark ? "#ffffff" : "#1d1d1f",
                   lineHeight: "1.5",
                   maxHeight: "600px",
                   minHeight: "80px",
@@ -465,12 +450,10 @@ export function MessageInput({
               />
 
               <div className="absolute left-3 bottom-3 flex items-center gap-2">
-                {/* Attachment button */}
                 {renderAttachmentButton(true)}
               </div>
 
               <div className="absolute right-3 bottom-3 flex items-center gap-2">
-                {/* Database Selector - 仅 SQL/Code Agent 时显示 */}
                 {selectedAgent !== "general" && (
                   <DatabaseSelector
                     selectedDb={selectedDb}
@@ -479,7 +462,6 @@ export function MessageInput({
                   />
                 )}
 
-                {/* Agent Selector */}
                 <AgentSelector
                   selectedAgent={selectedAgent}
                   onAgentChange={setSelectedAgent}
@@ -487,7 +469,6 @@ export function MessageInput({
                   size="small"
                 />
 
-                {/* Model Selector */}
                 {renderModelSelector(true)}
 
                 {renderSendButton(true)}
@@ -497,10 +478,14 @@ export function MessageInput({
 
           <div className="flex items-center justify-center mt-2 px-1">
             <p
-              className={`text-xs ${isDark ? "text-[rgba(255,255,255,0.48)]" : "text-[rgba(0,0,0,0.48)]"}`}
+              className="font-text"
               style={{
-                fontFamily:
-                  "SF Pro Text, -apple-system, BlinkMacSystemFont, sans-serif",
+                fontSize: "12px",
+                fontWeight: 600,
+                letterSpacing: "0.04em",
+                color: isDark
+                  ? "rgba(255,255,255,0.25)"
+                  : "rgba(0,0,0,0.25)",
               }}
             >
               Enter to send · Shift+Enter for new line

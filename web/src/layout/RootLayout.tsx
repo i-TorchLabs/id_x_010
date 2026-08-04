@@ -3,7 +3,7 @@ import { Providers } from "@/layout/Providers";
 import "@/assets/styles/globals.css";
 
 export const metadata: Metadata = {
-    title: "SME AI Labs",
+    title: "TorchLabs",
     description:
         "Natural language Q&A, database retrieval, and executable code generation powered by advanced AI.",
     icons: {

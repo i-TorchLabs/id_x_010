@@ -53,7 +53,7 @@ export function MessageList({
       className="h-full overflow-y-auto scroll-smooth"
       style={{
         scrollbarWidth: "thin",
-        scrollbarColor: isDark ? "#3a3a3c #000000" : "#d1d1d6 #f5f5f7",
+        scrollbarColor: "var(--divider) transparent",
         padding: "16px",
       }}
     >
@@ -66,28 +66,33 @@ export function MessageList({
             className="text-center py-12"
           >
             <div
-              className={`inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-4 ${
-                isDark ? "bg-[#1c1c1e]" : "bg-[#e8e8ed]"
-              }`}
+              className="inline-flex items-center justify-center w-16 h-16 mb-4"
+              style={{
+                borderRadius: "20px",
+                background: "var(--input-bg)",
+              }}
             >
               <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 20 20">
                 <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
               </svg>
             </div>
             <h3
-              className={`text-lg font-medium mb-2 ${isDark ? "text-white" : "text-[#1d1d1f]"}`}
+              className="font-display"
               style={{
-                fontFamily:
-                  "SF Pro Display, -apple-system, BlinkMacSystemFont, sans-serif",
+                fontSize: "24px",
+                fontWeight: 600,
+                letterSpacing: "-0.32px",
+                color: "var(--fg)",
+                marginBottom: "8px",
               }}
             >
               Welcome to AI Assistant
             </h3>
             <p
-              className={`text-sm ${isDark ? "text-[rgba(255,255,255,0.48)]" : "text-[rgba(0,0,0,0.48)]"}`}
+              className="font-text"
               style={{
-                fontFamily:
-                  "SF Pro Text, -apple-system, BlinkMacSystemFont, sans-serif",
+                fontSize: "14px",
+                color: "var(--fg3)",
               }}
             >
               Start a conversation and I'll help you with anything you need
