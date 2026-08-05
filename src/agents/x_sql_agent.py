@@ -42,7 +42,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import MessagesState
 from langgraph.graph.state import CompiledStateGraph
 from utils.log_util import get_request_id, logger
-from x_models.id_x_010..models.x_models import (
+from x_models.id_x_010.src.models.x_models import (
     get_external_model_config,
 )
 

@@ -109,7 +109,7 @@ export default function LoginForm({
       {/* Header */}
       <div className="text-center mb-9">
         <h1 className="text-[28px] font-semibold mb-1.5 leading-[1.14] tracking-[-0.28px] text-foreground">
-          Welcome to TorchLabs
+          Welcome to SME AI Lab
         </h1>
         <p className="text-[14px] text-muted">Please enter your details</p>
       </div>

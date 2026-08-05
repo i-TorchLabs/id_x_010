@@ -11,9 +11,9 @@ from litestar.response import Stream
 from sqlalchemy import select
 
 from utils.log_util import get_request_id, logger, request_id_var
-from x_models.id_x_010..agents.x_langgraph_supervisor import get_orchestrator
-from x_models.id_x_010..agents.x_sql_agent import SQLAgent
-from x_models.id_x_010..models.x_models import (
+from x_models.id_x_010.src.agents.x_langgraph_supervisor import get_orchestrator
+from x_models.id_x_010.src.agents.x_sql_agent import SQLAgent
+from x_models.id_x_010.src.models.x_models import (
     ExternalModel,
     LocalModel,
     PasswordResetToken,
@@ -21,7 +21,7 @@ from x_models.id_x_010..models.x_models import (
     UserToken,
     get_session,
 )
-from x_models.id_x_010..schemas.x_schemas import (
+from x_models.id_x_010.src.schemas.x_schemas import (
     AuthResponseType,
     ChatInput,
     ChatResponseType,
@@ -37,7 +37,7 @@ from x_models.id_x_010..schemas.x_schemas import (
     StreamChunkType,
     UserInfoType,
 )
-from x_models.id_x_010..views.x_views import (
+from x_models.id_x_010.src.views.x_views import (
     get_conversation_history,
     merge_context,
     save_conversation_log,

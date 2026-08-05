@@ -136,7 +136,7 @@ export function CenterHero({
                                 color: isDark ? "#ffffff" : "#1d1d1f",
                             }}
                         >
-                            TorchLabs
+                          Data Agent
                         </h1>
                         <motion.p
                             className="font-text"

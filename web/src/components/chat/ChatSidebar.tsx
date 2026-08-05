@@ -75,7 +75,7 @@ export function ChatSidebar({
                                 color: "var(--fg)",
                             }}
                         >
-                            TorchLabs
+                          Data Agent
                         </span>
                         <span
                             className="font-text leading-tight"

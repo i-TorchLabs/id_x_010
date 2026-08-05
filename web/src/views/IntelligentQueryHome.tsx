@@ -10,8 +10,9 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "@heroui/react";
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:18080/b/048";
+import { BASE_URL } from "@/utils/config";
+
+const API_BASE = `${BASE_URL}/b/id_x_010`;
 
 type ChatMessage = {
   id: string;
