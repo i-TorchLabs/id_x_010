@@ -28,7 +28,7 @@ id_x_010 是 TorchLabs/i-Torch（id_x_000）主程序的业务插件，定位为
 
 - 多智能体编排：基于 LangGraph 状态图构建 `LangGraphSupervisor`，通过 `router` 节点分发至 `general_agent`、`sql_agent`、`code_agent`，节点命名与状态字段统一。
 - 双路由层意图识别：提供语义路由器（Semantic Router，基于向量匹配）与 LLM 路由器（LLM Router，基于结构化输出）两类路由器，可按场景切换。
-- SQL 安全闭环：SQL 安全检查器（SQL Security Checker）白名单只放行 `SELECT`/`WITH`，对 16 类危险关键字与注入模式拦截，并设人工审批（human approval）节点等待人工批准。
+- SQL 安全闭环：SQL 安全检查器（SQL Security Checker）白名单只放行 `SELECT`/`WITH`，对多类危险关键字与注入模式拦截，并设人工审批（human approval）节点等待人工批准。
 - GraphQL 加 SSE 双通道：Strawberry 暴露查询/变更/订阅（Query/Mutation/Subscription）三类操作，`/graphql/stream` 以 SSE 转发订阅，`/sql-approval` 单独承载审批流。
 - 多轮上下文固库：对话以会话标识（conversation_id）关联，对话日志（ConversationLog）落库后由上下文合并（merge_context）合并历史与前端传入上下文，默认截断至最近 5 轮。
 
@@ -36,8 +36,8 @@ id_x_010 是 TorchLabs/i-Torch（id_x_000）主程序的业务插件，定位为
 
 1. **意图双引擎可热切** —— LLM 路由器使用 `with_structured_output` 强约束大语言模型给出意图/置信度/推理过程，语义路由器以嵌入向量匹配样例语句，`use_llm_router` 一参切换，路由失败统一回退至通用意图。
 2. **SQL 审批人机协同** —— LangGraph 将人工审批设为节点而非边，审批状态取批准/拒绝/取消三态，拒绝后回到查询生成节点重写 SQL，取消则短路返回，形成可审计的人机协同链路。
-3. **白名单与注入双检** —— SQL 安全检查器先正则提取首关键字再扫描 14 类危险词与 6 类注入模式（多语句执行、注释截断、UNION 注入等），非 `SELECT`/`WITH` 一律拒绝，将安全决策前置到执行前。
-4. **数据库隔离连接** —— 数据库连接（Database Connection）使用 `AGENT_DB_*` 环境变量，与业务主库 `DB_*` 物理隔离，并通过连接池预探测（pool_pre_ping）、独立异步引擎（create_async_engine）防止 SQL 智能体慢查询拖垮主连接池。
+3. **白名单与注入双检** —— SQL 安全检查器先正则提取首关键字再扫描危险词与注入模式（多语句执行、注释截断、UNION 注入等），非 `SELECT`/`WITH` 一律拒绝，将安全决策前置到执行前。
+4. **模块级数据库隔离** —— 本插件映射的业务库名由模块内 `.env` 的 `DB_NAME` 独立定义，主程序按模块构建独立连接池；SQL 智能体另用 `AGENT_DB_*` 环境变量与业务主库物理隔离，并通过连接池预探测（pool_pre_ping）、独立异步引擎（create_async_engine）防止慢查询拖垮主连接池。
 5. **实例缓存降本** —— 监督者获取（get_supervisor）、SQL 智能体获取（get_sql_agent）以模型类型/模型名/库名为键缓存编译后的状态图，避免每次请求重新构图与建连，相同参数命中缓存即复用。
 6. **思考过程分离流** —— 流式回调处理器（StreamingHandler）实时解析 `<thinking>...</thinking>` 标签，思考与正文分通道输出，前端可独立渲染推理折叠区，不影响正文打字机效果。
 7. **模型配置热回退** —— 外部模型配置获取优先查数据库 `external_models` 表，失败时回退环境变量并标注回退模式，模型列表接口在数据库不可用时仍可用。
@@ -57,7 +57,7 @@ id_x_010 是 TorchLabs/i-Torch（id_x_000）主程序的业务插件，定位为
 | 语义路由 | Semantic Router | ≥ 0.1 | 向量意图识别 |
 | 数据库 | PostgreSQL | ≥ 14 | 业务库与对话日志 |
 | ORM | SQLAlchemy + asyncpg | ≥ 2.0 | 异步会话与连接池 |
-| 前端框架 | Next.js | 16.2.3 | React 服务端渲染 |
+| 前端框架 | Next.js | 16.x | React 服务端渲染 |
 | UI 组件 | HeroUI + Tailwind CSS | ^3.2 / ^4 | 组件库与样式 |
 | 反向代理 | HAProxy | — | SSL 终止与路由分区 |
 
@@ -100,7 +100,7 @@ graph TB
   end
 
   subgraph L7[数据层]
-    BizDB[(业务库 DB_*)]
+    BizDB[(业务库 模块.env DB_NAME)]
     AgentDB[(SQL 库 AGENT_DB_*)]
     ConvLog[(ConversationLog 对话日志)]
   end
@@ -131,7 +131,7 @@ graph TB
   General --> Local
   Router --> Emb
   L4 -.->|写入/读取上下文| ConvLog
-  BizDB -.->|主程序注入| L4
+  BizDB -.->|主程序按模块注入| L4
 ```
 
 <p align="center">图 5-1 id_x_010 分层架构图</p>
@@ -203,6 +203,7 @@ sequenceDiagram
 ```text
 id_x_010/
 ├── x_plugin.py                  # 插件入口: load_plugin() 返回插件实例
+├── .env.template                # 模块环境变量模板: DB_NAME / 模型配置 / AGENT_DB_*
 ├── requirements.txt             # Python 依赖清单
 ├── LICENSE                      # AGPL-3.0 许可证
 ├── src/
@@ -213,34 +214,42 @@ id_x_010/
 │   │   ├── x_sql_agent.py             # SQLAgent + SQLSecurityChecker + DatabaseConnection
 │   │   └── x_general_agent.py         # GeneralAgent + StreamingHandler
 │   ├── models/
-│   │   └── x_models.py         # SQLAlchemy ORM: User/ConversationLog/ExternalModel 等
+│   │   └── x_models.py          # SQLAlchemy ORM: User/ConversationLog/ExternalModel 等
 │   ├── schemas/
-│   │   └── x_schemas.py        # Strawberry 类型: ChatInput/StreamChunkType/AuthResponseType
+│   │   └── x_schemas.py         # Strawberry 类型: ChatInput/StreamChunkType/AuthResponseType
 │   ├── views/
-│   │   └── x_views.py          # 对话日志存取 + 上下文合并
+│   │   └── x_views.py           # 对话日志存取 + 上下文合并
 │   └── graphql/
-│       └── __init__.py         # GraphQL 包占位
-├── web/                        # Next.js 前端
-│   ├── package.json            # next 16.2.3 / react 19.2.4 / HeroUI
-│   ├── next.config.ts          # Next.js 配置
-│   ├── tsconfig.json           # TypeScript 配置
+│       └── __init__.py          # GraphQL 包占位
+├── web/                         # Next.js 前端
+│   ├── package.json             # next 16.x / react 19.x / HeroUI
+│   ├── Dockerfile               # 前端容器构建
+│   ├── next.config.ts           # Next.js 配置
+│   ├── tsconfig.json            # TypeScript 配置
 │   ├── src/
-│   │   ├── app/                # Next.js App Router 页面
-│   │   ├── api/                # 前端 BFF 路由
-│   │   ├── components/         # React 组件
-│   │   ├── views/              # 视图组装
-│   │   ├── services/           # GraphQL/SSE 客户端封装
-│   │   ├── redux/              # 状态管理
-│   │   ├── hooks/              # 自定义 Hook
-│   │   ├── context/            # React Context
-│   │   ├── ui/                 # 通用 UI
-│   │   └── utils/              # 工具函数
-│   └── public/                 # 静态资源
+│   │   ├── app/                 # Next.js App Router 页面
+│   │   ├── api/                 # 前端 BFF 接口封装
+│   │   ├── components/          # React 组件
+│   │   ├── layout/              # 根布局与 Providers
+│   │   ├── views/               # 视图组装
+│   │   ├── services/            # GraphQL/SSE 客户端封装
+│   │   ├── redux/               # 状态管理
+│   │   ├── hooks/               # 自定义 Hook
+│   │   ├── context/             # React Context
+│   │   ├── ui/                  # 通用 UI
+│   │   ├── assets/              # 样式与静态资源
+│   │   ├── data/                # 静态数据
+│   │   └── utils/               # 工具函数
+│   └── public/                  # 静态资源
 ├── ops/
-│   ├── init.sql                # PostgreSQL 建表与触发器脚本
-│   ├── id_x_010_service.service      # 后端 systemd 单元
-│   ├── id_x_010_web.service          # 前端 systemd 单元
-│   └── id_x_010[HAProxy].conf        # HAProxy 反向代理配置
+│   ├── init.sql                 # PostgreSQL 建表与触发器脚本
+│   ├── init/                    # 初始化辅助脚本
+│   ├── up.sh / down.sh          # 一键启停脚本
+│   ├── Dockerfile.service       # 后端容器构建
+│   ├── haproxy.cfg              # HAProxy 主配置片段
+│   ├── id_x_010[HAProxy].conf   # HAProxy 反向代理配置
+│   ├── id_x_010_service.service # 后端 systemd 单元
+│   └── id_x_010_web.service     # 前端 systemd 单元
 └── docs/
     ├── 架构描述.md              # 分层架构说明
     ├── 实现要求.md              # 需求与验收点
@@ -262,7 +271,7 @@ id_x_010 对外接口由 `register_routers` 统一注册至主程序 `/b/id_x_01
 ### 8.1 GraphQL 查询 (Query)
 
 - `health`：健康检查，返回 `{ status: "ok", service: "id_x_010" }`。
-- `getModels`：获取模型列表，优先查 `external_models`/`local_models` 表，失败回退环境变量 `EXTERNAL_BASE_URL`、`LOCAL_MODEL_BASE_URL`。
+- `getModels`：获取模型列表，优先查 `external_models`/`local_models` 表，失败回退环境变量。
 - `getDatabases`：从 `AGENT_DB_LIST` 解析可用数据库，支持 JSON 与逗号分隔两种格式。
 
 ### 8.2 GraphQL 变更 (Mutation)
@@ -327,7 +336,7 @@ curl -X POST "<BASE_URL>/b/id_x_010/sql-approval" \
 - Python ≥ 3.10（推荐 3.10）
 - Node.js ≥ 20（前端构建，Next.js 16 建议 Node 20+）
 - PostgreSQL ≥ 14（业务库与对话日志库，可分离部署）
-- 主程序 i-Torch（id_x_000）已就绪并配置 `AGENT_DB_*` 凭据
+- 主程序 i-Torch（id_x_000）已就绪
 
 ### 9.2 安装 (Installation)
 
@@ -354,16 +363,29 @@ MODELS = [
 
 ### 9.3 配置 (Configuration)
 
-初始化业务库表结构（替换连接参数）：
+环境变量加载优先级（高 → 低，高优先级覆盖低优先级同名变量）：
+
+1. 模块 `.env`（`x_models/id_x_010/.env`）
+2. 项目根 `.env`（`i-Core/.env`）
+3. `config/base_config.toml`（兜底默认值）
+
+复制模块环境变量模板并填写：
 
 ```bash
-psql -h 127.0.0.1 -p 15432 -U postgres -d id_x_010 \
-  -f x_models/id_x_010/ops/init.sql
+cp x_models/id_x_010/.env.template x_models/id_x_010/.env
 ```
 
-在主程序 `.env` 或模块 `x_models/id_x_010/.env` 中配置 SQL 智能体目标库（与业务库隔离）：
+模块 `.env` 关键项：
 
 ```bash
+# 本模块映射的业务库名（主程序按模块独立建连）
+DB_NAME=id_x_010
+
+# 模型配置（external | local）
+LLM_PROVIDER=external
+EXTERNAL_API_KEY=<外部模型 API Key>
+
+# SQL 智能体目标库（与业务库隔离，需加密）
 AGENT_DB_HOST_ENC=<加密后主机>
 AGENT_DB_PORT_ENC=<加密后端口>
 AGENT_DB_NAME_ENC=<加密后库名>
@@ -372,7 +394,16 @@ AGENT_DB_PASSWORD_ENC=<加密后密码>
 AGENT_DB_LIST=primary,analytics
 ```
 
-加密使用主程序 `utils/encrypt_util.py`。前端环境变量写入 `web/.env.local`，至少包含 `NEXT_PUBLIC_API_BASE`。
+数据库通用连接参数（host/port/username/password）由主程序 `config/base_config.toml` 的 `[DATABASE]` 段统一提供，加密使用主程序 `utils/encrypt_util.py`。
+
+初始化业务库表结构（替换连接参数）：
+
+```bash
+psql -h 127.0.0.1 -p 15432 -U postgres -d id_x_010 \
+  -f x_models/id_x_010/ops/init.sql
+```
+
+前端环境变量写入 `web/.env.local`（可参考 `web/.env.local.example`），至少包含 `NEXT_PUBLIC_API_BASE`。
 
 ### 9.4 运行 (Run)
 
@@ -387,25 +418,22 @@ cnpm run dev      # 开发模式
 cnpm run build && cnpm run start   # 生产模式
 ```
 
-后端默认监听主程序配置端口（如 `0.0.0.0:7000`），前端 Next.js 默认监听 `2000`。生产环境通过 HAProxy 将 `/b/*` 路由到后端、`/f/*` 与 `/_next/*` 路由到前端，配置见 `ops/id_x_010[HAProxy].conf`。
+后端默认监听主程序配置端口（如 `0.0.0.0:7000`），前端 Next.js 默认监听 `2000`。生产环境通过 HAProxy 将 `/b/*` 路由到后端、`/f/*` 与 `/_next/*` 路由到前端，配置见 `ops/id_x_010[HAProxy].conf`。也可使用一键脚本 `ops/up.sh` / `ops/down.sh` 启停。
 
 ### 9.5 容器部署 (可选)
 
-项目当前未内置 Dockerfile，可参考以下方式构建（以 Podman 为例，Docker 同理）：
+后端与前端分别提供 `ops/Dockerfile.service` 与 `web/Dockerfile`，以 Podman 为例（Docker 同理）：
 
 ```bash
-cat > Dockerfile <<'EOF'
-FROM python:3.10-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
-CMD ["python", "../../main.py"]
-EOF
+# 后端镜像（在主程序根目录构建，需包含主程序代码）
+podman build -f x_models/id_x_010/ops/Dockerfile.service -t id_x_010:latest .
 
-podman build -t id_x_010:latest .
+# 前端镜像
+podman build -f x_models/id_x_010/web/Dockerfile -t id_x_010-web:latest x_models/id_x_010/web
+
+# 运行（注入模块 .env）
 podman run -d --name id_x_010 -p 7000:7000 \
-  --env-file .env id_x_010:latest
+  --env-file x_models/id_x_010/.env id_x_010:latest
 ```
 
 若使用 systemd 裸机部署，已提供单元文件：
@@ -418,14 +446,12 @@ sudo systemctl enable --now id_x_010_service.service
 sudo systemctl enable --now id_x_010_web.service
 ```
 
-若使用 Kubernetes，可用 `kubectl` 部署：
+若使用 Kubernetes，可用 `kubectl` 部署（清单需自行补全数据库连接、卷挂载与 `.env` 的 Secret 映射）：
 
 ```bash
 kubectl apply -f ops/deployment.yaml
 kubectl rollout status deployment/id_x_010
 ```
-
-部署清单需自行补全数据库连接、卷挂载与 `.env` 的 Secret 映射。
 
 ---
 
