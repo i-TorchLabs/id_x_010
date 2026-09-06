@@ -29,7 +29,7 @@ venv/
 **/build/
 *.log
 
-# 运行时数据（由 compose 挂卷持久化，不应进镜像）
+# 运行时数据（由 up.sh 命名卷持久化，不应进镜像）
 runtime/
 local-storage/
 logs/
@@ -42,7 +42,7 @@ scripts/
 prompts/
 ops/
 
-# Secrets / 本地配置（compose 通过 env / 挂载 .env 注入）
+# Secrets / 本地配置（up.sh 通过 --env-file 注入容器，无需进镜像）
 .env
 .env.*
 !.env.example

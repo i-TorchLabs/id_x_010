@@ -16,19 +16,23 @@ WORKDIR /app
 ARG NEXT_PUBLIC_BASE_URL
 ARG NEXT_PUBLIC_SUB_VERSION
 
-# 安装依赖（用 npm 扁平化 node_modules，自动解析 @heroui/react 的 peer dep；
-# npmmirror 镜像源保持国内构建速度）
-COPY package.json ./
-RUN npm install --registry=https://registry.npmmirror.com
+# 按 lockfile 严格安装（可复现构建；npm 扁平化 node_modules 自动解析
+# @heroui/react 的 peer dep；npmmirror 镜像源保持国内构建速度）
+COPY package.json package-lock.json ./
+RUN npm ci --registry=https://registry.npmmirror.com
 
-# 再拷贝源码（含 .env.local，Next.js 构建时自动加载 NEXT_PUBLIC_* 变量）
+# 再拷贝源码（.dockerignore 已排除 node_modules / .next / .env.local，
+# NEXT_PUBLIC_* 由下方 ENV 注入，优先级高于 .env.local）
 COPY . .
 
-# 显式导出 ARG 为 ENV，确保 Next.js 构建期一定能拿到（.env.local 优先级低于环境变量）
+# 显式导出 ARG 为 ENV，确保 Next.js 构建期一定能拿到
 ENV NEXT_PUBLIC_BASE_URL=${NEXT_PUBLIC_BASE_URL} \
     NEXT_PUBLIC_SUB_VERSION=${NEXT_PUBLIC_SUB_VERSION}
 
-RUN npm run build
+# 构建后裁掉 devDependencies（typescript / tailwind / @types 等），
+# 运行阶段只携带生产依赖
+RUN npm run build \
+    && npm prune --omit=dev
 
 # --------------------------- 运行阶段 ---------------------------
 FROM node:24-alpine
@@ -39,15 +43,16 @@ ENV NODE_ENV=production \
     PORT=2000 \
     HOSTNAME=0.0.0.0
 
-# 拷贝构建产物与运行时所需文件
-COPY --from=build /app/package.json ./
+# 拷贝构建产物与运行时所需文件（node 镜像自带非 root 的 node 用户）
+COPY --from=build --chown=node:node /app/package.json ./
+COPY --from=build --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/.next ./.next
+COPY --from=build --chown=node:node /app/public ./public
+COPY --from=build --chown=node:node /app/next.config.ts ./
+COPY --from=build --chown=node:node /app/postcss.config.mjs ./
+COPY --from=build --chown=node:node /app/tsconfig.json ./
 
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/.next ./.next
-COPY --from=build /app/public ./public
-COPY --from=build /app/next.config.ts ./
-COPY --from=build /app/postcss.config.mjs ./
-COPY --from=build /app/tsconfig.json ./
+USER node
 
 EXPOSE 2000
 CMD ["npm", "start"]

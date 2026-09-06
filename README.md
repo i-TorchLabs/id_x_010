@@ -422,18 +422,29 @@ cnpm run build && cnpm run start   # 生产模式
 
 ### 9.5 容器部署 (可选)
 
-后端与前端分别提供 `ops/Dockerfile.service` 与 `web/Dockerfile`，以 Podman 为例（Docker 同理）：
+提供一键脚本 `ops/up.sh` / `ops/down.sh`（基于 Podman），自动完成镜像构建、Pod 创建与四容器编排（db / service / web / haproxy）：
 
 ```bash
-# 后端镜像（在主程序根目录构建，需包含主程序代码）
-podman build -f x_models/id_x_010/ops/Dockerfile.service -t id_x_010:latest .
+cd x_models/id_x_010/ops
 
-# 前端镜像
-podman build -f x_models/id_x_010/web/Dockerfile -t id_x_010-web:latest x_models/id_x_010/web
+# 首次运行会从 .env.example 生成 .env（数据库口令、LLM、SQL Agent 目标库等），
+# 修改后重新执行即完成部署；已存在的容器/卷会幂等跳过
+bash up.sh              # 启动（镜像不存在时自动构建）
+bash up.sh --build      # 强制重建镜像后启动
+bash down.sh            # 停止并清理容器与自建镜像（保留数据卷）
+bash down.sh --volumes  # 连同数据库与日志卷一并清除（不可恢复）
+```
 
-# 运行（注入模块 .env）
-podman run -d --name id_x_010 -p 7000:7000 \
-  --env-file x_models/id_x_010/.env id_x_010:latest
+启动后经 HAProxy 统一入口访问：`http://localhost:8010/`（端口由 `.env` 的 `POD_PORT` 控制）；`/b/id_x_010/*` 转发后端，其余路径转发前端，路由规则见 `ops/haproxy.cfg`。
+
+也可手动构建镜像（后端镜像构建上下文必须是主程序仓库根）：
+
+```bash
+# 后端镜像（多阶段构建，非 root 运行，内置 GraphQL 健康检查）
+podman build -f x_models/id_x_010/ops/Dockerfile.service -t id_x_010-service .
+
+# 前端镜像（按 package-lock.json 严格安装，运行时仅含生产依赖）
+podman build -f x_models/id_x_010/web/Dockerfile -t id_x_010-web x_models/id_x_010/web
 ```
 
 若使用 systemd 裸机部署，已提供单元文件：

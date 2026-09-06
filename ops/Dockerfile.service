@@ -1,55 +1,91 @@
-# id_x_010 后端服务镜像（Litestar + Granian，引擎层 i-Torch 作为 ASGI 宿主）。
+# id_x_010 后端服务镜像（Litestar + Granian，引擎层 i-Core 作为 ASGI 宿主）。
 #
-# 构建上下文必须是 i-Torch 仓库根，这样引擎层（main.py / src / utils / config）
+# 构建上下文必须是 i-Core 仓库根，这样引擎层（main.py / src / utils / config）
 # 与业务插件（x_models/id_x_010）能被一并复制进镜像，保持原有相对 import
 # 与 config 解析（utils/config_parse_util.py 按 __file__ 定位 config/）。
 #
 #   podman build -t id_x_010-service -f x_models/id_x_010/ops/Dockerfile.service .
 
-FROM python:3.10-slim
+# --------------------------- 构建阶段 ---------------------------
+FROM python:3.12-slim AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    TZ=Asia/Shanghai
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# 编译型依赖（psycopg2 等）所需工具链仅存在于本阶段，不进入最终镜像：
+#   build-essential  编译 C 扩展
+#   libpq-dev        psycopg2 编译头文件
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 用 venv 承载全部 Python 依赖，便于整体拷贝到运行阶段
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# 先装依赖（利用 layer cache：requirements 变化才重装）。
+# 插件 requirements.txt 覆盖引擎层依赖（granian / litestar / advanced_alchemy 等）。
+COPY x_models/id_x_010/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+# --------------------------- 运行阶段 ---------------------------
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    TZ=Asia/Shanghai \
+    HOME=/home/app \
+    MPLCONFIGDIR=/tmp/matplotlib
 
 WORKDIR /app/i-Torch
 
-# 系统依赖：
-#   build-essential  编译 psycopg2 wheel
-#   libpq-dev        psycopg2 编译头
+# 运行期系统依赖（不含编译工具链）：
+#   libpq5           psycopg2 运行时库
 #   curl             容器健康检查
 #   libgl1           matplotlib 运行时
 #   libglib2.0-0     matplotlib 字体渲染
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        build-essential \
-        libpq-dev \
+        libpq5 \
         curl \
         libgl1 \
         libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 app \
+    && useradd --uid 10001 --gid app --create-home --shell /usr/sbin/nologin app \
+    && mkdir -p /app/i-Torch/logs /tmp/matplotlib \
+    && chown -R app:app /app/i-Torch /tmp/matplotlib
 
-# 先装依赖（利用 docker layer cache：requirements 变化才重装）
-COPY x_models/id_x_010/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+COPY --from=builder /opt/venv /opt/venv
 
 # 按需复制 id_x_010 运行所需文件，不带其他插件目录。
 #   main.py / src / utils / config    引擎层与配置
 #   x_models/_contracts               插件契约公共包（id_x_010 的 x_plugin.py 依赖）
 #   x_models/id_x_010                 业务插件本体
-COPY main.py /app/i-Torch/main.py
-COPY src /app/i-Torch/src
-COPY utils /app/i-Torch/utils
-COPY config /app/i-Torch/config
-COPY x_models/_contracts /app/i-Torch/x_models/_contracts
-COPY x_models/id_x_010 /app/i-Torch/x_models/id_x_010
+# 注意：仓库根 .dockerignore 已排除 **/.env*，模块密钥不会进入镜像。
+COPY --chown=app:app main.py /app/i-Torch/main.py
+COPY --chown=app:app src /app/i-Torch/src
+COPY --chown=app:app utils /app/i-Torch/utils
+COPY --chown=app:app config /app/i-Torch/config
+COPY --chown=app:app x_models/_contracts /app/i-Torch/x_models/_contracts
+COPY --chown=app:app x_models/id_x_010 /app/i-Torch/x_models/id_x_010
 
-# 运行时目录（logs 由 compose 挂卷持久化）
-RUN mkdir -p /app/i-Torch/logs
+USER app
 
 EXPOSE 7000
+
+# 真实 GraphQL 健康查询（/b/id_x_010/ 前缀在中间件免鉴权白名单内，
+# 无需 Bearer；curl -f 对非 2xx 返回非零，比裸 GET 更严格）。
+# up.sh 中的 --health-cmd 与本指令等价，二者取其一即可生效。
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=10 \
+    CMD curl -sf -X POST http://127.0.0.1:7000/b/id_x_010/graphql \
+        -H "Content-Type: application/json" \
+        -d '{"query":"{ health { status } }"}' || exit 1
 
 # Granian 作为 ASGI 服务器跑引擎层 main:obj（Litestar 实例）。
 # LISTEN_PORT 在 base_config.toml 中为 7000。

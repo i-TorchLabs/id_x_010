@@ -1,9 +1,31 @@
 #!/usr/bin/env bash
+# ====================================================================
+# id_x_010 一体化容器部署停止/清理脚本（podman）
+#
+# 用法：
+#   bash down.sh              # 移除容器、Pod 与自建镜像（保留数据卷）
+#   bash down.sh --volumes    # 同时删除数据卷（数据库与日志，不可恢复！）
+# ====================================================================
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# 项目名称（取自上级目录名，与项目同名）
-PROJECT_NAME=$(basename "$(dirname "$(pwd)")")
+PROJECT_NAME="id_x_010"
+
+REMOVE_VOLUMES=0
+for arg in "$@"; do
+  case "$arg" in
+    -v|--volumes) REMOVE_VOLUMES=1 ;;
+    -h|--help)
+      echo "用法: bash down.sh [--volumes]"
+      echo "  --volumes, -v   同时删除数据卷（${PROJECT_NAME}_db / ${PROJECT_NAME}_logs，不可恢复）"
+      exit 0
+      ;;
+    *)
+      echo "[down] 未知参数: $arg（支持 --volumes / --help）" >&2
+      exit 1
+      ;;
+  esac
+done
 
 # ============================================
 # 1. 移除容器（顺序与启动相反）
@@ -37,4 +59,18 @@ for image in "${PROJECT_NAME}-service" "${PROJECT_NAME}-web"; do
   fi
 done
 
-echo "[down] 容器、镜像与 Pod 已清理"
+# ============================================
+# 4. 可选：删除数据卷（默认保留，数据库不丢）
+# ============================================
+if [ "$REMOVE_VOLUMES" = "1" ]; then
+  for vol in "${PROJECT_NAME}_db" "${PROJECT_NAME}_logs"; do
+    if podman volume exists "$vol"; then
+      podman volume rm "$vol" >/dev/null
+      echo "[down] 数据卷 $vol 已删除"
+    fi
+  done
+else
+  echo "[down] 数据卷 ${PROJECT_NAME}_db / ${PROJECT_NAME}_logs 已保留（如需清除: bash down.sh --volumes）"
+fi
+
+echo "[down] 清理完成"

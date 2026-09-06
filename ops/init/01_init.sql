@@ -1,12 +1,7 @@
 -- PostgreSQL 初始化脚本
--- 由 db 容器 docker-entrypoint-initdb.d 在首次启动时自动执行
-
--- ============================================
--- 0. 创建数据库 id_x_010（已存在则跳过）
--- ============================================
-SELECT 'CREATE DATABASE id_x_010' WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'id_x_010')\gexec
-
-\c id_x_010
+-- 由 db 容器 docker-entrypoint-initdb.d 在首次启动时自动执行。
+-- entrypoint 已在 POSTGRES_DB 指定的库内建立连接，本脚本不再
+-- 硬编码库名（改 POSTGRES_DB 即可整体切换目标库）。
 
 -- ============================================
 -- 1. 用户表 (users)
