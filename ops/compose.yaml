@@ -1,0 +1,102 @@
+# ====================================================================
+# id_x_010 一体化部署（podman-compose）
+#
+# 与 up.sh 等价的四容器拓扑（db / service / web / haproxy）；
+# 容器同处项目默认 bridge 网络，以服务名（DNS 别名）互访，
+# 仅 haproxy 的 8080 发布到宿主机 ${POD_PORT:-8010}。
+#
+# 用法（在本目录 ops/ 下执行）：
+#   podman-compose up -d --build          # 构建并启动
+#   podman-compose up -d --build --no-cache   # 全量无缓存重建
+#   podman-compose down                   # 停止并移除容器/Pod（保留数据卷）
+#
+# 注意：本文件与 up.sh/down.sh 是两套并存的管理方式，请勿混用
+# （容器命名不同，混用会造成端口冲突）。
+# ====================================================================
+
+name: id_x_010
+
+# 网络说明：podman-compose 1.5.0 会给每个容器强制附加独立 --network
+# （即使 x-podman.pod_args 设了 --share=net 也无效），容器间 127.0.0.1
+# 不可互访。因此本文件采用标准 compose 模式：项目默认 bridge 网络 +
+# DNS 服务名互访（db / service / web），与 up.sh 的共享 netns Pod 不同。
+# 受此影响：service 的 DB_HOST=db；haproxy 使用 haproxy.compose.cfg。
+
+services:
+  # -- PostgreSQL 18：数据卷 id_x_010_db，首次启动执行 ./init 下脚本 --
+  db:
+    image: docker.io/library/postgres:18
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      - id_x_010_db:/var/lib/postgresql
+      - ./init:/docker-entrypoint-initdb.d:ro,z
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # -- 后端：Litestar + Granian（构建上下文必须是 i-Core 仓库根） --
+  service:
+    build:
+      context: ../../../
+      dockerfile: x_models/id_x_010/ops/Dockerfile.service
+    image: localhost/id_x_010-service
+    env_file: .env
+    environment:
+      DB_NAME: ${POSTGRES_DB:-id_x_010}
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USERNAME: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?请在 ops/.env 中设置 POSTGRES_PASSWORD}
+      PROJECT_PATH: /app/i-Torch
+    restart: unless-stopped
+    volumes:
+      - id_x_010_logs:/app/i-Torch/logs
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -X POST http://127.0.0.1:7000/b/id_x_010/graphql -H 'Content-Type: application/json' -d '{\"query\":\"{ health { status } }\"}' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # -- 前端：Next.js（NEXT_PUBLIC_* 必须在构建期注入） --
+  web:
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_BASE_URL: ""
+        NEXT_PUBLIC_SUB_VERSION: "/b/id_x_010/graphql"
+    image: localhost/id_x_010-web
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:2000/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # -- 入口：haproxy :8080 → 宿主机 8010（/b/id_x_010/ 走后端，其余走前端） --
+  haproxy:
+    image: docker.io/library/haproxy:3.0
+    restart: unless-stopped
+    volumes:
+      - ./haproxy.compose.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro,z
+    ports:
+      - "${POD_PORT:-8010}:8080"
+    depends_on:
+      - service
+      - web
+
+# 显式固定卷名（不加 compose 项目前缀），与 up.sh 使用的卷保持一致
+volumes:
+  id_x_010_db:
+    name: id_x_010_db
+  id_x_010_logs:
+    name: id_x_010_logs

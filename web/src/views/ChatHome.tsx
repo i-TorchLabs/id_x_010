@@ -6,6 +6,7 @@ import { MessageList } from "@/components/chat/MessageList";
 import { MessageInput } from "@/components/chat/MessageInput";
 import { CenterHero } from "@/components/chat/CenterHero";
 import { ChatSidebar } from "@/components/chat/ChatSidebar";
+import { ModelSettingsDialog } from "@/components/chat/ModelSettingsDialog";
 import { useTheme } from "@/context/ThemeContext";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AnimatePresence, motion } from "framer-motion";
@@ -369,6 +370,7 @@ export default function ChatHome() {
 
   const router = useRouter();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [userInfo, setUserInfo] = useState<{
     username: string;
@@ -670,6 +672,7 @@ export default function ChatHome() {
             userName={userInfo?.username ?? "用户"}
             userEmail={userInfo?.email ?? "已登录"}
             onLogout={() => setShowLogoutConfirm(true)}
+            onSettings={() => setShowSettings(true)}
           />
         )}
       </AnimatePresence>
@@ -790,6 +793,12 @@ export default function ChatHome() {
           </>
         )}
       </main>
+
+      {/* Model Settings Dialog (HeroUI) */}
+      <ModelSettingsDialog
+        isOpen={showSettings}
+        onOpenChange={setShowSettings}
+      />
 
       {/* Logout Confirmation Dialog (HeroUI) */}
       <AlertDialog.Backdrop

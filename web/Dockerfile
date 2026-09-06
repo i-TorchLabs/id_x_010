@@ -1,13 +1,13 @@
 # id_x_010 前端镜像（Next.js + Node.js runtime）。
 #
 # 构建上下文为 x_models/id_x_010/web：
-#   podman build -t id_x_010-web -f x_models/id_x_010/web/Dockerfile x_models/id_x_010/web
+#   podman build -t localhost/id_x_010-web -f x_models/id_x_010/web/Dockerfile x_models/id_x_010/web
 #
 # 运行时端口 2000（由 next start 通过 PORT 环境变量决定），
 # haproxy 在同 Pod 内通过 127.0.0.1:2000 访问。
 
 # --------------------------- 构建阶段 ---------------------------
-FROM node:24-alpine AS build
+FROM docker.io/library/node:24-alpine AS build
 
 WORKDIR /app
 
@@ -35,7 +35,7 @@ RUN npm run build \
     && npm prune --omit=dev
 
 # --------------------------- 运行阶段 ---------------------------
-FROM node:24-alpine
+FROM docker.io/library/node:24-alpine
 
 WORKDIR /app
 

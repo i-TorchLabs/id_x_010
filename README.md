@@ -441,10 +441,10 @@ bash down.sh --volumes  # 连同数据库与日志卷一并清除（不可恢复
 
 ```bash
 # 后端镜像（多阶段构建，非 root 运行，内置 GraphQL 健康检查）
-podman build -f x_models/id_x_010/ops/Dockerfile.service -t id_x_010-service .
+podman build -f x_models/id_x_010/ops/Dockerfile.service -t localhost/id_x_010-service .
 
 # 前端镜像（按 package-lock.json 严格安装，运行时仅含生产依赖）
-podman build -f x_models/id_x_010/web/Dockerfile -t id_x_010-web x_models/id_x_010/web
+podman build -f x_models/id_x_010/web/Dockerfile -t localhost/id_x_010-web x_models/id_x_010/web
 ```
 
 若使用 systemd 裸机部署，已提供单元文件：

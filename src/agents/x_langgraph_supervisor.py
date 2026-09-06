@@ -163,37 +163,54 @@ class SemanticRouter:
         openai_base_url: Optional[str] = None,
         embedding_model: Optional[str] = None,
     ):
-        external_config = get_external_model_config()
+        # 初始化涉及 embedding 调用（route_layer.add 会立即计算语料向量），
+        # 端点缺 key 或不支持 embeddings 时不应让构造抛错——降级为
+        # "始终路由到 general"，保证聊天主链路可用。
+        self._ready = False
+        self.route_layer = None
+        try:
+            external_config = get_external_model_config()
 
-        final_api_key = (
-            openai_api_key
-            or external_config.get("api_key")
-            or os.getenv("EXTERNAL_API_KEY")
-        )
-        final_base_url = (
-            openai_base_url
-            or external_config.get("base_url")
-            or os.getenv("EXTERNAL_BASE_URL", "https://api.siliconflow.cn/v1")
-        )
-        final_embedding_model = embedding_model or os.getenv(
-            "EXTERNAL_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-8B"
-        )
+            final_api_key = (
+                openai_api_key
+                or external_config.get("api_key")
+                or os.getenv("EXTERNAL_API_KEY")
+            )
+            final_base_url = (
+                openai_base_url
+                or external_config.get("base_url")
+                or os.getenv("EXTERNAL_BASE_URL", "https://api.siliconflow.cn/v1")
+            )
+            final_embedding_model = embedding_model or os.getenv(
+                "EXTERNAL_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-8B"
+            )
 
-        self.encoder = CustomOpenAIEncoder(
-            name=final_embedding_model,
-            openai_api_key=final_api_key,
-            openai_base_url=final_base_url,
-        )
+            self.encoder = CustomOpenAIEncoder(
+                name=final_embedding_model,
+                openai_api_key=final_api_key,
+                openai_base_url=final_base_url,
+            )
 
-        self.route_layer = _SemanticRouter(
-            encoder=self.encoder,
-            routes=[],
-        )
-        self.route_layer.add([GENERAL_ROUTE, SQL_ROUTE, CODE_ROUTE])
+            self.route_layer = _SemanticRouter(
+                encoder=self.encoder,
+                routes=[],
+            )
+            self.route_layer.add([GENERAL_ROUTE, SQL_ROUTE, CODE_ROUTE])
+            self._ready = True
 
-        logger.info(f"{get_request_id()}SemanticRouter 初始化完成")
+            logger.info(f"{get_request_id()}SemanticRouter 初始化完成")
+        except Exception as e:
+            logger.warning(
+                f"{get_request_id()}SemanticRouter 初始化失败，意图路由降级为 general: "
+                f"{type(e).__name__}: {e}"
+            )
 
     async def route(self, query: str) -> Tuple[str, float]:
+        if not self._ready or self.route_layer is None:
+            logger.info(
+                f"{get_request_id()}路由器不可用，使用默认 general: query='{query[:50]}...'"
+            )
+            return "general", 0.0
         try:
             route_result = self.route_layer(query)
 
@@ -598,6 +615,8 @@ class LangGraphSupervisor:
         model_type: str = "external",
         model_name: Optional[str] = None,
         use_llm_router: bool = False,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
     ):
         self.use_llm_router = use_llm_router
         self.model_type = model_type
@@ -610,20 +629,31 @@ class LangGraphSupervisor:
             )
             logger.info(f"{get_request_id()}使用 LLM 路由器进行意图识别")
         else:
-            self.router = SemanticRouter()
+            # 用户自定义配置存在时，路由器的 embedding 客户端同样使用之，
+            # 避免环境变量缺 key 时构造 OpenAI 客户端直接抛错
+            self.router = SemanticRouter(
+                openai_api_key=api_key,
+                openai_base_url=base_url,
+            )
             logger.info(f"{get_request_id()}使用语义路由器（关键词匹配）进行意图识别")
 
         self.general_agent = GeneralAgent(
             model_type=model_type,
             model_name=model_name,
+            api_key=api_key,
+            base_url=base_url,
         )
         self.sql_agent = SQLAgent(
             model_type=model_type,
             model_name=model_name,
+            api_key=api_key,
+            base_url=base_url,
         )
         self.code_agent = GeneralAgent(
             model_type=model_type,
             model_name=model_name,
+            api_key=api_key,
+            base_url=base_url,
         )
         self.workflow = self._build_workflow()
         logger.info(f"{get_request_id()}LangGraphSupervisor 初始化完成")
@@ -812,6 +842,8 @@ class LangGraphSupervisor:
         conversation_id: Optional[str] = None,
         context: Optional[List[Dict[str, str]]] = None,
         db_name: Optional[str] = None,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
     ) -> Dict[str, Any]:
         if not conversation_id:
             conversation_id = str(uuid.uuid4())
@@ -826,6 +858,8 @@ class LangGraphSupervisor:
                 sql_agent = SQLAgent(
                     model_type=model_type,
                     model_name=model_name,
+                    api_key=api_key,
+                    base_url=base_url,
                     db_name=db_name,
                 )
                 try:
@@ -858,6 +892,8 @@ class LangGraphSupervisor:
                 code_agent = GeneralAgent(
                     model_type=model_type,
                     model_name=model_name,
+                    api_key=api_key,
+                    base_url=base_url,
                 )
                 code_system_prompt = """你是一个专业的编程专家，专注于帮助用户编写高质量的代码。
 
@@ -903,6 +939,8 @@ class LangGraphSupervisor:
                 general_agent = GeneralAgent(
                     model_type=model_type,
                     model_name=model_name,
+                    api_key=api_key,
+                    base_url=base_url,
                 )
                 try:
                     response, thinking = await general_agent.chat(
@@ -985,6 +1023,8 @@ class LangGraphSupervisor:
         conversation_id: Optional[str] = None,
         context: Optional[List[Dict[str, str]]] = None,
         db_name: Optional[str] = None,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
     ):
         if not conversation_id:
             conversation_id = str(uuid.uuid4())
@@ -1027,6 +1067,8 @@ class LangGraphSupervisor:
             sql_agent = SQLAgent(
                 model_type=model_type,
                 model_name=model_name,
+                api_key=api_key,
+                base_url=base_url,
                 db_name=db_name,
             )
 
@@ -1037,6 +1079,8 @@ class LangGraphSupervisor:
             code_agent = GeneralAgent(
                 model_type=model_type,
                 model_name=model_name,
+                api_key=api_key,
+                base_url=base_url,
             )
             code_system_prompt = route_info.get(
                 "system_prompt",
@@ -1062,6 +1106,8 @@ class LangGraphSupervisor:
             agent = GeneralAgent(
                 model_type=model_type,
                 model_name=model_name,
+                api_key=api_key,
+                base_url=base_url,
             )
 
             async for chunk in agent.stream_chat(

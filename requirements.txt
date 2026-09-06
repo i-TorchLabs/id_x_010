@@ -14,6 +14,10 @@ langchain_community
 pydantic
 langgraph
 semantic_router
+# litellm>=1.98.0 在 Python 3.10 下崩溃（其 compact.py/compression.py 从 typing 导入
+# NotRequired，该符号 3.11 才加入 typing）；1.97.0 是最后一个可导入版本。
+# semantic_router 间接依赖 litellm，此处显式锁定。
+litellm==1.97.0
 strawberry-graphql
 matplotlib
 psycopg2

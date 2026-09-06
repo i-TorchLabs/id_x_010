@@ -49,7 +49,7 @@ fi
 # 3. 删除本项目构建的镜像
 #    官方镜像（postgres / haproxy）为共享依赖，保留
 # ============================================
-for image in "${PROJECT_NAME}-service" "${PROJECT_NAME}-web"; do
+for image in "localhost/${PROJECT_NAME}-service" "localhost/${PROJECT_NAME}-web"; do
   if podman image exists "$image"; then
     if podman rmi "$image" >/dev/null 2>&1; then
       echo "[down] 镜像 $image 已删除"

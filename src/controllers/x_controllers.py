@@ -11,13 +11,17 @@ from litestar.response import Stream
 from sqlalchemy import select
 
 from utils.log_util import get_request_id, logger, request_id_var
-from x_models.id_x_010.src.agents.x_langgraph_supervisor import get_orchestrator
+from x_models.id_x_010.src.agents.x_langgraph_supervisor import (
+    LangGraphSupervisor,
+    get_orchestrator,
+)
 from x_models.id_x_010.src.agents.x_sql_agent import SQLAgent
 from x_models.id_x_010.src.models.x_models import (
     ExternalModel,
     LocalModel,
     PasswordResetToken,
     User,
+    UserModelSettings,
     UserToken,
     get_session,
 )
@@ -32,6 +36,9 @@ from x_models.id_x_010.src.schemas.x_schemas import (
     HealthType,
     LoginInput,
     ModelListResponseType,
+    ModelSettingsInput,
+    ModelSettingsResponseType,
+    ModelSettingsType,
     ModelType,
     RegisterInput,
     StreamChunkType,
@@ -39,8 +46,11 @@ from x_models.id_x_010.src.schemas.x_schemas import (
 )
 from x_models.id_x_010.src.views.x_views import (
     get_conversation_history,
+    get_user_model_settings,
     merge_context,
     save_conversation_log,
+    test_model_connectivity,
+    upsert_user_model_settings,
 )
 
 
@@ -187,6 +197,35 @@ class Query:
                 databases=[],
             )
 
+    @strawberry.field(description="获取当前用户的模型设置")
+    async def get_model_settings(
+        self, info: strawberry.Info
+    ) -> ModelSettingsResponseType:
+        try:
+            request = _get_info_request(info)
+            user = await _get_bearer_user(request)
+            if user is None:
+                return ModelSettingsResponseType(
+                    success=False, message="未登录或登录已过期", settings=None
+                )
+
+            settings = await get_user_model_settings(user.id)
+            if settings is None:
+                return ModelSettingsResponseType(
+                    success=True, message="尚未配置模型设置", settings=None
+                )
+
+            return ModelSettingsResponseType(
+                success=True,
+                message="获取成功",
+                settings=_settings_type(settings),
+            )
+        except Exception as e:
+            logger.error(f"{get_request_id()}获取模型设置失败: {e}", exc_info=True)
+            return ModelSettingsResponseType(
+                success=False, message=f"获取模型设置失败: {str(e)}", settings=None
+            )
+
 
 async def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
@@ -227,10 +266,48 @@ async def verify_token(token: str) -> Optional[User]:
         return None
 
 
+def _get_info_request(info: strawberry.Info):
+    """从 strawberry context 中取 Litestar Request（默认 context 为 dict）。"""
+    ctx = info.context
+    if isinstance(ctx, dict):
+        return ctx.get("request")
+    return getattr(ctx, "request", None)
+
+
+async def _get_bearer_user(request) -> Optional[User]:
+    """从请求头 Authorization: Bearer <token> 解析并校验用户。"""
+    if request is None:
+        return None
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header.lower().startswith("bearer "):
+        return None
+    return await verify_token(auth_header[7:].strip())
+
+
+async def _get_bearer_settings(request) -> Optional[UserModelSettings]:
+    """解析请求属主用户并返回其模型设置；未登录或未配置时返回 None。"""
+    user = await _get_bearer_user(request)
+    if user is None:
+        return None
+    return await get_user_model_settings(user.id)
+
+
+def _settings_type(settings: UserModelSettings) -> ModelSettingsType:
+    return ModelSettingsType(
+        provider=settings.provider,
+        base_url=settings.base_url,
+        api_key=settings.api_key,
+        model_name=settings.model_name,
+        updated_at=settings.updated_at.isoformat() if settings.updated_at else None,
+    )
+
+
 @strawberry.type
 class Mutation:
     @strawberry.mutation(description="发送聊天请求（非流式）")
-    async def chat(self, input: ChatInput) -> ChatResponseType:
+    async def chat(
+        self, info: strawberry.Info, input: ChatInput
+    ) -> ChatResponseType:
         try:
             base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
             api_key = os.getenv("OPENROUTER_API_KEY", "")
@@ -255,16 +332,36 @@ class Mutation:
                 except json.JSONDecodeError:
                     context = None
 
-            orchestrator = get_orchestrator()
+            # 用户已保存自定义模型设置时，以其覆盖默认链路配置
+            request = _get_info_request(info)
+            user_settings = await _get_bearer_settings(request)
+
+            if user_settings is not None:
+                orchestrator = LangGraphSupervisor(
+                    model_type=input.model_type,
+                    model_name=user_settings.model_name,
+                    api_key=user_settings.api_key,
+                    base_url=user_settings.base_url,
+                )
+                chat_api_key = user_settings.api_key
+                chat_base_url = user_settings.base_url
+                chat_model_name = user_settings.model_name
+            else:
+                orchestrator = get_orchestrator()
+                chat_api_key = None
+                chat_base_url = None
+                chat_model_name = input.model_name
 
             result = await orchestrator.process(
                 query=input.query,
                 model_type=input.model_type,
-                model_name=input.model_name,
+                model_name=chat_model_name,
                 agent_type=input.agent_type,
                 conversation_id=input.conversation_id,
                 context=context,
                 db_name=input.db_name,
+                api_key=chat_api_key,
+                base_url=chat_base_url,
             )
 
             try:
@@ -443,6 +540,7 @@ class Mutation:
     @strawberry.mutation(description="SQL审批操作")
     async def sql_approval(
         self,
+        info: strawberry.Info,
         conversation_id: str,
         sql: str,
         action: str,
@@ -459,8 +557,17 @@ class Mutation:
                 )
                 return
 
+            # 用户已保存自定义模型设置时，以其覆盖默认链路配置
+            user_settings = await _get_bearer_settings(_get_info_request(info))
+            if user_settings is not None:
+                model_name = user_settings.model_name
+
             sql_agent = SQLAgent(
-                model_type=model_type, model_name=model_name, db_name=db_name
+                model_type=model_type,
+                model_name=model_name,
+                api_key=user_settings.api_key if user_settings else None,
+                base_url=user_settings.base_url if user_settings else None,
+                db_name=db_name,
             )
 
             if action == "approve":
@@ -504,6 +611,66 @@ class Mutation:
                 content=f"审批处理失败: {str(e)}",
             )
 
+    @strawberry.mutation(description="保存当前用户的模型设置（保存前先做连通性检测）")
+    async def save_model_settings(
+        self, info: strawberry.Info, input: ModelSettingsInput
+    ) -> ModelSettingsResponseType:
+        try:
+            request = _get_info_request(info)
+            user = await _get_bearer_user(request)
+            if user is None:
+                return ModelSettingsResponseType(
+                    success=False, message="未登录或登录已过期", settings=None
+                )
+
+            provider = input.provider.strip()
+            base_url = input.base_url.strip().rstrip("/")
+            api_key = input.api_key.strip()
+            model_name = input.model_name.strip()
+
+            if not all([provider, base_url, api_key, model_name]):
+                return ModelSettingsResponseType(
+                    success=False,
+                    message="模型厂商、访问地址、API-KEY、模型名称均为必填项",
+                    settings=None,
+                )
+
+            logger.info(
+                f"{get_request_id()}收到模型设置保存请求，开始连通性检测: "
+                f"user_id={user.id}, provider={provider}, "
+                f"model={model_name}, base_url={base_url}"
+            )
+
+            ok, message = await test_model_connectivity(
+                base_url=base_url, api_key=api_key, model_name=model_name
+            )
+            if not ok:
+                return ModelSettingsResponseType(
+                    success=False,
+                    message=f"连通性检测未通过，设置未保存: {message}",
+                    settings=None,
+                )
+
+            settings = await upsert_user_model_settings(
+                user_id=user.id,
+                provider=provider,
+                base_url=base_url,
+                api_key=api_key,
+                model_name=model_name,
+            )
+
+            return ModelSettingsResponseType(
+                success=True,
+                message=f"{message}，设置已保存",
+                settings=_settings_type(settings),
+            )
+
+        except Exception as e:
+            logger.error(f"{get_request_id()}保存模型设置失败: {e}", exc_info=True)
+            return ModelSettingsResponseType(
+                success=False, message=f"保存模型设置失败: {str(e)}", settings=None
+            )
+
     @strawberry.mutation(description="用户登出")
     async def logout(self) -> AuthResponseType:
         try:
@@ -524,6 +691,7 @@ class Subscription:
     @strawberry.subscription(description="流式聊天请求")
     async def stream_chat(
         self,
+        info: strawberry.Info,
         query: str,
         model_type: str = "external",
         model_name: Optional[str] = None,
@@ -563,7 +731,29 @@ class Subscription:
                     f"约 {len(merged_context) // 2} 轮对话"
                 )
 
-            orchestrator = get_orchestrator()
+            # 用户已保存自定义模型设置时，以其覆盖默认链路配置。
+            # 注意不能复用 get_orchestrator() 的缓存实例：环境变量缺 key 时
+            # 默认 supervisor 的 agent 构造会直接抛错，且配置与用户设置不符。
+            request = _get_info_request(info)
+            user_settings = await _get_bearer_settings(request)
+            if user_settings is not None:
+                model_name = user_settings.model_name
+                override_api_key = user_settings.api_key
+                override_base_url = user_settings.base_url
+                logger.info(
+                    f"{get_request_id()}使用用户自定义模型配置: "
+                    f"model={model_name}, base_url={override_base_url}"
+                )
+                orchestrator = LangGraphSupervisor(
+                    model_type=model_type,
+                    model_name=model_name,
+                    api_key=override_api_key,
+                    base_url=override_base_url,
+                )
+            else:
+                override_api_key = None
+                override_base_url = None
+                orchestrator = get_orchestrator()
 
             full_response = []
             thinking_buffer = []
@@ -578,6 +768,8 @@ class Subscription:
                 conversation_id=conversation_id,
                 context=merged_context,
                 db_name=db_name,
+                api_key=override_api_key,
+                base_url=override_base_url,
             ):
                 chunk_type = StreamChunkType(
                     type=chunk.get("type", ""),
@@ -668,6 +860,9 @@ def register_routers(route_prefix: str) -> Router:
                     query,
                     variable_values=variables,
                     operation_name=operation_name,
+                    # 默认 context 为 dict（与 HTTP controller 一致），
+                    # 供 resolver 读取 Authorization 做用户设置解析
+                    context_value={"request": request},
                 )
 
                 if subscription_result is None:
@@ -747,11 +942,20 @@ def register_routers(route_prefix: str) -> Router:
         # 在请求上下文中捕获 request_id，确保 generate() 内可用
         req_id = request_id_var.get("")
 
+        # 用户已保存自定义模型设置时，以其覆盖默认链路配置
+        user_settings = await _get_bearer_settings(request)
+        if user_settings is not None:
+            model_name = user_settings.model_name
+
         async def generate():
             if req_id:
                 request_id_var.set(req_id)
             sql_agent = SQLAgent(
-                model_type=model_type, model_name=model_name, db_name=db_name
+                model_type=model_type,
+                model_name=model_name,
+                api_key=user_settings.api_key if user_settings else None,
+                base_url=user_settings.base_url if user_settings else None,
+                db_name=db_name,
             )
 
             if action == "approve":

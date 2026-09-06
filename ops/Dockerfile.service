@@ -4,10 +4,10 @@
 # 与业务插件（x_models/id_x_010）能被一并复制进镜像，保持原有相对 import
 # 与 config 解析（utils/config_parse_util.py 按 __file__ 定位 config/）。
 #
-#   podman build -t id_x_010-service -f x_models/id_x_010/ops/Dockerfile.service .
+#   podman build -t localhost/id_x_010-service -f x_models/id_x_010/ops/Dockerfile.service .
 
 # --------------------------- 构建阶段 ---------------------------
-FROM python:3.14-slim AS builder
+FROM docker.io/library/python:3.10-slim AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -17,10 +17,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # 编译型依赖（psycopg2 等）所需工具链仅存在于本阶段，不进入最终镜像：
 #   build-essential  编译 C 扩展
 #   libpq-dev        psycopg2 编译头文件
+#   libffi-dev       cffi 编译头文件（zstandard 尚无 cp314 预编译 wheel，
+#                    py3.10 下需源码构建，其构建链依赖 cffi）
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
         libpq-dev \
+        libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # 用 venv 承载全部 Python 依赖，便于整体拷贝到运行阶段
@@ -33,7 +36,7 @@ COPY x_models/id_x_010/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 # --------------------------- 运行阶段 ---------------------------
-FROM python:3.14-slim
+FROM docker.io/library/python:3.10-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

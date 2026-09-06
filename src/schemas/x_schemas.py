@@ -131,6 +131,32 @@ class ForgotPasswordResponseType:
 
 
 @strawberry.input
+class ModelSettingsInput:
+    provider: str = strawberry.field(description="模型厂商，如 siliconflow/openai/deepseek")
+    base_url: str = strawberry.field(description="OpenAI 兼容接口地址")
+    api_key: str = strawberry.field(description="API-KEY")
+    model_name: str = strawberry.field(description="模型名称")
+
+
+@strawberry.type
+class ModelSettingsType:
+    provider: str = strawberry.field(description="模型厂商")
+    base_url: str = strawberry.field(description="访问地址")
+    api_key: str = strawberry.field(description="API-KEY（仅返回给属主本人）")
+    model_name: str = strawberry.field(description="模型名称")
+    updated_at: Optional[str] = strawberry.field(default=None, description="更新时间")
+
+
+@strawberry.type
+class ModelSettingsResponseType:
+    success: bool = strawberry.field(description="是否成功")
+    message: str = strawberry.field(description="消息（含连通性检测结果）")
+    settings: Optional[ModelSettingsType] = strawberry.field(
+        default=None, description="模型设置"
+    )
+
+
+@strawberry.input
 class ChatInput:
     query: str = strawberry.field(description="用户输入的问题")
     model_type: str = strawberry.field(

@@ -44,7 +44,9 @@
     --backdrop: saturate(180%) blur(20px);
 
     /* LeftPanel decoration */
-    --overlay: rgba(212, 212, 218, 0.42);
+    /* 注意：切勿在此定义 --overlay——该变量是 HeroUI 的弹层背景 token
+       （bg-overlay，用于 AlertDialog/Dropdown/Select 等），覆盖它会
+       导致全部弹层半透明。LeftPanel 的遮罩色已在其组件内联定义。 */
     --footer-link: rgba(60, 60, 60, 0.7);
 
     /* HeroUI overrides */
@@ -95,8 +97,7 @@
     /* Glassmorphism */
     --backdrop: saturate(180%) blur(20px);
 
-    /* LeftPanel decoration */
-    --overlay: rgba(28, 28, 30, 0.55);
+    /* LeftPanel decoration（--overlay 不可覆盖，见上方 light 主题注释） */
     --footer-link: rgba(200, 200, 200, 0.7);
 
     /* HeroUI overrides */

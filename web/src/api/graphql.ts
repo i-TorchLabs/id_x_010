@@ -313,6 +313,97 @@ export const modelGraphqlApi = {
   },
 };
 
+// 模型设置类型
+export interface ModelSettings {
+  provider: string;
+  baseUrl: string;
+  apiKey: string;
+  modelName: string;
+  updatedAt: string | null;
+}
+
+// 模型设置查询响应类型
+export interface ModelSettingsPayload {
+  getModelSettings: {
+    success: boolean;
+    message: string;
+    settings: ModelSettings | null;
+  };
+}
+
+// 模型设置保存响应类型
+export interface SaveModelSettingsPayload {
+  saveModelSettings: {
+    success: boolean;
+    message: string;
+    settings: ModelSettings | null;
+  };
+}
+
+// 模型设置输入类型
+export interface ModelSettingsInput {
+  provider: string;
+  baseUrl: string;
+  apiKey: string;
+  modelName: string;
+}
+
+/**
+ * 模型设置 GraphQL API
+ */
+export const settingsGraphqlApi = {
+  /**
+   * 获取当前用户的模型设置
+   */
+  getModelSettings: async (): Promise<ModelSettingsPayload> => {
+    const query = `
+      query GetModelSettings {
+        getModelSettings {
+          success
+          message
+          settings {
+            provider
+            baseUrl
+            apiKey
+            modelName
+            updatedAt
+          }
+        }
+      }
+    `;
+
+    return graphqlClient.request<ModelSettingsPayload>({ query });
+  },
+
+  /**
+   * 保存模型设置（后端先做连通性检测，通过才保存）
+   */
+  saveModelSettings: async (
+    input: ModelSettingsInput,
+  ): Promise<SaveModelSettingsPayload> => {
+    const mutation = `
+      mutation SaveModelSettings($input: ModelSettingsInput!) {
+        saveModelSettings(input: $input) {
+          success
+          message
+          settings {
+            provider
+            baseUrl
+            apiKey
+            modelName
+            updatedAt
+          }
+        }
+      }
+    `;
+
+    return graphqlClient.request<SaveModelSettingsPayload>({
+      query: mutation,
+      variables: { input },
+    });
+  },
+};
+
 // 数据库信息类型
 export interface DatabaseInfo {
   key: string;

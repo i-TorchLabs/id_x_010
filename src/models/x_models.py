@@ -249,6 +249,56 @@ class ExternalModel(Base):
         }
 
 
+class UserModelSettings(Base):
+    """用户级模型设置（每用户一行），由 /home 设置弹窗保存。
+
+    api_key 按项目既有约定明文存储（与 external_models 一致），
+    接口仅返回给令牌属主本人。
+    """
+
+    __tablename__ = "user_model_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id"), unique=True, nullable=False, comment="用户ID"
+    )
+    provider: Mapped[str] = mapped_column(String(64), nullable=False, comment="模型厂商")
+    base_url: Mapped[str] = mapped_column(
+        String(256), nullable=False, comment="访问地址"
+    )
+    api_key: Mapped[str] = mapped_column(String(512), nullable=False, comment="API-KEY")
+    model_name: Mapped[str] = mapped_column(
+        String(128), nullable=False, comment="模型名称"
+    )
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        comment="创建时间",
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        comment="更新时间",
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "provider": self.provider,
+            "base_url": self.base_url,
+            "api_key": self.api_key,
+            "model_name": self.model_name,
+            "created_at": self.created_at.isoformat()
+            if self.created_at is not None
+            else None,
+            "updated_at": self.updated_at.isoformat()
+            if self.updated_at is not None
+            else None,
+        }
+
+
 class LocalModel(Base):
     __tablename__ = "local_models"
 

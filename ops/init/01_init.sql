@@ -160,6 +160,30 @@ COMMENT ON COLUMN local_models.base_url IS '访问地址';
 COMMENT ON COLUMN local_models.api_key IS 'API-KEY';
 
 -- ============================================
+-- 7. 用户模型设置表 (user_model_settings)
+--    /home 设置弹窗保存的用户级模型配置，每用户一行
+-- ============================================
+CREATE TABLE IF NOT EXISTS user_model_settings (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL UNIQUE REFERENCES users(id),
+    provider VARCHAR(64) NOT NULL,
+    base_url VARCHAR(256) NOT NULL,
+    api_key VARCHAR(512) NOT NULL,
+    model_name VARCHAR(128) NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ix_user_model_settings_user_id ON user_model_settings(user_id);
+
+COMMENT ON TABLE user_model_settings IS '用户模型设置表';
+COMMENT ON COLUMN user_model_settings.user_id IS '用户ID';
+COMMENT ON COLUMN user_model_settings.provider IS '模型厂商';
+COMMENT ON COLUMN user_model_settings.base_url IS '访问地址';
+COMMENT ON COLUMN user_model_settings.api_key IS 'API-KEY';
+COMMENT ON COLUMN user_model_settings.model_name IS '模型名称';
+
+-- ============================================
 -- 触发器：自动更新 users 表的 updated_at 字段
 -- ============================================
 CREATE OR REPLACE FUNCTION update_updated_at_column()

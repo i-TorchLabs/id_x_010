@@ -3,10 +3,10 @@
 # id_x_010 一体化容器部署启动脚本（podman）
 #
 # 拓扑：单 Pod 四容器，共享网络命名空间
-#   db       postgres:18   127.0.0.1:5432（仅 Pod 内可达）
-#   service  自建镜像      127.0.0.1:7000（Litestar + GraphQL）
-#   web      自建镜像      127.0.0.1:2000（Next.js）
-#   haproxy  haproxy:3.0   :8080 → 宿主机 ${POD_PORT:-8010}
+#   db       docker.io/library/postgres:18   127.0.0.1:5432（仅 Pod 内可达）
+#   service  localhost/id_x_010-service      127.0.0.1:7000（Litestar + GraphQL）
+#   web      localhost/id_x_010-web          127.0.0.1:2000（Next.js）
+#   haproxy  docker.io/library/haproxy:3.0   :8080 → 宿主机 ${POD_PORT:-8010}
 #
 # 用法：
 #   bash up.sh            # 首次构建镜像并启动（幂等，已存在则跳过）
@@ -42,6 +42,9 @@ POSTGRES_USER="${POSTGRES_USER:-postgres}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:?[up] 请在 .env 中设置 POSTGRES_PASSWORD}"
 POSTGRES_IMAGE="${POSTGRES_IMAGE:-docker.io/library/postgres:18}"
 HAPROXY_IMAGE="${HAPROXY_IMAGE:-docker.io/library/haproxy:3.0}"
+# 自建镜像同样使用完全限定名（localhost/ 前缀），避免 short-name 解析歧义
+SERVICE_IMAGE="localhost/${PROJECT_NAME}-service"
+WEB_IMAGE="localhost/${PROJECT_NAME}-web"
 POD_PORT="${POD_PORT:-8010}"
 
 # 提醒关键可选项未配置（不阻断，功能会降级）
@@ -52,11 +55,11 @@ fi
 # ============================================
 # 1. 构建镜像（若不存在或指定 --build）
 # ============================================
-if [ "${1:-}" = "--build" ] || ! podman image exists "${PROJECT_NAME}-service" || ! podman image exists "${PROJECT_NAME}-web"; then
+if [ "${1:-}" = "--build" ] || ! podman image exists "${SERVICE_IMAGE}" || ! podman image exists "${WEB_IMAGE}"; then
   echo "[up] 构建 service 镜像..."
-  podman build --format docker -t "${PROJECT_NAME}-service" -f Dockerfile.service ../../../
+  podman build --format docker -t "${SERVICE_IMAGE}" -f Dockerfile.service ../../../
   echo "[up] 构建 web 镜像..."
-  podman build --format docker -t "${PROJECT_NAME}-web" -f ../web/Dockerfile \
+  podman build --format docker -t "${WEB_IMAGE}" -f ../web/Dockerfile \
     --build-arg NEXT_PUBLIC_BASE_URL="" \
     --build-arg NEXT_PUBLIC_SUB_VERSION="/b/id_x_010/graphql" \
     ../web
@@ -142,7 +145,7 @@ if ! podman container exists "${PROJECT_NAME}-service"; then
     --health-timeout 5s \
     --health-retries 10 \
     --health-start-period 30s \
-    "${PROJECT_NAME}-service"
+    "${SERVICE_IMAGE}"
   echo "[up] ${PROJECT_NAME}-service 已启动"
 else
   echo "[up] ${PROJECT_NAME}-service 已存在，跳过"
@@ -159,7 +162,7 @@ if ! podman container exists "${PROJECT_NAME}-web"; then
     --health-timeout 5s \
     --health-retries 10 \
     --health-start-period 20s \
-    "${PROJECT_NAME}-web"
+    "${WEB_IMAGE}"
   echo "[up] ${PROJECT_NAME}-web 已启动"
 else
   echo "[up] ${PROJECT_NAME}-web 已存在，跳过"
