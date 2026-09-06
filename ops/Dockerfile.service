@@ -7,7 +7,7 @@
 #   podman build -t id_x_010-service -f x_models/id_x_010/ops/Dockerfile.service .
 
 # --------------------------- 构建阶段 ---------------------------
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -33,7 +33,7 @@ COPY x_models/id_x_010/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 # --------------------------- 运行阶段 ---------------------------
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
