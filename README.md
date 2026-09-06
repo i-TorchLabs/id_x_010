@@ -4,19 +4,19 @@
 
 **面向科研级知识库与数据查询的 LangGraph 智能体编排插件**
 
-![编号](https://img.shields.io/static/v1?label=编号&message=010&color=lightgray&style=flat-square&labelColor=black)
-![协议](https://img.shields.io/static/v1?label=协议&message=AGPL-3.0&color=lightgray&style=flat-square&labelColor=black)
-![作者](https://img.shields.io/static/v1?label=作者&message=Ray&color=lightgray&style=flat-square&labelColor=black)
-![组织](https://img.shields.io/static/v1?label=组织&message=TorchLabs&color=lightgray&style=flat-square&labelColor=black)
-![引擎](https://img.shields.io/static/v1?label=引擎&message=LangGraph%20%2B%20Litestar&color=lightgray&style=flat-square&labelColor=black)
-![语言](https://img.shields.io/static/v1?label=语言&message=Python%20%2B%20TypeScript&color=lightgray&style=flat-square&labelColor=black)
-![数据库](https://img.shields.io/static/v1?label=数据库&message=PostgreSQL&color=lightgray&style=flat-square&labelColor=black)
+![编号](https://img.shields.io/static/v1?label=编号&message=010&color=red&style=flat-square&labelColor=gray)
+![协议](https://img.shields.io/static/v1?label=协议&message=AGPL-3.0&color=red&style=flat-square&labelColor=gray)
+![作者](https://img.shields.io/static/v1?label=作者&message=Ray&color=red&style=flat-square&labelColor=gray)
+![组织](https://img.shields.io/static/v1?label=组织&message=TorchLabs&color=red&style=flat-square&labelColor=gray)
+![引擎](https://img.shields.io/static/v1?label=引擎&message=LangGraph%20%2B%20Litestar&color=red&style=flat-square&labelColor=gray)
+![语言](https://img.shields.io/static/v1?label=语言&message=Python%20%2B%20TypeScript&color=red&style=flat-square&labelColor=gray)
+![数据库](https://img.shields.io/static/v1?label=数据库&message=PostgreSQL&color=red&style=flat-square&labelColor=gray)
 
 </div>
 
 ---
 
-## 1 简介
+## 1. 简介 (Introduction)
 
 **Slogan**：面向科研级知识库与数据查询的 LangGraph 智能体编排插件。
 
@@ -24,7 +24,7 @@ id_x_010 是 TorchLabs/i-Torch（id_x_000）主程序的业务插件，定位为
 
 针对企业内部数据查询中的「模型选型混乱、SQL 注入风险、上下文断裂、流式体验差」等痛点，id_x_010 以统一的监督者状态图（Supervisor State Graph）、白名单校验、人机协同审批节点与多轮上下文固化给出可复现方案，相较脚本式大语言模型调用具备更强的安全闭环与可维护性，适用于知识问答、数据分析、代码生成等场景。
 
-## 2 核心特性
+## 2. 核心特性 (Features)
 
 - 多智能体编排：基于 LangGraph 状态图构建 `LangGraphSupervisor`，通过 `router` 节点分发至 `general_agent`、`sql_agent`、`code_agent`，节点命名与状态字段统一。
 - 双路由层意图识别：提供语义路由器（Semantic Router，基于向量匹配）与 LLM 路由器（LLM Router，基于结构化输出）两类路由器，可按场景切换。
@@ -32,7 +32,7 @@ id_x_010 是 TorchLabs/i-Torch（id_x_000）主程序的业务插件，定位为
 - GraphQL 加 SSE 双通道：Strawberry 暴露查询/变更/订阅（Query/Mutation/Subscription）三类操作，`/graphql/stream` 以 SSE 转发订阅，`/sql-approval` 单独承载审批流。
 - 多轮上下文固库：对话以会话标识（conversation_id）关联，对话日志（ConversationLog）落库后由上下文合并（merge_context）合并历史与前端传入上下文，默认截断至最近 5 轮。
 
-## 3 项目亮点
+## 3. 项目亮点 (Highlights)
 
 1. **意图双引擎可热切** —— LLM 路由器使用 `with_structured_output` 强约束大语言模型给出意图/置信度/推理过程，语义路由器以嵌入向量匹配样例语句，`use_llm_router` 一参切换，路由失败统一回退至通用意图。
 2. **SQL 审批人机协同** —— LangGraph 将人工审批设为节点而非边，审批状态取批准/拒绝/取消三态，拒绝后回到查询生成节点重写 SQL，取消则短路返回，形成可审计的人机协同链路。
@@ -42,9 +42,9 @@ id_x_010 是 TorchLabs/i-Torch（id_x_000）主程序的业务插件，定位为
 6. **思考过程分离流** —— 流式回调处理器（StreamingHandler）实时解析 `<thinking>...</thinking>` 标签，思考与正文分通道输出，前端可独立渲染推理折叠区，不影响正文打字机效果。
 7. **模型配置热回退** —— 外部模型配置获取优先查数据库 `external_models` 表，失败时回退环境变量并标注回退模式，模型列表接口在数据库不可用时仍可用。
 
-## 4 技术栈
+## 4. 技术栈 (Tech Stack)
 
-表 4-1 id_x_010 技术栈一览
+<p align="center">表 4-1 id_x_010 技术栈一览</p>
 
 | 分类 | 名称 | 版本 | 用途 |
 |---|---|---|---|
@@ -61,7 +61,7 @@ id_x_010 是 TorchLabs/i-Torch（id_x_000）主程序的业务插件，定位为
 | UI 组件 | HeroUI + Tailwind CSS | ^3.2 / ^4 | 组件库与样式 |
 | 反向代理 | HAProxy | — | SSL 终止与路由分区 |
 
-## 5 整体架构图
+## 5. 整体架构图 (Overall Architecture Diagram)
 
 ```mermaid
 graph TB
@@ -134,9 +134,9 @@ graph TB
   BizDB -.->|主程序注入| L4
 ```
 
-图 5-1 id_x_010 分层架构图
+<p align="center">图 5-1 id_x_010 分层架构图</p>
 
-## 6 请求流转图
+## 6. 请求流转图 (Request Flow Diagram)
 
 ```mermaid
 sequenceDiagram
@@ -196,9 +196,9 @@ sequenceDiagram
   G-->>C: 最终响应 / complete
 ```
 
-图 6-1 id_x_010 请求流转图
+<p align="center">图 6-1 id_x_010 请求流转图</p>
 
-## 7 目录结构
+## 7. 目录结构 (Directory Structure)
 
 ```text
 id_x_010/
@@ -247,11 +247,11 @@ id_x_010/
     └── intent-recognition-analysis.md  # 意图识别分析
 ```
 
-## 8 API 接口文档
+## 8. API 接口文档 (API Documentation)
 
 id_x_010 对外接口由 `register_routers` 统一注册至主程序 `/b/id_x_010` 前缀下，受主程序 `RequestMiddleware` 的 Bearer 鉴权保护（豁免路径除外）。下表汇总主要端点，详细字段以 Strawberry Schema 为准。
 
-表 8-1 接口汇总
+<p align="center">表 8-1 接口汇总</p>
 
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
@@ -320,16 +320,16 @@ curl -X POST "<BASE_URL>/b/id_x_010/sql-approval" \
 
 请求体大小上限由主程序 `[BASE].MAX_REQUEST_BODY_SIZE` 控制，默认 1 073 741 824 字节（1 GiB）。
 
-## 9 快速部署
+## 9. 快速部署 (Quick Deploy)
 
-### 9.1 环境准备
+### 9.1 环境准备 (Prerequisites)
 
 - Python ≥ 3.10（推荐 3.10）
 - Node.js ≥ 20（前端构建，Next.js 16 建议 Node 20+）
 - PostgreSQL ≥ 14（业务库与对话日志库，可分离部署）
 - 主程序 i-Torch（id_x_000）已就绪并配置 `AGENT_DB_*` 凭据
 
-### 9.2 安装
+### 9.2 安装 (Installation)
 
 ```bash
 # 在主程序 x_models/ 下放置插件
@@ -352,7 +352,7 @@ MODELS = [
 ]
 ```
 
-### 9.3 配置
+### 9.3 配置 (Configuration)
 
 初始化业务库表结构（替换连接参数）：
 
@@ -374,7 +374,7 @@ AGENT_DB_LIST=primary,analytics
 
 加密使用主程序 `utils/encrypt_util.py`。前端环境变量写入 `web/.env.local`，至少包含 `NEXT_PUBLIC_API_BASE`。
 
-### 9.4 运行
+### 9.4 运行 (Run)
 
 ```bash
 # 启动后端（在主程序根目录）
@@ -389,7 +389,7 @@ cnpm run build && cnpm run start   # 生产模式
 
 后端默认监听主程序配置端口（如 `0.0.0.0:7000`），前端 Next.js 默认监听 `2000`。生产环境通过 HAProxy 将 `/b/*` 路由到后端、`/f/*` 与 `/_next/*` 路由到前端，配置见 `ops/id_x_010[HAProxy].conf`。
 
-### 9.5 容器部署
+### 9.5 容器部署 (可选)
 
 项目当前未内置 Dockerfile，可参考以下方式构建（以 Podman 为例，Docker 同理）：
 
