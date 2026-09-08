@@ -229,7 +229,7 @@ export function ModelSettingsDialog({
                 <TextField fullWidth className="flex flex-col gap-1.5">
                   <Label className="text-sm font-medium">模型名称</Label>
                   <Input
-                    placeholder="如 Pro/zai-org/GLM-5"
+                    placeholder="如 zai-org/GLM-5.2"
                     value={modelName}
                     onChange={(e) => setModelName(e.target.value)}
                   />

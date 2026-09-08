@@ -6,7 +6,14 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 from utils.log_util import get_request_id, logger
-from x_models.id_x_010.src.models.x_models import get_external_model_config
+from x_models.id_x_010.src.agents.x_llm_error import (
+    DEFAULT_EXTERNAL_MODEL,
+    friendly_llm_error,
+)
+from x_models.id_x_010.src.models.x_models import (
+    get_external_model_config,
+    get_local_model_config,
+)
 
 
 class StreamingHandler(AsyncCallbackHandler):
@@ -82,7 +89,7 @@ class GeneralAgent:
 
     def _get_default_model(self, model_type: str) -> str:
         if model_type == "external":
-            return "Pro/zai-org/GLM-5"
+            return DEFAULT_EXTERNAL_MODEL
         else:
             return "qwen2.5"
 
@@ -99,10 +106,9 @@ class GeneralAgent:
                 streaming=True,
             )
         else:
-            local_base_url = os.getenv(
-                "LOCAL_MODEL_BASE_URL", "http://localhost:11434/v1"
-            )
-            local_api_key = os.getenv("LOCAL_MODEL_API_KEY", "ollama")
+            local_config = get_local_model_config()
+            local_base_url = local_config.get("base_url")
+            local_api_key = local_config.get("api_key") or "ollama"
 
             return ChatOpenAI(
                 model=self.LOCAL_MODELS.get(self.model_name, self.model_name),
@@ -226,7 +232,7 @@ class GeneralAgent:
             )
             yield {
                 "type": "error",
-                "content": str(e),
+                "content": friendly_llm_error(e, self.model_name),
             }
 
 

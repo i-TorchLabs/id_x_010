@@ -1,12 +1,17 @@
 import asyncio
+import os
 from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import desc, select
 from utils.log_util import get_request_id, logger
 from x_models.id_x_010.src.models.x_models import (
+    AgentDBSettings,
     ConversationLog,
+    ExternalProvider,
+    LocalProvider,
     UserModelSettings,
     get_session,
+    set_llm_provider_config,
 )
 
 DEFAULT_MAX_ROUNDS = 5
@@ -179,6 +184,99 @@ async def test_model_connectivity(
             f"base_url={base_url} | 原因: {type(e).__name__}: {detail}"
         )
         return False, f"连接失败: {type(e).__name__}: {detail}"
+
+
+# ==========================================
+# LLM 提供商配置（external_provider / local_provider）
+# ==========================================
+
+
+async def load_llm_provider_config() -> Optional[dict]:
+    """按 LLM_PROVIDER 值从对应提供商表读取首行配置并注入全局缓存。
+
+    LLM_PROVIDER=external → external_provider 表；
+    LLM_PROVIDER=local    → local_provider 表。
+    表无数据或读取失败时缓存保持原状，各 Agent 回退环境变量配置。
+
+    注意：get_orchestrator() 缓存的默认 supervisor 在首次构建时固化
+    配置，此后表数据变更对已缓存实例不生效（与环境变量语义一致）。
+    """
+    provider = (os.getenv("LLM_PROVIDER", "external") or "external").strip().lower()
+    if provider != "local":
+        provider = "external"
+    model_cls = LocalProvider if provider == "local" else ExternalProvider
+
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(model_cls).order_by(model_cls.id).limit(1)
+            )
+            row = result.scalar_one_or_none()
+    except Exception as e:
+        logger.error(
+            f"{get_request_id()}读取 LLM 提供商配置失败: "
+            f"provider={provider}, table={model_cls.__tablename__}, {e}",
+            exc_info=True,
+        )
+        return None
+
+    if row is None:
+        logger.warning(
+            f"{get_request_id()}{model_cls.__tablename__} 表无数据，"
+            f"LLM 提供商配置回退环境变量"
+        )
+        return None
+
+    config = {
+        "provider": provider,
+        "api_key": row.api_key,
+        "llm_base_url": row.llm_base_url,
+        "embd_base_url": row.embd_base_url,
+        "vl_base_url": row.vl_base_url,
+    }
+    set_llm_provider_config(config)
+    logger.info(
+        f"{get_request_id()}LLM 提供商配置已加载: 来源={model_cls.__tablename__} 表, "
+        f"llm_base_url={row.llm_base_url}"
+    )
+    return config
+
+
+# ==========================================
+# SQL Agent 目标库配置（agent_db_settings）
+# ==========================================
+
+
+async def list_agent_db_settings() -> List[AgentDBSettings]:
+    """读取全部 SQL Agent 目标库配置，按 id 升序；失败时返回空列表。"""
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(AgentDBSettings).order_by(AgentDBSettings.id)
+            )
+            return list(result.scalars().all())
+    except Exception as e:
+        logger.error(f"{get_request_id()}读取 SQL Agent 数据库配置失败: {e}", exc_info=True)
+        return []
+
+
+async def get_agent_db_settings(
+    db_name: Optional[str] = None,
+) -> Optional[AgentDBSettings]:
+    """按库名读取 SQL Agent 目标库配置；db_name 为空时取首行作为默认配置。"""
+    try:
+        async with get_session()() as session:
+            stmt = select(AgentDBSettings).order_by(AgentDBSettings.id)
+            if db_name:
+                stmt = stmt.where(AgentDBSettings.db_name == db_name)
+            result = await session.execute(stmt.limit(1))
+            return result.scalar_one_or_none()
+    except Exception as e:
+        logger.error(
+            f"{get_request_id()}读取 SQL Agent 数据库配置失败: db_name={db_name}, {e}",
+            exc_info=True,
+        )
+        return None
 
 
 def merge_context(

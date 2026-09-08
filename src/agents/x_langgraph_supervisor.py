@@ -21,8 +21,15 @@ from x_models.id_x_010.src.agents.x_general_agent import (
     DEFAULT_SYSTEM_PROMPT,
     GeneralAgent,
 )
+from x_models.id_x_010.src.agents.x_llm_error import (
+    DEFAULT_EXTERNAL_MODEL,
+    friendly_llm_error,
+)
 from x_models.id_x_010.src.agents.x_sql_agent import SQLAgent
-from x_models.id_x_010.src.models.x_models import get_external_model_config
+from x_models.id_x_010.src.models.x_models import (
+    get_external_model_config,
+    get_local_model_config,
+)
 
 
 class CustomOpenAIEncoder(OpenAIEncoder):
@@ -176,10 +183,12 @@ class SemanticRouter:
                 or external_config.get("api_key")
                 or os.getenv("EXTERNAL_API_KEY")
             )
+            # embedding 端点优先取专用 EMBD 地址（external_provider 表 /
+            # EXTERNAL_EMBD_BASE_URL），缺省时回退 LLM 地址
             final_base_url = (
                 openai_base_url
+                or external_config.get("embd_base_url")
                 or external_config.get("base_url")
-                or os.getenv("EXTERNAL_BASE_URL", "https://api.siliconflow.cn/v1")
             )
             final_embedding_model = embedding_model or os.getenv(
                 "EXTERNAL_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-8B"
@@ -356,7 +365,7 @@ class LLMRouter:
             model_name
             or external_config.get("model_name")
             or os.getenv("EXTERNAL_LLM_MODEL")
-            or "Pro/zai-org/GLM-5"
+            or DEFAULT_EXTERNAL_MODEL
         )
         self.api_key = (
             api_key or external_config.get("api_key") or os.getenv("EXTERNAL_API_KEY")
@@ -396,10 +405,9 @@ class LLMRouter:
                 streaming=False,
             )
         else:
-            local_base_url = os.getenv(
-                "LOCAL_MODEL_BASE_URL", "http://localhost:11434/v1"
-            )
-            local_api_key = os.getenv("LOCAL_MODEL_API_KEY", "ollama")
+            local_config = get_local_model_config()
+            local_base_url = local_config.get("base_url")
+            local_api_key = local_config.get("api_key") or "ollama"
             return ChatOpenAI(
                 model=self.model_name,
                 api_key=SecretStr(local_api_key),
@@ -743,7 +751,7 @@ class LangGraphSupervisor:
             )
             return {
                 "error": f"处理失败: {str(e)}",
-                "response": f"抱歉，处理您的请求时出现错误: {str(e)}",
+                "response": friendly_llm_error(e, self.general_agent.model_name),
             }
 
     async def _sql_agent_node(self, state: SupervisorState) -> dict:
@@ -773,7 +781,7 @@ class LangGraphSupervisor:
             )
             return {
                 "error": f"SQL 处理失败: {str(e)}",
-                "response": f"抱歉，处理数据库查询时出现错误: {str(e)}",
+                "response": friendly_llm_error(e, self.sql_agent.model_name),
             }
 
     async def _code_agent_node(self, state: SupervisorState) -> dict:
@@ -821,7 +829,7 @@ class LangGraphSupervisor:
             )
             return {
                 "error": f"代码生成失败: {str(e)}",
-                "response": f"抱歉，生成代码时出现错误: {str(e)}",
+                "response": friendly_llm_error(e, self.code_agent.model_name),
             }
 
     def _decide_next_agent(self, state: SupervisorState) -> str:
@@ -880,7 +888,7 @@ class LangGraphSupervisor:
                     )
                     return {
                         "success": False,
-                        "response": f"抱歉，处理 SQL 查询时出现错误: {str(e)}",
+                        "response": friendly_llm_error(e, model_name or ""),
                         "thinking": "",
                         "intent": "sql",
                         "confidence": 1.0,
@@ -927,7 +935,7 @@ class LangGraphSupervisor:
                     )
                     return {
                         "success": False,
-                        "response": f"抱歉，生成代码时出现错误: {str(e)}",
+                        "response": friendly_llm_error(e, model_name or ""),
                         "thinking": "",
                         "intent": "code",
                         "confidence": 1.0,
@@ -964,7 +972,7 @@ class LangGraphSupervisor:
                     )
                     return {
                         "success": False,
-                        "response": f"抱歉，处理您的请求时出现错误: {str(e)}",
+                        "response": friendly_llm_error(e, model_name or ""),
                         "thinking": "",
                         "intent": "general",
                         "confidence": 1.0,

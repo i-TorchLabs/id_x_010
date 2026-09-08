@@ -3,9 +3,9 @@
 # id_x_010 一体化容器部署启动脚本（podman）
 #
 # 拓扑：单 Pod 四容器，共享网络命名空间
-#   db       docker.io/library/postgres:18   127.0.0.1:5432（仅 Pod 内可达）
-#   service  localhost/id_x_010-service      127.0.0.1:7000（Litestar + GraphQL）
-#   web      localhost/id_x_010-web          127.0.0.1:2000（Next.js）
+#   db       docker.io/library/postgres:18   :5432 → 宿主机 ${DB_HOST_PORT:-54321}
+#   service  localhost/id_x_010-service      127.0.0.1:7000（Litestar + GraphQL，仅 Pod 内可达）
+#   web      localhost/id_x_010-web          127.0.0.1:2000（Next.js，仅 Pod 内可达）
 #   haproxy  docker.io/library/haproxy:3.0   :8080 → 宿主机 ${POD_PORT:-8010}
 #
 # 用法：
@@ -46,10 +46,14 @@ HAPROXY_IMAGE="${HAPROXY_IMAGE:-docker.io/library/haproxy:3.0}"
 SERVICE_IMAGE="localhost/${PROJECT_NAME}-service"
 WEB_IMAGE="localhost/${PROJECT_NAME}-web"
 POD_PORT="${POD_PORT:-8010}"
+# 宿主机直连数据库端口（db 容器 5432 发布到宿主机该端口）
+DB_HOST_PORT="${DB_HOST_PORT:-54321}"
 
 # 提醒关键可选项未配置（不阻断，功能会降级）
+# 提供商 api_key 已迁移至 external_provider / local_provider 表，
+# 环境变量 EXTERNAL_API_KEY 仅作表无数据时的回退来源
 if [ "${LLM_PROVIDER:-external}" = "external" ] && [ -z "${EXTERNAL_API_KEY:-}" ]; then
-  echo "[up] 警告: LLM_PROVIDER=external 但 EXTERNAL_API_KEY 为空，外部模型调用将失败" >&2
+  echo "[up] 提示: LLM_PROVIDER=external，请确认 external_provider 表已写入提供商配置（或设置 EXTERNAL_API_KEY 作为回退）" >&2
 fi
 
 # ============================================
@@ -68,10 +72,16 @@ fi
 # ============================================
 # 2. 创建 Pod（已存在则跳过）
 #    haproxy:8080 -> pod:8080 -> 宿主机:${POD_PORT}
+#    db:5432      -> pod:5432 -> 宿主机:${DB_HOST_PORT}
+#    （端口映射在 Pod 创建时固定，已存在的 Pod 无法追加）
 # ============================================
 if ! podman pod exists "${PROJECT_NAME}"; then
-  podman pod create --name "${PROJECT_NAME}" -p "${POD_PORT}:8080"
-  echo "[up] Pod ${PROJECT_NAME} 已创建，端口映射 ${POD_PORT}:8080"
+  podman pod create --name "${PROJECT_NAME}" \
+    -p "${POD_PORT}:8080" \
+    -p "${DB_HOST_PORT}:5432"
+  echo "[up] Pod ${PROJECT_NAME} 已创建，端口映射 ${POD_PORT}:8080, ${DB_HOST_PORT}:5432"
+elif ! podman pod inspect "${PROJECT_NAME}" | grep -Eq "[\":]${DB_HOST_PORT}[,\"}]"; then
+  echo "[up] 提示: 现有 Pod 未映射 ${DB_HOST_PORT}:5432（数据库端口），如需发布请先 bash down.sh 再重新运行" >&2
 fi
 
 # ============================================

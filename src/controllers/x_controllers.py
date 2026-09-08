@@ -47,6 +47,8 @@ from x_models.id_x_010.src.schemas.x_schemas import (
 from x_models.id_x_010.src.views.x_views import (
     get_conversation_history,
     get_user_model_settings,
+    list_agent_db_settings,
+    load_llm_provider_config,
     merge_context,
     save_conversation_log,
     test_model_connectivity,
@@ -98,7 +100,7 @@ class Query:
                 logger.warning(
                     f"{get_request_id()}数据库模型表为空，尝试从环境变量回退获取模型列表"
                 )
-                return self._fallback_models()
+                return Query._fallback_models()
 
             logger.info(
                 f"{get_request_id()}成功获取模型列表: {len(external_models)} 个外部模型, "
@@ -114,7 +116,7 @@ class Query:
         except Exception as e:
             logger.error(f"{get_request_id()}获取模型列表失败: {e}", exc_info=True)
             # 数据库查询失败时，尝试环境变量回退
-            return self._fallback_models(str(e))
+            return Query._fallback_models(str(e))
 
     @staticmethod
     def _fallback_models(error_msg: str = "") -> ModelListResponseType:
@@ -164,21 +166,33 @@ class Query:
     @strawberry.field(description="获取数据库列表")
     async def get_databases(self) -> "DatabaseListResponseType":
         try:
-            db_list_str = os.getenv("AGENT_DB_LIST", "")
             db_items = []
-            if db_list_str:
-                try:
-                    db_dict = json.loads(db_list_str)
-                    db_items = [
-                        DatabaseInfoType(key=k, label=v) for k, v in db_dict.items()
-                    ]
-                except (json.JSONDecodeError, AttributeError):
-                    # 兼容旧格式：逗号分隔的纯名称列表
-                    db_items = [
-                        DatabaseInfoType(key=name.strip(), label=name.strip())
-                        for name in db_list_str.split(",")
-                        if name.strip()
-                    ]
+
+            # 优先从 agent_db_settings 表读取可用数据库
+            agent_db_rows = await list_agent_db_settings()
+            if agent_db_rows:
+                db_items = [
+                    DatabaseInfoType(
+                        key=row.db_name, label=row.db_label or row.db_name
+                    )
+                    for row in agent_db_rows
+                ]
+            else:
+                # 表无数据时回退环境变量 AGENT_DB_LIST（JSON 或逗号分隔）
+                db_list_str = os.getenv("AGENT_DB_LIST", "")
+                if db_list_str:
+                    try:
+                        db_dict = json.loads(db_list_str)
+                        db_items = [
+                            DatabaseInfoType(key=k, label=v) for k, v in db_dict.items()
+                        ]
+                    except (json.JSONDecodeError, AttributeError):
+                        # 兼容旧格式：逗号分隔的纯名称列表
+                        db_items = [
+                            DatabaseInfoType(key=name.strip(), label=name.strip())
+                            for name in db_list_str.split(",")
+                            if name.strip()
+                        ]
 
             logger.info(
                 f"{get_request_id()}获取数据库列表: {[(d.key, d.label) for d in db_items]}"
@@ -331,6 +345,9 @@ class Mutation:
                     ]
                 except json.JSONDecodeError:
                     context = None
+
+            # 按 LLM_PROVIDER 加载提供商表配置（external_provider / local_provider）
+            await load_llm_provider_config()
 
             # 用户已保存自定义模型设置时，以其覆盖默认链路配置
             request = _get_info_request(info)
@@ -557,6 +574,9 @@ class Mutation:
                 )
                 return
 
+            # 按 LLM_PROVIDER 加载提供商表配置（external_provider / local_provider）
+            await load_llm_provider_config()
+
             # 用户已保存自定义模型设置时，以其覆盖默认链路配置
             user_settings = await _get_bearer_settings(_get_info_request(info))
             if user_settings is not None:
@@ -730,6 +750,9 @@ class Subscription:
                     f"{get_request_id()}上下文已加载: {len(merged_context)} 条消息, "
                     f"约 {len(merged_context) // 2} 轮对话"
                 )
+
+            # 按 LLM_PROVIDER 加载提供商表配置（external_provider / local_provider）
+            await load_llm_provider_config()
 
             # 用户已保存自定义模型设置时，以其覆盖默认链路配置。
             # 注意不能复用 get_orchestrator() 的缓存实例：环境变量缺 key 时
@@ -941,6 +964,9 @@ def register_routers(route_prefix: str) -> Router:
 
         # 在请求上下文中捕获 request_id，确保 generate() 内可用
         req_id = request_id_var.get("")
+
+        # 按 LLM_PROVIDER 加载提供商表配置（external_provider / local_provider）
+        await load_llm_provider_config()
 
         # 用户已保存自定义模型设置时，以其覆盖默认链路配置
         user_settings = await _get_bearer_settings(request)

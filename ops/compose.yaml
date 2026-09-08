@@ -2,8 +2,9 @@
 # id_x_010 一体化部署（podman-compose）
 #
 # 与 up.sh 等价的四容器拓扑（db / service / web / haproxy）；
-# 容器同处项目默认 bridge 网络，以服务名（DNS 别名）互访，
-# 仅 haproxy 的 8080 发布到宿主机 ${POD_PORT:-8010}。
+# 容器同处项目默认 bridge 网络，以服务名（DNS 别名）互访；
+# 发布到宿主机的端口：haproxy 8080 → ${POD_PORT:-8010}，
+# db 5432 → ${DB_HOST_PORT:-54321}（供宿主机直连数据库）。
 #
 # 用法（在本目录 ops/ 下执行）：
 #   podman-compose up -d --build          # 构建并启动
@@ -23,11 +24,14 @@ name: id_x_010
 # 受此影响：service 的 DB_HOST=db；haproxy 使用 haproxy.compose.cfg。
 
 services:
-  # -- PostgreSQL 18：数据卷 id_x_010_db，首次启动执行 ./init 下脚本 --
+  # -- PostgreSQL 18：数据卷 id_x_010_db，首次启动执行 ./init 下脚本；
+  #    5432 发布到宿主机 ${DB_HOST_PORT:-54321}，供宿主机/外部工具直连 --
   db:
     image: docker.io/library/postgres:18
     env_file: .env
     restart: unless-stopped
+    ports:
+      - "${DB_HOST_PORT:-54321}:5432"
     volumes:
       - id_x_010_db:/var/lib/postgresql
       - ./init:/docker-entrypoint-initdb.d:ro,z

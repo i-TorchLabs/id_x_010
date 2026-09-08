@@ -37,10 +37,10 @@ id_x_010 是 TorchLabs/i-Torch（id_x_000）主程序的业务插件，定位为
 1. **意图双引擎可热切** —— LLM 路由器使用 `with_structured_output` 强约束大语言模型给出意图/置信度/推理过程，语义路由器以嵌入向量匹配样例语句，`use_llm_router` 一参切换，路由失败统一回退至通用意图。
 2. **SQL 审批人机协同** —— LangGraph 将人工审批设为节点而非边，审批状态取批准/拒绝/取消三态，拒绝后回到查询生成节点重写 SQL，取消则短路返回，形成可审计的人机协同链路。
 3. **白名单与注入双检** —— SQL 安全检查器先正则提取首关键字再扫描危险词与注入模式（多语句执行、注释截断、UNION 注入等），非 `SELECT`/`WITH` 一律拒绝，将安全决策前置到执行前。
-4. **模块级数据库隔离** —— 本插件映射的业务库名由模块内 `.env` 的 `DB_NAME` 独立定义，主程序按模块构建独立连接池；SQL 智能体另用 `AGENT_DB_*` 环境变量与业务主库物理隔离，并通过连接池预探测（pool_pre_ping）、独立异步引擎（create_async_engine）防止慢查询拖垮主连接池。
+4. **模块级数据库隔离** —— 本插件映射的业务库名由模块内 `.env` 的 `DB_NAME` 独立定义，主程序按模块构建独立连接池；SQL 智能体目标库连接配置存储于业务库 `agent_db_settings` 表（环境变量 `AGENT_DB_*` 作为表无数据时的回退），与业务主库物理隔离，并通过连接池预探测（pool_pre_ping）、独立异步引擎（create_async_engine）防止慢查询拖垮主连接池。
 5. **实例缓存降本** —— 监督者获取（get_supervisor）、SQL 智能体获取（get_sql_agent）以模型类型/模型名/库名为键缓存编译后的状态图，避免每次请求重新构图与建连，相同参数命中缓存即复用。
 6. **思考过程分离流** —— 流式回调处理器（StreamingHandler）实时解析 `<thinking>...</thinking>` 标签，思考与正文分通道输出，前端可独立渲染推理折叠区，不影响正文打字机效果。
-7. **模型配置热回退** —— 外部模型配置获取优先查数据库 `external_models` 表，失败时回退环境变量并标注回退模式，模型列表接口在数据库不可用时仍可用。
+7. **模型配置热回退** —— 外部模型配置获取优先查数据库 `external_models` 表，失败时回退环境变量并标注回退模式，模型列表接口在数据库不可用时仍可用；LLM 提供商凭据（api_key/base_url）同样优先读取 `external_provider` / `local_provider` 表（由 `LLM_PROVIDER` 选表），表无数据时回退环境变量。
 
 ## 4. 技术栈 (Tech Stack)
 
@@ -101,7 +101,7 @@ graph TB
 
   subgraph L7[数据层]
     BizDB[(业务库 模块.env DB_NAME)]
-    AgentDB[(SQL 库 AGENT_DB_*)]
+    AgentDB[("SQL 库 (配置见 agent_db_settings 表)")]
     ConvLog[(ConversationLog 对话日志)]
   end
 
@@ -203,7 +203,7 @@ sequenceDiagram
 ```text
 id_x_010/
 ├── x_plugin.py                  # 插件入口: load_plugin() 返回插件实例
-├── .env.template                # 模块环境变量模板: DB_NAME / 模型配置 / AGENT_DB_*
+├── .env.template                # 模块环境变量模板: DB_* / LLM_PROVIDER（AGENT_DB_* 与提供商配置已迁移至数据库表）
 ├── requirements.txt             # Python 依赖清单
 ├── LICENSE                      # AGPL-3.0 许可证
 ├── src/
@@ -272,7 +272,7 @@ id_x_010 对外接口由 `register_routers` 统一注册至主程序 `/b/id_x_01
 
 - `health`：健康检查，返回 `{ status: "ok", service: "id_x_010" }`。
 - `getModels`：获取模型列表，优先查 `external_models`/`local_models` 表，失败回退环境变量。
-- `getDatabases`：从 `AGENT_DB_LIST` 解析可用数据库，支持 JSON 与逗号分隔两种格式。
+- `getDatabases`：从 `agent_db_settings` 表读取可用数据库；表无数据时回退 `AGENT_DB_LIST` 环境变量，支持 JSON 与逗号分隔两种格式。
 
 ### 8.2 GraphQL 变更 (Mutation)
 
@@ -367,7 +367,6 @@ MODELS = [
 
 1. 模块 `.env`（`x_models/id_x_010/.env`）
 2. 项目根 `.env`（`i-Core/.env`）
-3. `config/base_config.toml`（兜底默认值）
 
 复制模块环境变量模板并填写：
 
@@ -381,20 +380,36 @@ cp x_models/id_x_010/.env.template x_models/id_x_010/.env
 # 本模块映射的业务库名（主程序按模块独立建连）
 DB_NAME=id_x_010
 
-# 模型配置（external | local）
-LLM_PROVIDER=external
-EXTERNAL_API_KEY=<外部模型 API Key>
+# 业务库连接参数（加密存储，用 utils/encrypt_util.py 生成，运行时自动解密）
+DB_HOST=<加密后主机>
+DB_PORT=<加密后端口>
+DB_USERNAME=<加密后用户>
+DB_PASSWORD=<加密后密码>
 
-# SQL 智能体目标库（与业务库隔离，需加密）
-AGENT_DB_HOST_ENC=<加密后主机>
-AGENT_DB_PORT_ENC=<加密后端口>
-AGENT_DB_NAME_ENC=<加密后库名>
-AGENT_DB_USERNAME_ENC=<加密后用户>
-AGENT_DB_PASSWORD_ENC=<加密后密码>
-AGENT_DB_LIST=primary,analytics
+# LLM 模型提供商（external | local）
+# 决定运行时从 external_provider 表还是 local_provider 表读取提供商配置
+LLM_PROVIDER=external
 ```
 
-数据库通用连接参数（host/port/username/password）由主程序 `config/base_config.toml` 的 `[DATABASE]` 段统一提供，加密使用主程序 `utils/encrypt_util.py`。
+LLM 提供商的 api_key 与各类 base_url 已迁移至业务库 `external_provider` / `local_provider` 表（建表见 `ops/init/01_init.sql` 第 9、10 节），各取 id 最小行作为生效配置，示例：
+
+```sql
+INSERT INTO external_provider (api_key, llm_base_url, embd_base_url, vl_base_url)
+VALUES ('sk-xxx', 'https://api.siliconflow.cn/v1', 'https://api.siliconflow.cn/v1', 'https://api.siliconflow.cn/v1');
+```
+
+表无数据时运行侧回退环境变量 `EXTERNAL_API_KEY` / `EXTERNAL_*_BASE_URL`（或 `LOCAL_API_KEY` / `LOCAL_*_BASE_URL`）。
+
+SQL 智能体目标库连接配置已迁移至业务库 `agent_db_settings` 表（建表见 `ops/init/01_init.sql` 第 8 节），每行一个可选数据库，示例：
+
+```sql
+INSERT INTO agent_db_settings (db_name, db_label, db_host, db_port, db_username, db_password)
+VALUES ('analytics', '分析库', '127.0.0.1', 5432, 'readonly', 'secret');
+```
+
+表无数据时运行侧回退环境变量 `AGENT_DB_HOST/PORT/NAME/USERNAME/PASSWORD`（或对应 `_ENC` 加密值）与 `AGENT_DB_LIST`。
+
+数据库连接参数（host/port/username/password）由模块 `.env` 的 `DB_*` 变量提供，以加密值存储，加密使用主程序 `utils/encrypt_util.py`，运行时自动解密。
 
 初始化业务库表结构（替换连接参数）：
 
@@ -435,7 +450,7 @@ bash down.sh            # 停止并清理容器与自建镜像（保留数据卷
 bash down.sh --volumes  # 连同数据库与日志卷一并清除（不可恢复）
 ```
 
-启动后经 HAProxy 统一入口访问：`http://localhost:8010/`（端口由 `.env` 的 `POD_PORT` 控制）；`/b/id_x_010/*` 转发后端，其余路径转发前端，路由规则见 `ops/haproxy.cfg`。
+启动后经 HAProxy 统一入口访问：`http://localhost:8010/`（端口由 `.env` 的 `POD_PORT` 控制）；`/b/id_x_010/*` 转发后端，其余路径转发前端，路由规则见 `ops/haproxy.cfg`。数据库 5432 端口同时发布到宿主机 `54321`（由 `.env` 的 `DB_HOST_PORT` 控制），可用 `psql -h localhost -p 54321 -U postgres -d id_x_010` 直连。
 
 也可手动构建镜像（后端镜像构建上下文必须是主程序仓库根）：
 

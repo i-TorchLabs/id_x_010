@@ -42,6 +42,10 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import MessagesState
 from langgraph.graph.state import CompiledStateGraph
 from utils.log_util import get_request_id, logger
+from x_models.id_x_010.src.agents.x_llm_error import (
+    DEFAULT_EXTERNAL_MODEL,
+    friendly_llm_error,
+)
 from x_models.id_x_010.src.models.x_models import (
     get_external_model_config,
 )
@@ -289,9 +293,63 @@ class DatabaseConnection:
         user: Optional[str] = None,
         password: Optional[str] = None,
     ):
-        # SQL Agent 使用独立的数据库连接参数（AGENT_DB_*），与业务库（DB_*）隔离
-        # 优先取解密后的明文变量（由 main.py 启动时注入 os.environ），
-        # 其次尝试解密 _ENC 变量（.env 文件中存储的加密值）
+        # SQL Agent 使用独立的数据库连接参数，与业务库（DB_*）隔离。
+        # 连接参数延迟到 connect() 时解析：显式传参优先，
+        # 其次读业务库 agent_db_settings 表（按 database 匹配库名），
+        # 表无匹配行时回退环境变量 AGENT_DB_*（含 _ENC 加密值）。
+        self.host = host
+        self.port = port
+        self.database = database
+        self.user = user
+        self.password = password
+        self._settings_resolved = False
+
+        self.engine = None
+        self.session_factory: Optional[async_sessionmaker[AsyncSession]] = None
+        self._is_connected = False
+        self._sql_database: Optional[SQLDatabase] = None
+
+    async def _resolve_settings(self):
+        """解析最终连接参数：数据库表 agent_db_settings 优先，环境变量回退。"""
+        if self._settings_resolved:
+            return
+
+        explicit_all = all(
+            [
+                bool(self.host),
+                bool(self.port),
+                bool(self.database),
+                bool(self.user),
+                self.password is not None,
+            ]
+        )
+        if not explicit_all:
+            from x_models.id_x_010.src.views.x_views import get_agent_db_settings
+
+            row = await get_agent_db_settings(self.database)
+            if row is not None:
+                self.host = self.host or row.db_host
+                self.port = self.port or int(row.db_port)
+                self.database = row.db_name
+                self.user = self.user or row.db_username
+                self.password = self.password or row.db_password
+                logger.info(
+                    f"{get_request_id()}SQLAgent 目标库配置来源: agent_db_settings 表 "
+                    f"(db_name={row.db_name}, host={row.db_host}:{row.db_port})"
+                )
+            else:
+                self._resolve_settings_from_env()
+        else:
+            logger.info(
+                f"{get_request_id()}SQLAgent 目标库配置来源: 显式传参 "
+                f"(db_name={self.database})"
+            )
+
+        self._settings_resolved = True
+
+    def _resolve_settings_from_env(self):
+        """环境变量回退：优先取解密后的明文变量（由 main.py 启动时注入
+        os.environ），其次尝试解密 _ENC 变量（.env 文件中存储的加密值）。"""
         from utils.decrypt_util import decrypt
 
         def _resolve_env(plain_key: str, enc_key: str, default: str) -> str:
@@ -306,30 +364,31 @@ class DatabaseConnection:
                     pass
             return default
 
-        self.host = host or _resolve_env(
+        self.host = self.host or _resolve_env(
             "AGENT_DB_HOST", "AGENT_DB_HOST_ENC", "localhost"
         )
-        self.port = port or int(
+        self.port = self.port or int(
             _resolve_env("AGENT_DB_PORT", "AGENT_DB_PORT_ENC", "5432")
         )
-        self.database = database or _resolve_env(
+        self.database = self.database or _resolve_env(
             "AGENT_DB_NAME", "AGENT_DB_NAME_ENC", "postgres"
         )
-        self.user = user or _resolve_env(
+        self.user = self.user or _resolve_env(
             "AGENT_DB_USERNAME", "AGENT_DB_USERNAME_ENC", "postgres"
         )
-        self.password = password or _resolve_env(
+        self.password = self.password or _resolve_env(
             "AGENT_DB_PASSWORD", "AGENT_DB_PASSWORD_ENC", ""
         )
-
-        self.engine = None
-        self.session_factory: Optional[async_sessionmaker[AsyncSession]] = None
-        self._is_connected = False
-        self._sql_database: Optional[SQLDatabase] = None
+        logger.info(
+            f"{get_request_id()}SQLAgent 目标库配置来源: 环境变量回退 "
+            f"(db_name={self.database}, host={self.host}:{self.port})"
+        )
 
     async def connect(self):
         if self._is_connected:
             return
+
+        await self._resolve_settings()
 
         try:
             encoded_password = quote_plus(self.password)
@@ -527,7 +586,7 @@ class SQLAgent:
             model_name
             or external_config.get("model_name")
             or os.getenv("EXTERNAL_LLM_MODEL")
-            or "Pro/zai-org/GLM-5"
+            or DEFAULT_EXTERNAL_MODEL
         )
         self.api_key = (
             api_key or external_config.get("api_key") or os.getenv("EXTERNAL_API_KEY")
@@ -931,7 +990,7 @@ class SQLAgent:
 
         except Exception as e:
             result["error"] = str(e)
-            result["answer"] = f"查询过程中出现错误: {str(e)}"
+            result["answer"] = friendly_llm_error(e, self.model_name)
             logger.error(
                 f"{get_request_id()}第三方模型调用失败 [sql.query] | model={self.model_name}, "
                 f"base_url={self.base_url} | 原因: {type(e).__name__}: {e}"
@@ -1132,7 +1191,7 @@ class SQLAgent:
             )
             yield {
                 "type": "error",
-                "content": str(e),
+                "content": friendly_llm_error(e, self.model_name),
                 "model_used": self.model_name,
             }
 
@@ -1192,7 +1251,7 @@ class SQLAgent:
             )
             yield {
                 "type": "error",
-                "content": str(e),
+                "content": friendly_llm_error(e, self.model_name),
             }
 
     async def natural_language_to_sql(self, question: str) -> Tuple[str, str]:
@@ -1293,7 +1352,7 @@ class SQLAgent:
                 )
                 yield {
                     "type": "error",
-                    "content": str(e),
+                    "content": friendly_llm_error(e, self.model_name),
                     "model_used": self.model_name,
                 }
         else:

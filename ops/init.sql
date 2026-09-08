@@ -183,6 +183,89 @@ COMMENT ON COLUMN user_model_settings.api_key IS 'API-KEY';
 COMMENT ON COLUMN user_model_settings.model_name IS '模型名称';
 
 -- ============================================
+-- 8. SQL Agent 目标库配置表 (agent_db_settings)
+--    取代原 .env 的 AGENT_DB_* 配置项，每行一个可选数据库
+-- ============================================
+CREATE TABLE IF NOT EXISTS agent_db_settings (
+    id SERIAL PRIMARY KEY,
+    db_name VARCHAR(128) NOT NULL UNIQUE,
+    db_label VARCHAR(128),
+    db_host VARCHAR(128) NOT NULL,
+    db_port INTEGER NOT NULL DEFAULT 5432,
+    db_username VARCHAR(128) NOT NULL,
+    db_password VARCHAR(256) NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ix_agent_db_settings_db_name ON agent_db_settings(db_name);
+
+COMMENT ON TABLE agent_db_settings IS 'SQL Agent 目标库配置表';
+COMMENT ON COLUMN agent_db_settings.id IS 'ID';
+COMMENT ON COLUMN agent_db_settings.db_name IS '目标库名';
+COMMENT ON COLUMN agent_db_settings.db_label IS '展示名称';
+COMMENT ON COLUMN agent_db_settings.db_host IS '主机地址';
+COMMENT ON COLUMN agent_db_settings.db_port IS '端口';
+COMMENT ON COLUMN agent_db_settings.db_username IS '用户名';
+COMMENT ON COLUMN agent_db_settings.db_password IS '密码（明文，与 external_models.api_key 约定一致）';
+
+-- 示例：写入一个可选数据库（按需修改后执行）
+-- INSERT INTO agent_db_settings (db_name, db_label, db_host, db_port, db_username, db_password)
+-- VALUES ('analytics', '分析库', '127.0.0.1', 5432, 'readonly', 'secret');
+
+-- ============================================
+-- 9. 外部模型提供商配置表 (external_provider)
+--    取代原 .env 的 EXTERNAL_API_KEY / EXTERNAL_*_BASE_URL；
+--    LLM_PROVIDER=external 时读取 id 最小行作为生效配置
+-- ============================================
+CREATE TABLE IF NOT EXISTS external_provider (
+    id SERIAL PRIMARY KEY,
+    api_key VARCHAR(512) NOT NULL,
+    llm_base_url VARCHAR(256) NOT NULL,
+    embd_base_url VARCHAR(256),
+    vl_base_url VARCHAR(256),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+COMMENT ON TABLE external_provider IS '外部模型提供商配置表';
+COMMENT ON COLUMN external_provider.id IS 'ID';
+COMMENT ON COLUMN external_provider.api_key IS 'API-KEY（明文，与 external_models 约定一致）';
+COMMENT ON COLUMN external_provider.llm_base_url IS 'LLM 访问地址';
+COMMENT ON COLUMN external_provider.embd_base_url IS 'Embedding 访问地址';
+COMMENT ON COLUMN external_provider.vl_base_url IS '视觉模型访问地址';
+
+-- 示例（按需修改后执行）：
+-- INSERT INTO external_provider (api_key, llm_base_url, embd_base_url, vl_base_url)
+-- VALUES ('sk-xxx', 'https://api.siliconflow.cn/v1', 'https://api.siliconflow.cn/v1', 'https://api.siliconflow.cn/v1');
+
+-- ============================================
+-- 10. 本地模型提供商配置表 (local_provider)
+--     取代原 .env 的 LOCAL_API_KEY / LOCAL_*_BASE_URL；
+--     LLM_PROVIDER=local 时读取 id 最小行作为生效配置
+-- ============================================
+CREATE TABLE IF NOT EXISTS local_provider (
+    id SERIAL PRIMARY KEY,
+    api_key VARCHAR(512) NOT NULL,
+    llm_base_url VARCHAR(256) NOT NULL,
+    embd_base_url VARCHAR(256),
+    vl_base_url VARCHAR(256),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+COMMENT ON TABLE local_provider IS '本地模型提供商配置表';
+COMMENT ON COLUMN local_provider.id IS 'ID';
+COMMENT ON COLUMN local_provider.api_key IS 'API-KEY（明文，与 external_models 约定一致）';
+COMMENT ON COLUMN local_provider.llm_base_url IS 'LLM 访问地址';
+COMMENT ON COLUMN local_provider.embd_base_url IS 'Embedding 访问地址';
+COMMENT ON COLUMN local_provider.vl_base_url IS '视觉模型访问地址';
+
+-- 示例（按需修改后执行）：
+-- INSERT INTO local_provider (api_key, llm_base_url, embd_base_url, vl_base_url)
+-- VALUES ('ollama', 'http://localhost:11434/v1', 'http://localhost:11434/v1', 'http://localhost:11434/v1');
+
+-- ============================================
 -- 触发器：自动更新 users 表的 updated_at 字段
 -- ============================================
 CREATE OR REPLACE FUNCTION update_updated_at_column()

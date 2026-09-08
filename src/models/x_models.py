@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 from typing import List, Optional
 
+import os
+
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -42,13 +44,58 @@ def get_session() -> async_sessionmaker[AsyncSession]:
     return _session_maker
 
 
-def get_external_model_config():
-    import os
+# ==========================================
+# LLM 提供商配置缓存，由 views.load_llm_provider_config() 按
+# LLM_PROVIDER 从 external_provider / local_provider 表读取后注入
+# ==========================================
+_llm_provider_config: Optional[dict] = None
 
+
+def set_llm_provider_config(config: Optional[dict]) -> None:
+    """由 views 层调用，将提供商表读取结果注入全局缓存，供各 Agent 同步读取。"""
+    global _llm_provider_config
+    _llm_provider_config = config
+
+
+def get_external_model_config():
+    """外部模型提供商配置：优先取 external_provider 表（经缓存），表无数据时回退环境变量。"""
+    if _llm_provider_config and _llm_provider_config.get("provider") == "external":
+        return {
+            "model_name": os.getenv("EXTERNAL_LLM_MODEL"),
+            "base_url": _llm_provider_config.get("llm_base_url"),
+            "api_key": _llm_provider_config.get("api_key"),
+            "embd_base_url": _llm_provider_config.get("embd_base_url"),
+            "vl_base_url": _llm_provider_config.get("vl_base_url"),
+        }
     return {
         "model_name": os.getenv("EXTERNAL_LLM_MODEL"),
-        "base_url": os.getenv("EXTERNAL_BASE_URL", "https://api.siliconflow.cn/v1"),
+        "base_url": os.getenv("EXTERNAL_BASE_URL")
+        or os.getenv("EXTERNAL_LLM_BASE_URL", "https://api.siliconflow.cn/v1"),
         "api_key": os.getenv("EXTERNAL_API_KEY"),
+        "embd_base_url": os.getenv("EXTERNAL_EMBD_BASE_URL"),
+        "vl_base_url": os.getenv("EXTERNAL_VL_BASE_URL"),
+    }
+
+
+def get_local_model_config():
+    """本地模型提供商配置：优先取 local_provider 表（经缓存），表无数据时回退环境变量。"""
+    if _llm_provider_config and _llm_provider_config.get("provider") == "local":
+        return {
+            "model_name": os.getenv("LOCAL_LLM_MODEL"),
+            "base_url": _llm_provider_config.get("llm_base_url"),
+            "api_key": _llm_provider_config.get("api_key"),
+            "embd_base_url": _llm_provider_config.get("embd_base_url"),
+            "vl_base_url": _llm_provider_config.get("vl_base_url"),
+        }
+    return {
+        "model_name": os.getenv("LOCAL_LLM_MODEL"),
+        "base_url": os.getenv("LOCAL_MODEL_BASE_URL")
+        or os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:11434/v1"),
+        "api_key": os.getenv("LOCAL_MODEL_API_KEY")
+        or os.getenv("LOCAL_API_KEY")
+        or "ollama",
+        "embd_base_url": os.getenv("LOCAL_EMBD_BASE_URL"),
+        "vl_base_url": os.getenv("LOCAL_VL_BASE_URL"),
     }
 
 
@@ -290,6 +337,158 @@ class UserModelSettings(Base):
             "base_url": self.base_url,
             "api_key": self.api_key,
             "model_name": self.model_name,
+            "created_at": self.created_at.isoformat()
+            if self.created_at is not None
+            else None,
+            "updated_at": self.updated_at.isoformat()
+            if self.updated_at is not None
+            else None,
+        }
+
+
+class AgentDBSettings(Base):
+    """SQL Agent 目标库连接配置（每行一个可选数据库）。
+
+    取代原 .env 中的 AGENT_DB_* 配置项；db_password 按项目既有约定
+    明文存储（与 external_models.api_key 一致）。表无数据时运行侧
+    仍回退环境变量 AGENT_DB_*（含 _ENC 加密值）。
+    """
+
+    __tablename__ = "agent_db_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    db_name: Mapped[str] = mapped_column(
+        String(128), unique=True, nullable=False, comment="目标库名"
+    )
+    db_label: Mapped[Optional[str]] = mapped_column(String(128), comment="展示名称")
+    db_host: Mapped[str] = mapped_column(String(128), nullable=False, comment="主机地址")
+    db_port: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=5432, comment="端口"
+    )
+    db_username: Mapped[str] = mapped_column(
+        String(128), nullable=False, comment="用户名"
+    )
+    db_password: Mapped[str] = mapped_column(
+        String(256), nullable=False, comment="密码"
+    )
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        comment="创建时间",
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        comment="更新时间",
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "db_name": self.db_name,
+            "db_label": self.db_label,
+            "db_host": self.db_host,
+            "db_port": self.db_port,
+            "db_username": self.db_username,
+            "db_password": self.db_password,
+            "created_at": self.created_at.isoformat()
+            if self.created_at is not None
+            else None,
+            "updated_at": self.updated_at.isoformat()
+            if self.updated_at is not None
+            else None,
+        }
+
+
+class ExternalProvider(Base):
+    """外部云端模型提供商配置（取 id 最小行作为当前生效配置）。
+
+    取代原 .env 的 EXTERNAL_API_KEY / EXTERNAL_*_BASE_URL 配置项；
+    LLM_PROVIDER=external 时由 views 层读入缓存。api_key 按项目
+    既有约定明文存储（与 external_models 一致）。
+    """
+
+    __tablename__ = "external_provider"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    api_key: Mapped[str] = mapped_column(String(512), nullable=False, comment="API-KEY")
+    llm_base_url: Mapped[str] = mapped_column(
+        String(256), nullable=False, comment="LLM 访问地址"
+    )
+    embd_base_url: Mapped[Optional[str]] = mapped_column(
+        String(256), comment="Embedding 访问地址"
+    )
+    vl_base_url: Mapped[Optional[str]] = mapped_column(
+        String(256), comment="视觉模型访问地址"
+    )
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        comment="创建时间",
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        comment="更新时间",
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "api_key": self.api_key,
+            "llm_base_url": self.llm_base_url,
+            "embd_base_url": self.embd_base_url,
+            "vl_base_url": self.vl_base_url,
+            "created_at": self.created_at.isoformat()
+            if self.created_at is not None
+            else None,
+            "updated_at": self.updated_at.isoformat()
+            if self.updated_at is not None
+            else None,
+        }
+
+
+class LocalProvider(Base):
+    """本地 Ollama 模型提供商配置（取 id 最小行作为当前生效配置）。
+
+    取代原 .env 的 LOCAL_API_KEY / LOCAL_*_BASE_URL 配置项；
+    LLM_PROVIDER=local 时由 views 层读入缓存。
+    """
+
+    __tablename__ = "local_provider"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    api_key: Mapped[str] = mapped_column(String(512), nullable=False, comment="API-KEY")
+    llm_base_url: Mapped[str] = mapped_column(
+        String(256), nullable=False, comment="LLM 访问地址"
+    )
+    embd_base_url: Mapped[Optional[str]] = mapped_column(
+        String(256), comment="Embedding 访问地址"
+    )
+    vl_base_url: Mapped[Optional[str]] = mapped_column(
+        String(256), comment="视觉模型访问地址"
+    )
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        comment="创建时间",
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        comment="更新时间",
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "api_key": self.api_key,
+            "llm_base_url": self.llm_base_url,
+            "embd_base_url": self.embd_base_url,
+            "vl_base_url": self.vl_base_url,
             "created_at": self.created_at.isoformat()
             if self.created_at is not None
             else None,
