@@ -2,15 +2,15 @@
 
 # id_x_010: 通用计算智能体
 
-**面向科研级知识库与数据查询的 LangGraph 智能体编排插件**
+**科研级知识库与数据查询的多智能体编排引擎 —— 让每一次提问都有迹可循**
 
-![编号](https://img.shields.io/static/v1?label=编号&message=010&color=red&style=flat-square&labelColor=gray)
-![协议](https://img.shields.io/static/v1?label=协议&message=AGPL-3.0&color=red&style=flat-square&labelColor=gray)
-![作者](https://img.shields.io/static/v1?label=作者&message=Ray&color=red&style=flat-square&labelColor=gray)
-![组织](https://img.shields.io/static/v1?label=组织&message=TorchLabs&color=red&style=flat-square&labelColor=gray)
-![引擎](https://img.shields.io/static/v1?label=引擎&message=LangGraph%20%2B%20Litestar&color=red&style=flat-square&labelColor=gray)
-![语言](https://img.shields.io/static/v1?label=语言&message=Python%20%2B%20TypeScript&color=red&style=flat-square&labelColor=gray)
-![数据库](https://img.shields.io/static/v1?label=数据库&message=PostgreSQL&color=red&style=flat-square&labelColor=gray)
+![编号](https://img.shields.io/static/v1?label=%E7%BC%96%E5%8F%B7&message=id_x_010&color=lightgray&style=flat-square&labelColor=black)
+![协议](https://img.shields.io/static/v1?label=%E5%8D%8F%E8%AE%AE&message=AGPL--3.0&color=lightgray&style=flat-square&labelColor=black)
+![作者](https://img.shields.io/static/v1?label=%E4%BD%9C%E8%80%85&message=Ray&color=lightgray&style=flat-square&labelColor=black)
+![组织](https://img.shields.io/static/v1?label=%E7%BB%84%E7%BB%87&message=TorchLabs&color=lightgray&style=flat-square&labelColor=black)
+![引擎](https://img.shields.io/static/v1?label=%E5%BC%95%E6%93%8E&message=LangGraph%20%2B%20Litestar&color=lightgray&style=flat-square&labelColor=black)
+![语言](https://img.shields.io/static/v1?label=%E8%AF%AD%E8%A8%80&message=Python%20%2B%20TypeScript&color=lightgray&style=flat-square&labelColor=black)
+![数据库](https://img.shields.io/static/v1?label=%E6%95%B0%E6%8D%AE%E5%BA%93&message=PostgreSQL&color=lightgray&style=flat-square&labelColor=black)
 
 </div>
 
@@ -18,491 +18,259 @@
 
 ## 1. 简介 (Introduction)
 
-**Slogan**：面向科研级知识库与数据查询的 LangGraph 智能体编排插件。
+**面向科研级知识库与数据查询的 LangGraph 智能体编排插件**
 
-id_x_010 是 TorchLabs/i-Core（id_x_000）主程序的业务插件，定位为以 LangGraph（基于状态图的智能体编排，State Graph）为核心的多智能体编排与对话服务。插件通过插件接口（Plugin Interface）契约挂载到主程序，对外暴露 GraphQL（Graph Query Language）接口与 SSE（Server-Sent Events，服务器发送事件）流式端点，对内编排通用、SQL、代码三类智能体（Agent），完成意图识别、自然语言转 SQL（Natural Language to SQL, NL2SQL）、安全审批、结果解释与流式回传的完整闭环。
-
-针对企业内部数据查询中的「模型选型混乱、SQL 注入风险、上下文断裂、流式体验差」等痛点，id_x_010 以统一的监督者状态图（Supervisor State Graph）、白名单校验、人机协同审批节点与多轮上下文固化给出可复现方案，相较脚本式大语言模型调用具备更强的安全闭环与可维护性，适用于知识问答、数据分析、代码生成等场景。
+id_x_010（通用计算智能体）是一个基于状态图的多智能体编排与对话服务插件。它通过 PluginInterface 挂载到 i-Core 主程序，对外暴露 GraphQL + SSE 流式端点，内置 general / sql / code 三类智能体与双路由意图识别机制，支持多轮上下文固化、思考过程分离流式输出、SQL 安全白名单与人工审批，为科研场景下的知识问答与数据查询提供安全、可观测、可扩展的智能体服务。
 
 ## 2. 核心特性 (Features)
 
-- 多智能体编排：基于 LangGraph 状态图构建 `LangGraphSupervisor`，通过 `router` 节点分发至 `general_agent`、`sql_agent`、`code_agent`，节点命名与状态字段统一。
-- 双路由层意图识别：提供语义路由器（Semantic Router，基于向量匹配）与 LLM 路由器（LLM Router，基于结构化输出）两类路由器，可按场景切换。
-- SQL 安全闭环：SQL 安全检查器（SQL Security Checker）白名单只放行 `SELECT`/`WITH`，对多类危险关键字与注入模式拦截，并设人工审批（human approval）节点等待人工批准。
-- GraphQL 加 SSE 双通道：Strawberry 暴露查询/变更/订阅（Query/Mutation/Subscription）三类操作，`/graphql/stream` 以 SSE 转发订阅，`/sql-approval` 单独承载审批流。
-- 多轮上下文固库：对话以会话标识（conversation_id）关联，对话日志（ConversationLog）落库后由上下文合并（merge_context）合并历史与前端传入上下文，默认截断至最近 5 轮。
+- **多智能体编排**：基于 LangGraph 状态图编排 general / sql / code 三类智能体，按意图动态调度
+- **双路由意图识别**：LLM 推理路由与 Semantic Router 语义路由双重判定，兼顾准确率与响应速度
+- **SQL 安全白名单 + 人工审批**：SQL Agent 仅允许白名单内操作，高风险语句强制进入人工审批流程
+- **GraphQL + SSE 双通道**：查询变更走 GraphQL，流式输出走 SSE，思考过程与最终答案分离推送
+- **模型配置热回退**：模型配置支持热更新与失败自动回退，保障对话服务持续可用
 
 ## 3. 项目亮点 (Highlights)
 
-1. **意图双引擎可热切** —— LLM 路由器使用 `with_structured_output` 强约束大语言模型给出意图/置信度/推理过程，语义路由器以嵌入向量匹配样例语句，`use_llm_router` 一参切换，路由失败统一回退至通用意图。
-2. **SQL 审批人机协同** —— LangGraph 将人工审批设为节点而非边，审批状态取批准/拒绝/取消三态，拒绝后回到查询生成节点重写 SQL，取消则短路返回，形成可审计的人机协同链路。
-3. **白名单与注入双检** —— SQL 安全检查器先正则提取首关键字再扫描危险词与注入模式（多语句执行、注释截断、UNION 注入等），非 `SELECT`/`WITH` 一律拒绝，将安全决策前置到执行前。
-4. **模块级数据库隔离** —— 本插件映射的业务库名由模块内 `.env` 的 `DB_NAME` 独立定义，主程序按模块构建独立连接池；SQL 智能体目标库连接配置存储于业务库 `agent_db_settings` 表（环境变量 `AGENT_DB_*` 作为表无数据时的回退），与业务主库物理隔离，并通过连接池预探测（pool_pre_ping）、独立异步引擎（create_async_engine）防止慢查询拖垮主连接池。
-5. **实例缓存降本** —— 监督者获取（get_supervisor）、SQL 智能体获取（get_sql_agent）以模型类型/模型名/库名为键缓存编译后的状态图，避免每次请求重新构图与建连，相同参数命中缓存即复用。
-6. **思考过程分离流** —— 流式回调处理器（StreamingHandler）实时解析 `<thinking>...</thinking>` 标签，思考与正文分通道输出，前端可独立渲染推理折叠区，不影响正文打字机效果。
-7. **模型配置热回退** —— 外部模型配置获取优先查数据库 `external_models` 表，失败时回退环境变量并标注回退模式，模型列表接口在数据库不可用时仍可用；LLM 提供商凭据（api_key/base_url）同样优先读取 `external_provider` / `local_provider` 表（由 `LLM_PROVIDER` 选表），表无数据时回退环境变量。
+1. **状态图驱动的多智能体编排**：以 LangGraph 状态图为核心，将意图识别、智能体调度、工具调用、结果汇总统一建模为可观测、可回放的状态流转
+2. **双路由意图识别机制**：Semantic Router 毫秒级命中高频意图，LLM 路由兜底长尾问题，两层路由协同降低误判率
+3. **SQL 安全白名单与人工审批闭环**：SQL 语句执行前经过白名单静态校验，越权或高危操作自动挂起并推送审批，审批通过后方可执行
+4. **目标库与业务库物理隔离**：SQL Agent 查询的目标数据库与插件业务库物理隔离，目标库连接配置统一存放于 agent_db_settings 表，杜绝越库访问
+5. **多轮上下文固化**：对话上下文在状态图中显式固化，跨轮次引用、指代消解与长对话一致性得到可靠保障
+6. **思考过程分离流**：推理链路与最终答案通过独立 SSE 事件流推送，前端可分区域展示"思考中"与"回答中"两种状态
+7. **实例缓存避免重复构图**：智能体编排图按配置指纹缓存实例，配置未变更时直接复用，避免重复构建状态图带来的开销
 
 ## 4. 技术栈 (Tech Stack)
 
-<p align="center">表 4-1 id_x_010 技术栈一览</p>
+<p align="center">表 1：技术栈一览</p>
 
-| 分类 | 名称 | 版本 | 用途 |
-|---|---|---|---|
-| 编程语言 | Python | ≥ 3.10 | 服务端主语言 |
-| 编程语言 | TypeScript | ≥ 5.0 | 前端主语言 |
-| 后端框架 | Litestar | ≥ 2.24 | ASGI 路由与中间件宿主 |
-| 接口协议 | Strawberry GraphQL | ≥ 0.323 | 查询/变更/订阅三类操作 |
-| 智能体编排 | LangGraph | ≥ 0.2 | 状态图工作流编排 |
-| LLM 调用 | LangChain / langchain-openai | ≥ 0.3 | 模型抽象与工具绑定 |
-| 语义路由 | Semantic Router | ≥ 0.1 | 向量意图识别 |
-| 数据库 | PostgreSQL | ≥ 14 | 业务库与对话日志 |
-| ORM | SQLAlchemy + asyncpg | ≥ 2.0 | 异步会话与连接池 |
-| 前端框架 | Next.js | 16.x | React 服务端渲染 |
-| UI 组件 | HeroUI + Tailwind CSS | ^3.2 / ^4 | 组件库与样式 |
-| 反向代理 | HAProxy | — | SSL 终止与路由分区 |
+分类 | 名称 | 版本 | 用途
+--- | --- | --- | ---
+前端框架 | Next.js | 16.2.3 | Web 应用框架与服务端渲染
+前端框架 | React | 19 | 用户界面构建
+UI 组件 | HeroUI | - | 组件库与交互体系
+样式方案 | Tailwind CSS | 4 | 原子化样式与主题定制
+Web 框架 | Litestar | - | 后端 ASGI 应用框架
+运行时 | Granian | - | 高性能 Rust ASGI 服务器
+API 协议 | Strawberry GraphQL | - | GraphQL Schema 与解析器
+智能编排 | LangGraph | - | 状态图多智能体编排
+模型接入 | LangChain | - | LLM 调用与工具链封装
+意图路由 | Semantic Router | - | 语义级意图快速匹配
+ORM | SQLAlchemy | 2.0 (async) | 异步数据访问层
+数据库 | PostgreSQL | - | 业务库与目标库存储
+流量分发 | HAProxy | - | 网关分流与负载均衡
 
 ## 5. 整体架构图 (Overall Architecture Diagram)
 
+<p align="center">图 1：八层整体架构</p>
+
 ```mermaid
 graph TB
-  subgraph L1[表示层 web 前端]
-    Browser[浏览器]
-    NextJS["Next.js<br/>React + HeroUI"]
-  end
+    subgraph L1["L1 表示层"]
+        UI["Next.js 16 + React 19<br/>HeroUI + Tailwind CSS 4"]
+    end
+    subgraph L2["L2 网关层"]
+        GW["HAProxy 分流<br/>负载均衡 / 路由分发"]
+    end
+    subgraph L3["L3 接入层"]
+        AC["Litestar + Granian<br/>GraphQL 端点 + SSE 流式端点"]
+    end
+    subgraph L4["L4 插件层"]
+        PL["x_plugin.py<br/>PluginInterface 挂载 i-Core 主程序"]
+    end
+    subgraph L5["L5 编排层"]
+        OR["LangGraph 状态图<br/>双路由意图识别<br/>general / sql / code 智能体"]
+    end
+    subgraph L6["L6 能力层"]
+        CA["LangChain 工具链<br/>Semantic Router<br/>SQL 白名单校验 / 人工审批"]
+    end
+    subgraph L7["L7 数据层"]
+        DB["PostgreSQL 业务库<br/>agent_db_settings 表<br/>SQLAlchemy 2.0 async"]
+        TDB["目标数据库（物理隔离）"]
+    end
+    subgraph L8["L8 外部依赖"]
+        EXT["LLM 服务提供方<br/>模型配置热回退"]
+    end
 
-  subgraph L2[网关层 SSL 终止]
-    HAProxy[HAProxy<br/>/: 重定向 /f/: 前端 /b/: 后端]
-  end
-
-  subgraph L3[接入层 主程序 i-Core]
-    Granian[Granian ASGI Server]
-    MW[RequestMiddleware<br/>鉴权 / 请求ID]
-    Adapt["src/adapt.py 适配"]
-  end
-
-  subgraph L4[插件层 id_x_010 控制器]
-    GQL[Strawberry GraphQL<br/>Query/Mutation/Subscription]
-    SSE[graphql/stream<br/>SSE 流转发]
-    Approve[sql-approval<br/>审批端点]
-  end
-
-  subgraph L5[编排层 监督者]
-    Router{router 意图识别}
-    Router -->|general| GenA[general_agent]
-    Router -->|sql| SqlA[sql_agent]
-    Router -->|code| CodeA[code_agent]
-  end
-
-  subgraph L6[能力层 智能体]
-    General[GeneralAgent<br/>通用问答]
-    SQLAgent["SQLAgent<br/>NL2SQL + 审批"]
-    SACheck[SQLSecurityChecker<br/>白名单校验]
-  end
-
-  subgraph L7[数据层]
-    BizDB[(业务库 模块.env DB_NAME)]
-    AgentDB[("SQL 库 (配置见 agent_db_settings 表)")]
-    ConvLog[(ConversationLog 对话日志)]
-  end
-
-  subgraph L8[外部依赖 模型]
-    Ext[外部模型<br/>SiliconFlow / OpenRouter]
-    Local[本地模型<br/>Ollama]
-    Emb[嵌入服务<br/>Semantic Router]
-  end
-
-  Browser --> NextJS
-  NextJS -->|HTTP/SSE| HAProxy
-  HAProxy -->|/b/*| Granian
-  Granian --> MW
-  MW --> Adapt
-  Adapt --> GQL
-  GQL --> SSE
-  GQL --> Approve
-  GQL --> Router
-  GenA --> General
-  SqlA --> SQLAgent
-  SQLAgent --> SACheck
-  SACheck -->|SELECT/WITH 通过| AgentDB
-  SACheck -.->|危险词/注入| ConvLog
-  General --> ConvLog
-  SQLAgent --> ConvLog
-  General --> Ext
-  General --> Local
-  Router --> Emb
-  L4 -.->|写入/读取上下文| ConvLog
-  BizDB -.->|主程序按模块注入| L4
+    UI --> GW
+    GW --> AC
+    AC --> PL
+    PL --> OR
+    OR --> CA
+    CA --> DB
+    CA --> TDB
+    OR --> EXT
 ```
-
-<p align="center">图 5-1 id_x_010 分层架构图</p>
 
 ## 6. 请求流转图 (Request Flow Diagram)
 
+<p align="center">图 2：SQL 查询与人工审批流转</p>
+
 ```mermaid
 sequenceDiagram
-  participant C as Client
-  participant H as HAProxy
-  participant M as Granian + Middleware
-  participant G as GraphQL Controller
-  participant S as LangGraphSupervisor
-  participant R as Router
-  participant A as SQLAgent
-  participant DB as AGENT_DB
-  participant L as LLM
+    autonumber
+    participant U as 用户
+    participant W as Web 前端
+    participant G as GraphQL 端点
+    participant P as 插件层
+    participant R as 双路由
+    participant S as SQL Agent
+    participant WL as 白名单校验
+    participant A as 审批人
+    participant T as 目标库
+    participant E as SSE 流
 
-  C->>H: POST /b/id_x_010/graphql (chat)
-  H->>M: 路由 /b/* 转发
-  M->>G: 鉴权通过，进入 GraphQL
-  G->>S: orchestrator.process(query)
-  S->>R: router.route(query)
-
-  alt intent = general / code
-    R-->>S: general / code
-    S->>L: GeneralAgent.stream_chat
-    L-->>S: thinking + content 流
-  else intent = sql
-    R-->>S: sql
-    S->>A: stream_query(question)
-    A->>A: list_tables → get_schema → generate_query
-    A->>A: SQLSecurityChecker.check(sql)
-
-    alt 危险词 / 注入
-      A-->>S: error: 安全限制
-    else SELECT/WITH 通过
-      A-->>G: sql_approval(pending_sql)
-      G-->>C: SSE: sql_approval 待审批
-
-      alt action = approve
-        C->>G: POST /sql-approval action=approve
-        G->>A: continue_with_approval(approved=True)
-        A->>DB: 执行 SELECT
-        DB-->>A: rows
-        A->>L: 流式解释结果
-        L-->>A: 自然语言结果
-        A-->>C: SSE: result + done
-      else action = reject
-        C->>G: POST /sql-approval action=reject
-        G->>A: continue_with_approval(approved=False)
-        A->>A: 回到 generate_query 重写
-        A-->>C: SSE: sql_rejected + 新 SQL
-      else action = cancel
-        C->>G: POST /sql-approval action=cancel
-        G-->>C: SSE: sql_cancelled
-      end
+    U->>W: 发起数据查询提问
+    W->>G: GraphQL Mutation
+    G->>P: 转发至插件
+    P->>R: 意图识别（LLM + Semantic）
+    R->>S: 判定为 SQL 意图
+    S->>S: 生成 SQL 语句
+    S->>WL: 提交白名单校验
+    alt 命中白名单
+        WL->>T: 直接执行查询
+        T-->>S: 返回结果集
+    else 未命中白名单
+        WL->>A: 挂起并推送人工审批
+        A-->>WL: 审批通过
+        WL->>T: 执行查询
+        T-->>S: 返回结果集
     end
-  end
-
-  S->>G: save_conversation_log
-  G-->>C: 最终响应 / complete
+    S->>E: 思考过程事件流
+    S->>E: 最终答案事件流
+    E-->>W: SSE 分通道推送
+    W-->>U: 分区展示思考与回答
 ```
-
-<p align="center">图 6-1 id_x_010 请求流转图</p>
 
 ## 7. 目录结构 (Directory Structure)
 
 ```text
 id_x_010/
-├── x_plugin.py                  # 插件入口: load_plugin() 返回插件实例
-├── .env.template                # 模块环境变量模板: DB_* / LLM_PROVIDER / AA_OAUTH_*（AGENT_DB_* 与提供商配置已迁移至数据库表）
-├── requirements.txt             # Python 依赖清单
-├── LICENSE                      # AGPL-3.0 许可证
-├── src/
-│   ├── controllers/
-│   │   └── x_controllers.py     # Strawberry Query/Mutation/Subscription + register_routers
-│   ├── agents/
-│   │   ├── x_langgraph_supervisor.py  # LangGraphSupervisor + SemanticRouter + LLMRouter
-│   │   ├── x_sql_agent.py             # SQLAgent + SQLSecurityChecker + DatabaseConnection
-│   │   └── x_general_agent.py         # GeneralAgent + StreamingHandler
-│   ├── models/
-│   │   └── x_models.py          # SQLAlchemy ORM: User/ConversationLog/ExternalModel 等
-│   ├── schemas/
-│   │   └── x_schemas.py         # Strawberry 类型: ChatInput/StreamChunkType/AuthResponseType/OauthInput
-│   ├── views/
-│   │   └── x_views.py           # 对话日志存取 + 上下文合并 + SSO 登录
-│   ├── utils/
-│   │   └── x_oauth.py           # ADFS OAuth2 客户端: id_token 验签 / 授权码换票 / 身份声明解析
-│   └── graphql/
-│       └── __init__.py          # GraphQL 包占位
-├── web/                         # Next.js 前端
-│   ├── package.json             # next 16.x / react 19.x / HeroUI
-│   ├── Dockerfile               # 前端容器构建
-│   ├── next.config.ts           # Next.js 配置
-│   ├── tsconfig.json            # TypeScript 配置
-│   ├── src/
-│   │   ├── app/                 # Next.js App Router 页面
-│   │   ├── api/                 # 前端 BFF 接口封装
-│   │   ├── components/          # React 组件
-│   │   ├── layout/              # 根布局与 Providers
-│   │   ├── views/               # 视图组装
-│   │   ├── services/            # GraphQL/SSE 客户端封装
-│   │   ├── redux/               # 状态管理
-│   │   ├── hooks/               # 自定义 Hook
-│   │   ├── context/             # React Context
-│   │   ├── ui/                  # 通用 UI
-│   │   ├── assets/              # 样式与静态资源
-│   │   ├── data/                # 静态数据
-│   │   └── utils/               # 工具函数
-│   └── public/                  # 静态资源
-├── ops/
-│   ├── init.sql                 # PostgreSQL 建表与触发器脚本
-│   ├── init/                    # 初始化辅助脚本
-│   ├── up.sh / down.sh          # 一键启停脚本
-│   ├── Dockerfile.service       # 后端容器构建
-│   ├── haproxy.cfg              # HAProxy 主配置片段
-│   ├── id_x_010[HAProxy].conf   # HAProxy 反向代理配置
-│   ├── id_x_010_service.service # 后端 systemd 单元
-│   └── id_x_010_web.service     # 前端 systemd 单元
-└── docs/
-    ├── 架构描述.md              # 分层架构说明
-    ├── 实现要求.md              # 需求与验收点
-    └── intent-recognition-analysis.md  # 意图识别分析
+├── src/                        # 后端源码
+│   ├── agents/                 # 智能体定义（general / sql / code）与状态图编排
+│   ├── controllers/            # Litestar 控制器与 SSE 流式端点
+│   ├── graphql/                # Strawberry GraphQL Schema 与解析器
+│   ├── models/                 # SQLAlchemy 2.0 异步数据模型
+│   ├── schemas/                # 请求 / 响应数据结构定义
+│   ├── utils/                  # 工具函数（白名单校验、上下文固化等）
+│   └── views/                  # 视图与模板
+├── web/                        # 前端工程
+│   ├── public/                 # 静态资源
+│   └── src/                    # Next.js 16 + React 19 源码
+│       ├── api/                # GraphQL / SSE 客户端封装
+│       ├── app/                # App Router 页面
+│       ├── components/         # 业务组件
+│       ├── context/            # React Context
+│       ├── hooks/              # 自定义 Hooks
+│       ├── layout/             # 布局组件
+│       ├── redux/              # 状态管理
+│       ├── services/           # 业务服务层
+│       ├── ui/                 # HeroUI 基础组件封装
+│       ├── utils/              # 前端工具函数
+│       └── views/              # 页面视图
+├── ops/                        # 运维与部署
+│   ├── compose.yaml            # 容器编排清单
+│   ├── up.sh / down.sh         # 一键启停脚本
+│   ├── haproxy.cfg             # HAProxy 分流配置
+│   ├── init.sql                # 数据库初始化脚本
+│   └── Dockerfile.service      # 服务镜像构建文件
+├── docs/                       # 项目文档
+├── x_plugin.py                 # PluginInterface 插件入口
+├── requirements.txt            # Python 依赖清单
+└── LICENSE                     # AGPL-3.0 许可证
 ```
 
 ## 8. API 接口文档 (API Documentation)
 
-id_x_010 对外接口由 `register_routers` 统一注册至主程序 `/b/id_x_010` 前缀下，受主程序 `RequestMiddleware` 的 Bearer 鉴权保护（豁免路径除外）。下表汇总主要端点，详细字段以 Strawberry Schema 为准。
+服务端点
 
-<p align="center">表 8-1 接口汇总</p>
+- GraphQL：`POST /graphql`
+- SSE 流式：`GET /sse/stream`
 
-| 方法 | 路径 | 鉴权 | 说明 |
-|---|---|---|---|
-| POST | `/b/id_x_010/graphql` | Bearer | GraphQL 查询/变更主入口 |
-| POST | `/b/id_x_010/graphql/stream` | Bearer | GraphQL 订阅的 SSE 转发 |
-| POST | `/b/id_x_010/sql-approval` | Bearer | SQL 审批流（approve/reject/cancel） |
+<p align="center">表 2：核心接口一览</p>
 
-### 8.1 GraphQL 查询 (Query)
+接口 | 类型 | 说明
+--- | --- | ---
+`sendMessage` | Mutation | 发送用户消息，创建对话任务
+`createSession` | Mutation | 创建新会话并返回会话标识
+`sessionHistory` | Query | 查询会话历史消息
+`approveSql` | Mutation | 人工审批 SQL 执行请求
+`agentSettings` | Query | 查询 SQL Agent 目标库配置
+`/sse/stream` | SSE | 订阅思考过程与最终答案事件流
 
-- `health`：健康检查，返回 `{ status: "ok", service: "id_x_010" }`。
-- `getModels`：获取模型列表，优先查 `external_models`/`local_models` 表，失败回退环境变量。
-- `getDatabases`：从 `agent_db_settings` 表读取可用数据库；表无数据时回退 `AGENT_DB_LIST` 环境变量，支持 JSON 与逗号分隔两种格式。
-
-### 8.2 GraphQL 变更 (Mutation)
-
-- `chat(input: ChatInput!)`：非流式聊天。`ChatInput` 含 `query`、`model_type`（local/external）、`model_name`、`agent_type`（general/sql/code）、`conversation_id`、`db_name` 等字段，返回 `ChatResponseType{ response, thinking, conversation_id, model_used, success }`。
-- `login`/`register`/`logout`/`forgotPassword`：账户体系，令牌入库 `user_tokens`，24 小时过期。
-- `ssoLogin`：SSO 单点登录（ADFS OAuth2 授权码授予流），前端从 `/f/010/sso` 跳转 ADFS 授权页，回调 `/f/010/oauth2` 携带 `code`+`state` 后调用本变更换取会话令牌。首次登录自动建档（`is_active=true`），令牌同样入库 `user_tokens` 并复用 Bearer 鉴权链路。`client_secret` 仅存于服务端 `AA_OAUTH_CLIENT_SECRET` 环境变量，`id_token` 经 ADFS JWKS 验签（网络不可达时降级为结构+有效期校验）。
-
-### 8.3 GraphQL 订阅 (Subscription)
-
-- `streamChat`：流式聊天，通过 `/graphql/stream` 端点以 SSE 推送 `StreamChunkType`，`type` 枚举：`intent`、`thinking`、`content`、`sql_approval`、`sql_rejected`、`result`、`done`、`error`。
-
-### 8.4 SQL 审批
-
-`/sql-approval` 端点接收 JSON 体，`action` 取值 `approve`/`reject`/`cancel`。批准后执行 SQL 并流式回传结果；拒绝则回到 `generate_query` 节点重写 SQL；取消则返回 `sql_cancelled` 短路结束。
-
-### 8.5 调用示例
-
-以下示例需替换占位符 `<BASE_URL>`、`<TOKEN>`。
+请求示例
 
 ```bash
-# 非流式聊天
-curl -X POST "<BASE_URL>/b/id_x_010/graphql" \
-  -H "Authorization: Bearer <TOKEN>" \
+# 发送消息（GraphQL Mutation）
+curl -X POST http://localhost:8000/graphql \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "mutation { chat(input: { query: \"统计 users 表记录数\", modelType: \"external\", agentType: \"sql\" }) { response thinking conversationId modelUsed success } }"
-  }'
-
-# SSE 流式订阅
-curl -N -X POST "<BASE_URL>/b/id_x_010/graphql/stream" \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "subscription { streamChat(query: \"列出所有表\", modelType: \"external\") { type content sql conversationId modelUsed } }"
-  }'
-
-# SQL 审批
-curl -X POST "<BASE_URL>/b/id_x_010/sql-approval" \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "conversation_id": "conv-abc",
-    "sql": "SELECT count(*) FROM users;",
-    "action": "approve",
-    "question": "统计 users 表记录数",
-    "model_type": "external"
+    "query": "mutation { sendMessage(sessionId: \"s-001\", content: \"查询近三个月的实验数据\") { taskId status } }"
   }'
 ```
 
-未携带合法 Bearer Token 时由主程序中间件返回：
-
-```json
-{"error": "Unauthorized access", "code": 401}
+```bash
+# 订阅流式输出（SSE，思考与答案分通道推送）
+curl -N http://localhost:8000/sse/stream?taskId=t-001
 ```
 
-请求体大小上限由主程序 `[BASE].MAX_REQUEST_BODY_SIZE` 控制，默认 1 073 741 824 字节（1 GiB）。
+```bash
+# 人工审批 SQL（GraphQL Mutation）
+curl -X POST http://localhost:8000/graphql \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "mutation { approveSql(taskId: \"t-001\", approved: true) { status } }"
+  }'
+```
 
 ## 9. 快速部署 (Quick Deploy)
 
-### 9.1 环境准备 (Prerequisites)
+环境要求
 
-- Python ≥ 3.10（推荐 3.10）
-- Node.js ≥ 20（前端构建，Next.js 16 建议 Node 20+）
-- PostgreSQL ≥ 14（业务库与对话日志库，可分离部署）
-- 主程序 i-Core（id_x_000）已就绪
+- Python 3.11+ 与 Node.js 20+
+- PostgreSQL 14+（业务库与目标库实例）
+- Docker 与 Docker Compose（容器化部署）
 
-### 9.2 安装 (Installation)
-
-```bash
-# 在主程序 x_models/ 下放置插件
-cp -r id_x_010 <ID_X_000>/x_models/
-
-# 安装 Python 依赖（建议使用主程序虚拟环境）
-pip install -r x_models/id_x_010/requirements.txt
-
-# 前端依赖
-cd x_models/id_x_010/web
-cnpm install
-```
-
-在主程序 `config/base_config.toml` 注册插件：
-
-```toml
-[EXTEND]
-MODELS = [
-    ["id_x_010", "/id_x_010"],
-]
-```
-
-### 9.3 配置 (Configuration)
-
-环境变量加载优先级（高 → 低，高优先级覆盖低优先级同名变量）：
-
-1. 模块 `.env`（`x_models/id_x_010/.env`）
-2. 项目根 `.env`（`i-Core/.env`）
-
-复制模块环境变量模板并填写：
+本地安装
 
 ```bash
-cp x_models/id_x_010/.env.template x_models/id_x_010/.env
+# 安装后端依赖
+pip install -r requirements.txt
+
+# 安装前端依赖
+cd web && npm install
 ```
 
-模块 `.env` 关键项：
+初始化数据库
 
 ```bash
-# 本模块映射的业务库名（主程序按模块独立建连）
-DB_NAME=id_x_010
-
-# 业务库连接参数（加密存储，用 utils/encrypt_util.py 生成，运行时自动解密）
-DB_HOST=<加密后主机>
-DB_PORT=<加密后端口>
-DB_USERNAME=<加密后用户>
-DB_PASSWORD=<加密后密码>
-
-# LLM 模型提供商（external | local）
-# 决定运行时从 external_provider 表还是 local_provider 表读取提供商配置
-LLM_PROVIDER=external
+psql -U postgres -f ops/init.sql
 ```
 
-LLM 提供商的 api_key 与各类 base_url 已迁移至业务库 `external_provider` / `local_provider` 表（建表见 `ops/init/01_init.sql` 第 9、10 节），各取 id 最小行作为生效配置，示例：
-
-```sql
-INSERT INTO external_provider (api_key, llm_base_url, embd_base_url, vl_base_url)
-VALUES ('sk-xxx', 'https://api.siliconflow.cn/v1', 'https://api.siliconflow.cn/v1', 'https://api.siliconflow.cn/v1');
-```
-
-表无数据时运行侧回退环境变量 `EXTERNAL_API_KEY` / `EXTERNAL_*_BASE_URL`（或 `LOCAL_API_KEY` / `LOCAL_*_BASE_URL`）。
-
-SQL 智能体目标库连接配置已迁移至业务库 `agent_db_settings` 表（建表见 `ops/init/01_init.sql` 第 8 节），每行一个可选数据库，示例：
-
-```sql
-INSERT INTO agent_db_settings (db_name, db_label, db_host, db_port, db_username, db_password)
-VALUES ('analytics', '分析库', '127.0.0.1', 5432, 'readonly', 'secret');
-```
-
-表无数据时运行侧回退环境变量 `AGENT_DB_HOST/PORT/NAME/USERNAME/PASSWORD`（或对应 `_ENC` 加密值）与 `AGENT_DB_LIST`。
-
-数据库连接参数（host/port/username/password）由模块 `.env` 的 `DB_*` 变量提供，以加密值存储，加密使用主程序 `utils/encrypt_util.py`，运行时自动解密。
-
-初始化业务库表结构（替换连接参数）：
+本地运行
 
 ```bash
-psql -h 127.0.0.1 -p 15432 -U postgres -d id_x_010 \
-  -f x_models/id_x_010/ops/init.sql
+# 启动后端（Granian）
+granian --interface asgi x_plugin:app
+
+# 启动前端开发服务
+cd web && npm run dev
 ```
 
-#### 9.3.1 SSO 单点登录配置（可选）
-
-平台支持接入 CUHK ADFS（OAuth2 授权码授予流）实现单点登录，首次 SSO 登录自动建档，令牌复用 `user_tokens` 表与 Bearer 鉴权链路。需配置以下环境变量：
-
-| 变量 | 作用端 | 说明 |
-|---|---|---|
-| `AA_OAUTH_CLIENT_ID` | 后端 | ADFS 分配的 Client ID（公开标识） |
-| `AA_OAUTH_CLIENT_SECRET` | 后端 | ADFS 分配的共享秘钥（**仅服务端，绝不进前端**） |
-| `AA_OAUTH_REDIRECT_URI` | 后端 | 回调地址，须与 ADFS 注册及前端一致（https） |
-| `NEXT_PUBLIC_ADFS_CLIENT_ID` | 前端构建期 | 同 `AA_OAUTH_CLIENT_ID`（公开，内联进 bundle） |
-| `NEXT_PUBLIC_ADFS_REDIRECT_URI` | 前端构建期 | 同 `AA_OAUTH_REDIRECT_URI` |
-| `NEXT_PUBLIC_SITE_URL` | 前端构建期 | 业务站点 https 域名（resource 参数） |
-
-后端变量写入 `ops/.env`（容器以 `--env-file` 注入）或模块 `.env`；前端变量写入 `web/.env.local`（构建期内联）或通过 `--build-arg` 注入。`client_secret` 绝不进入前端代码或镜像层。`id_token` 经 ADFS JWKS 公钥验签（RS256/384/512），网络不可达时降级为结构+有效期校验。
-
-前端环境变量写入 `web/.env.local`（可参考 `web/.env.local.example`），至少包含 `NEXT_PUBLIC_API_BASE`。
-
-### 9.4 运行 (Run)
+容器化部署
 
 ```bash
-# 启动后端（在主程序根目录）
-python main.py
+# 一键启动全部服务（含 HAProxy 分流）
+bash ops/up.sh
 
-# 启动前端
-cd x_models/id_x_010/web
-cnpm run dev      # 开发模式
-# 或
-cnpm run build && cnpm run start   # 生产模式
-```
-
-后端默认监听主程序配置端口（如 `0.0.0.0:7000`），前端 Next.js 默认监听 `2000`。生产环境通过 HAProxy 将 `/b/*` 路由到后端、`/f/*` 与 `/_next/*` 路由到前端，配置见 `ops/id_x_010[HAProxy].conf`。也可使用一键脚本 `ops/up.sh` / `ops/down.sh` 启停。
-
-### 9.5 容器部署 (可选)
-
-提供一键脚本 `ops/up.sh` / `ops/down.sh`（基于 Podman），自动完成镜像构建、Pod 创建与四容器编排（db / service / web / haproxy）：
-
-```bash
-cd x_models/id_x_010/ops
-
-# 首次运行会从 .env.example 生成 .env（数据库口令、LLM、SQL Agent 目标库等），
-# 修改后重新执行即完成部署；已存在的容器/卷会幂等跳过
-bash up.sh              # 启动（镜像不存在时自动构建）
-bash up.sh --build      # 强制重建镜像后启动
-bash down.sh            # 停止并清理容器与自建镜像（保留数据卷）
-bash down.sh --volumes  # 连同数据库与日志卷一并清除（不可恢复）
-```
-
-启动后经 HAProxy 统一入口访问：`http://localhost:8010/`（端口由 `.env` 的 `POD_PORT` 控制）；`/b/id_x_010/*` 转发后端，其余路径转发前端，路由规则见 `ops/haproxy.cfg`。数据库 5432 端口同时发布到宿主机 `54321`（由 `.env` 的 `DB_HOST_PORT` 控制），可用 `psql -h localhost -p 54321 -U postgres -d id_x_010` 直连。
-
-也可手动构建镜像（后端镜像构建上下文必须是主程序仓库根）：
-
-```bash
-# 后端镜像（多阶段构建，非 root 运行，内置 GraphQL 健康检查）
-podman build -f x_models/id_x_010/ops/Dockerfile.service -t localhost/id_x_010-service .
-
-# 前端镜像（按 package-lock.json 严格安装，运行时仅含生产依赖）
-podman build -f x_models/id_x_010/web/Dockerfile -t localhost/id_x_010-web x_models/id_x_010/web
-```
-
-若使用 systemd 裸机部署，已提供单元文件：
-
-```bash
-sudo cp ops/id_x_010_service.service /etc/systemd/system/
-sudo cp ops/id_x_010_web.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now id_x_010_service.service
-sudo systemctl enable --now id_x_010_web.service
-```
-
-若使用 Kubernetes，可用 `kubectl` 部署（清单需自行补全数据库连接、卷挂载与 `.env` 的 Secret 映射）：
-
-```bash
-kubectl apply -f ops/deployment.yaml
-kubectl rollout status deployment/id_x_010
+# 停止并清理
+bash ops/down.sh
 ```
 
 ---
 
-## 参考文献
+<div align="center">
 
-- [1] LangChain. LangGraph: Build multi-actor applications with LLMs[EB/OL]. https://langchain-ai.github.io/langgraph, 2025.
-- [2] Strawberry GraphQL. Strawberry Framework Documentation[EB/OL]. https://strawberry.rocks, 2025.
-- [3] Litestar Project. Litestar Framework Documentation[EB/OL]. https://docs.litestar.dev, 2025.
-- [4] Vercel. Next.js Documentation[EB/OL]. https://nextjs.org/docs, 2025.
-- [5] Semantic Router. Semantic Router Documentation[EB/OL]. https://github.com/aurelio-labs/semantic-router, 2025.
+Copyright © TorchLabs · Ray · Licensed under AGPL-3.0
+
+</div>
