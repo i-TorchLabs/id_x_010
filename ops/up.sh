@@ -148,8 +148,8 @@ if ! podman container exists "${PROJECT_NAME}-service"; then
     -e DB_PORT=5432 \
     -e DB_USERNAME="${POSTGRES_USER}" \
     -e DB_PASSWORD="${POSTGRES_PASSWORD}" \
-    -e PROJECT_PATH=/app/i-Torch \
-    -v "${PROJECT_NAME}_logs":/app/i-Torch/logs \
+    -e PROJECT_PATH=/app/i-Core \
+    -v "${PROJECT_NAME}_logs":/app/i-Core/logs \
     --health-cmd "curl -sf -X POST http://127.0.0.1:7000/b/id_x_010/graphql -H 'Content-Type: application/json' -d '{\"query\":\"{ health { status } }\"}' || exit 1" \
     --health-interval 15s \
     --health-timeout 5s \

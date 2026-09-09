@@ -20,7 +20,7 @@
 
 **Slogan**：面向科研级知识库与数据查询的 LangGraph 智能体编排插件。
 
-id_x_010 是 TorchLabs/i-Torch（id_x_000）主程序的业务插件，定位为以 LangGraph（基于状态图的智能体编排，State Graph）为核心的多智能体编排与对话服务。插件通过插件接口（Plugin Interface）契约挂载到主程序，对外暴露 GraphQL（Graph Query Language）接口与 SSE（Server-Sent Events，服务器发送事件）流式端点，对内编排通用、SQL、代码三类智能体（Agent），完成意图识别、自然语言转 SQL（Natural Language to SQL, NL2SQL）、安全审批、结果解释与流式回传的完整闭环。
+id_x_010 是 TorchLabs/i-Core（id_x_000）主程序的业务插件，定位为以 LangGraph（基于状态图的智能体编排，State Graph）为核心的多智能体编排与对话服务。插件通过插件接口（Plugin Interface）契约挂载到主程序，对外暴露 GraphQL（Graph Query Language）接口与 SSE（Server-Sent Events，服务器发送事件）流式端点，对内编排通用、SQL、代码三类智能体（Agent），完成意图识别、自然语言转 SQL（Natural Language to SQL, NL2SQL）、安全审批、结果解释与流式回传的完整闭环。
 
 针对企业内部数据查询中的「模型选型混乱、SQL 注入风险、上下文断裂、流式体验差」等痛点，id_x_010 以统一的监督者状态图（Supervisor State Graph）、白名单校验、人机协同审批节点与多轮上下文固化给出可复现方案，相较脚本式大语言模型调用具备更强的安全闭环与可维护性，适用于知识问答、数据分析、代码生成等场景。
 
@@ -74,7 +74,7 @@ graph TB
     HAProxy[HAProxy<br/>/: 重定向 /f/: 前端 /b/: 后端]
   end
 
-  subgraph L3[接入层 主程序 i-Torch]
+  subgraph L3[接入层 主程序 i-Core]
     Granian[Granian ASGI Server]
     MW[RequestMiddleware<br/>鉴权 / 请求ID]
     Adapt["src/adapt.py 适配"]
@@ -336,7 +336,7 @@ curl -X POST "<BASE_URL>/b/id_x_010/sql-approval" \
 - Python ≥ 3.10（推荐 3.10）
 - Node.js ≥ 20（前端构建，Next.js 16 建议 Node 20+）
 - PostgreSQL ≥ 14（业务库与对话日志库，可分离部署）
-- 主程序 i-Torch（id_x_000）已就绪
+- 主程序 i-Core（id_x_000）已就绪
 
 ### 9.2 安装 (Installation)
 

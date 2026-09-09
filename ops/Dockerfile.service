@@ -45,7 +45,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HOME=/home/app \
     MPLCONFIGDIR=/tmp/matplotlib
 
-WORKDIR /app/i-Torch
+WORKDIR /app/i-Core
 
 # 运行期系统依赖（不含编译工具链）：
 #   libpq5           psycopg2 运行时库
@@ -61,8 +61,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 app \
     && useradd --uid 10001 --gid app --create-home --shell /usr/sbin/nologin app \
-    && mkdir -p /app/i-Torch/logs /tmp/matplotlib \
-    && chown -R app:app /app/i-Torch /tmp/matplotlib
+    && mkdir -p /app/i-Core/logs /tmp/matplotlib \
+    && chown -R app:app /app/i-Core /tmp/matplotlib
 
 COPY --from=builder /opt/venv /opt/venv
 
@@ -71,12 +71,12 @@ COPY --from=builder /opt/venv /opt/venv
 #   x_models/_contracts               插件契约公共包（id_x_010 的 x_plugin.py 依赖）
 #   x_models/id_x_010                 业务插件本体
 # 注意：仓库根 .dockerignore 已排除 **/.env*，模块密钥不会进入镜像。
-COPY --chown=app:app main.py /app/i-Torch/main.py
-COPY --chown=app:app src /app/i-Torch/src
-COPY --chown=app:app utils /app/i-Torch/utils
-COPY --chown=app:app config /app/i-Torch/config
-COPY --chown=app:app x_models/_contracts /app/i-Torch/x_models/_contracts
-COPY --chown=app:app x_models/id_x_010 /app/i-Torch/x_models/id_x_010
+COPY --chown=app:app main.py /app/i-Core/main.py
+COPY --chown=app:app src /app/i-Core/src
+COPY --chown=app:app utils /app/i-Core/utils
+COPY --chown=app:app config /app/i-Core/config
+COPY --chown=app:app x_models/_contracts /app/i-Core/x_models/_contracts
+COPY --chown=app:app x_models/id_x_010 /app/i-Core/x_models/id_x_010
 
 USER app
 

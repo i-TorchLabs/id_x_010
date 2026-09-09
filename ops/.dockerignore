@@ -1,7 +1,7 @@
 # 构建上下文过滤：避免把运行时数据、缓存、secrets、其他插件打进 service 镜像。
 #
 # 作用域说明：Podman/Docker 只读取「构建上下文根目录」下的 .dockerignore。
-# 在 up.sh 中，service 的 build.context 是 i-Torch 仓库根，
+# 在 up.sh 中，service 的 build.context 是 i-Core 仓库根，
 # 因此本文件（在 ops/ 下）在 `bash up.sh` 时不会被自动读取。
 #
 # Dockerfile.service 已改为按需 COPY（main.py / src / utils / config /

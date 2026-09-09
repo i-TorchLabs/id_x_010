@@ -55,10 +55,10 @@ services:
       DB_PORT: "5432"
       DB_USERNAME: ${POSTGRES_USER:-postgres}
       DB_PASSWORD: ${POSTGRES_PASSWORD:?请在 ops/.env 中设置 POSTGRES_PASSWORD}
-      PROJECT_PATH: /app/i-Torch
+      PROJECT_PATH: /app/i-Core
     restart: unless-stopped
     volumes:
-      - id_x_010_logs:/app/i-Torch/logs
+      - id_x_010_logs:/app/i-Core/logs
     depends_on:
       db:
         condition: service_healthy
