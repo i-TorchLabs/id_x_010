@@ -4,13 +4,13 @@
 
 **科研级知识库与数据查询的多智能体编排引擎 —— 让每一次提问都有迹可循**
 
-![编号](https://img.shields.io/static/v1?label=%E7%BC%96%E5%8F%B7&message=id_x_010&color=lightgray&style=flat-square&labelColor=black)
-![协议](https://img.shields.io/static/v1?label=%E5%8D%8F%E8%AE%AE&message=AGPL--3.0&color=lightgray&style=flat-square&labelColor=black)
-![作者](https://img.shields.io/static/v1?label=%E4%BD%9C%E8%80%85&message=Ray&color=lightgray&style=flat-square&labelColor=black)
-![组织](https://img.shields.io/static/v1?label=%E7%BB%84%E7%BB%87&message=TorchLabs&color=lightgray&style=flat-square&labelColor=black)
-![引擎](https://img.shields.io/static/v1?label=%E5%BC%95%E6%93%8E&message=LangGraph%20%2B%20Litestar&color=lightgray&style=flat-square&labelColor=black)
-![语言](https://img.shields.io/static/v1?label=%E8%AF%AD%E8%A8%80&message=Python%20%2B%20TypeScript&color=lightgray&style=flat-square&labelColor=black)
-![数据库](https://img.shields.io/static/v1?label=%E6%95%B0%E6%8D%AE%E5%BA%93&message=PostgreSQL&color=lightgray&style=flat-square&labelColor=black)
+![编号](https://img.shields.io/static/v1?label=%E7%BC%96%E5%8F%B7&message=id_x_010&color=%234B5320&style=flat-square&labelColor=black)
+![协议](https://img.shields.io/static/v1?label=%E5%8D%8F%E8%AE%AE&message=AGPL--3.0&color=%234B5320&style=flat-square&labelColor=black)
+![作者](https://img.shields.io/static/v1?label=%E4%BD%9C%E8%80%85&message=Ray&color=%234B5320&style=flat-square&labelColor=black)
+![组织](https://img.shields.io/static/v1?label=%E7%BB%84%E7%BB%87&message=TorchLabs&color=%234B5320&style=flat-square&labelColor=black)
+![引擎](https://img.shields.io/static/v1?label=%E5%BC%95%E6%93%8E&message=LangGraph%20%2B%20Litestar&color=%234B5320&style=flat-square&labelColor=black)
+![语言](https://img.shields.io/static/v1?label=%E8%AF%AD%E8%A8%80&message=Python%20%2B%20TypeScript&color=%234B5320&style=flat-square&labelColor=black)
+![数据库](https://img.shields.io/static/v1?label=%E6%95%B0%E6%8D%AE%E5%BA%93&message=PostgreSQL&color=%234B5320&style=flat-square&labelColor=black)
 
 </div>
 
