@@ -131,6 +131,23 @@ class ForgotPasswordResponseType:
 
 
 @strawberry.input
+class OauthInput:
+    """SSO 登录入参：ADFS 授权码授予流。
+
+    - code：ADFS 授权码（response_type=code 回调获得），服务端用
+      client_secret 换 id_token，最安全；
+    - state：CSRF 防护随机串，由前端生成并在回调时原样回传；
+    """
+
+    code: str = strawberry.field(
+        default="", description="ADFS 授权码（response_type=code 回调获得）"
+    )
+    state: str = strawberry.field(
+        default="", description="CSRF 防护随机串（与授权请求一致）"
+    )
+
+
+@strawberry.input
 class ModelSettingsInput:
     provider: str = strawberry.field(description="模型厂商，如 siliconflow/openai/deepseek")
     base_url: str = strawberry.field(description="OpenAI 兼容接口地址")

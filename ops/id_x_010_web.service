@@ -2,6 +2,12 @@
 # sudo systemctl daemon-reload
 # sudo systemctl start id_x_010_web.service
 # sudo systemctl status id_x_010_web.service
+#
+# 注意：Next.js 的 NEXT_PUBLIC_*（含 SSO 的 NEXT_PUBLIC_ADFS_*）在
+# `cnpm run build` 时内联进 .next 客户端 bundle，运行期不再读取。
+# 修改 SSO 配置后必须先 `cnpm run build` 重建，再 restart 本服务。
+# 构建前确保 web/.env.local 已写入 NEXT_PUBLIC_ADFS_*（见
+# web/.env.local.example），或直接在构建命令前导出环境变量。
 [Unit]
 Description=ID X 010 Web Application
 After=network.target

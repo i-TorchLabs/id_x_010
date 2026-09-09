@@ -21,3 +21,6 @@ litellm==1.97.0
 strawberry-graphql
 matplotlib
 psycopg2
+# ADFS OAuth2 SSO id_token JWKS 验签（RS256/384/512）所需。
+# litestar[all] 间接带入 cryptography，但显式声明便于独立部署与工具识别。
+cryptography

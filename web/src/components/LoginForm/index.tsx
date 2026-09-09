@@ -18,7 +18,7 @@ interface LoginFormProps {
   password: string;
   setPassword: (password: string) => void;
   showPassword: boolean;
-  setShowPassword: (show: boolean) => void;
+  setShowPassword: (showPassword: boolean) => void;
   isTyping: boolean;
   setIsTyping: (isTyping: boolean) => void;
   isPasswordFocused: boolean;
@@ -28,6 +28,7 @@ interface LoginFormProps {
   errorMsg: string;
   emailError: boolean;
   passwordError: boolean;
+  onSsoClick: () => void;
 }
 
 export default function LoginForm({
@@ -46,6 +47,7 @@ export default function LoginForm({
   errorMsg,
   emailError,
   passwordError,
+  onSsoClick,
 }: LoginFormProps) {
   const eyeIcon = showPassword ? (
     <svg
@@ -219,6 +221,23 @@ export default function LoginForm({
           className="rounded-full font-semibold"
         >
           {isSubmitting ? "Signing in..." : "Log In"}
+        </Button>
+
+        {/* SSO 分隔与入口 */}
+        <div className="flex items-center gap-3 my-5">
+          <span className="flex-1 h-px bg-border" />
+          <span className="text-xs text-muted">or</span>
+          <span className="flex-1 h-px bg-border" />
+        </div>
+        <Button
+          type="button"
+          fullWidth
+          variant="secondary"
+          size="lg"
+          className="rounded-full font-semibold"
+          onClick={onSsoClick}
+        >
+          Sign in with CUHK SSO
         </Button>
       </form>
 

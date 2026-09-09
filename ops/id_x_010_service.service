@@ -2,6 +2,11 @@
 # sudo systemctl daemon-reload
 # sudo systemctl start id_x_010.service
 # sudo systemctl status id_x_010.service
+#
+# SSO（ADFS OAuth2）敏感配置（AA_OAUTH_CLIENT_SECRET 等）写入 .env，
+# 由 EnvironmentFile 注入；client_secret 不会出现在 systemctl show 的
+# Environment= 行（systemd 仍会在日志中暴露 EnvironmentFile 路径本身，
+# 但不展开其内容）。.env 文件权限应设为 600 且仅属主可读。
 [Unit]
 Description=ID X 010 Python Application
 After=network.target
@@ -15,6 +20,9 @@ ExecStart=/home/master/.miniconda3/envs/id_x_010/bin/python main.py
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+# 注入数据库口令、LLM 配置与 SSO client_secret 等敏感变量
+EnvironmentFile=/home/master/Desktop/codeSpace/id_x_000/x_models/id_x_010/ops/.env
+# .env 路径按实际部署调整；不存在时 systemd 会启动失败（fail-fast）
 
 [Install]
 WantedBy=multi-user.target

@@ -1,17 +1,19 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useCallback, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useTheme } from "@/context/ThemeContext";
 import { ThemeToggle } from "./ThemeToggle";
 import LeftPanel from "./LeftPanel";
 import LoginForm from "./LoginForm";
 import { userGraphqlApi } from "@/api/graphql";
+import { redirectToAdfsAuthorize } from "@/utils/sso";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function LoginPage() {
     const router = useRouter();
+    const searchParams = useSearchParams();
     const { theme } = useTheme();
     const isDark = theme === "dark";
     const [email, setEmail] = useState("");
@@ -24,6 +26,23 @@ export default function LoginPage() {
     const [errorMsg, setErrorMsg] = useState("");
     const [emailError, setEmailError] = useState(false);
     const [passwordError, setPasswordError] = useState(false);
+
+    // SSO 回调失败时通过 ?error= 携带原因回显到登录页
+    useEffect(() => {
+        const err = searchParams.get("error");
+        if (err) {
+            const map: Record<string, string> = {
+                sso_missing_code: "SSO 回调缺少授权码",
+                sso_state_mismatch: "SSO state 校验失败，疑似 CSRF 攻击",
+            };
+            setErrorMsg(map[err] ?? err);
+        }
+    }, [searchParams]);
+
+    const handleSsoClick = useCallback(() => {
+        setErrorMsg("");
+        redirectToAdfsAuthorize();
+    }, []);
 
     const onSubmit = useCallback(
         async (e: React.FormEvent) => {
@@ -118,6 +137,7 @@ export default function LoginPage() {
                         errorMsg={errorMsg}
                         emailError={emailError}
                         passwordError={passwordError}
+                        onSsoClick={handleSsoClick}
                     />
                 </div>
             </div>

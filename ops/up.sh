@@ -63,9 +63,16 @@ if [ "${1:-}" = "--build" ] || ! podman image exists "${SERVICE_IMAGE}" || ! pod
   echo "[up] 构建 service 镜像..."
   podman build --format docker -t "${SERVICE_IMAGE}" -f Dockerfile.service ../../../
   echo "[up] 构建 web 镜像..."
+  # NEXT_PUBLIC_ADFS_* 从 .env 读取（SSO 回调地址依赖部署域名）；
+  # client_id 公开，client_secret 绝不作为构建参数（不进镜像层）。
   podman build --format docker -t "${WEB_IMAGE}" -f ../web/Dockerfile \
     --build-arg NEXT_PUBLIC_BASE_URL="" \
     --build-arg NEXT_PUBLIC_SUB_VERSION="/b/id_x_010/graphql" \
+    --build-arg NEXT_PUBLIC_SITE_URL="${NEXT_PUBLIC_SITE_URL:-}" \
+    --build-arg NEXT_PUBLIC_ADFS_CLIENT_ID="${NEXT_PUBLIC_ADFS_CLIENT_ID:-}" \
+    --build-arg NEXT_PUBLIC_ADFS_REDIRECT_URI="${NEXT_PUBLIC_ADFS_REDIRECT_URI:-}" \
+    --build-arg NEXT_PUBLIC_ADFS_RESOURCE="${NEXT_PUBLIC_ADFS_RESOURCE:-}" \
+    --build-arg NEXT_PUBLIC_ADFS_BASE_URL="${NEXT_PUBLIC_ADFS_BASE_URL:-}" \
     ../web
 fi
 

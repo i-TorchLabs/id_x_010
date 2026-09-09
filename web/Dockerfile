@@ -15,11 +15,22 @@ WORKDIR /app
 # Next.js 在构建时把 NEXT_PUBLIC_* 内联到客户端 bundle，必须在此设置
 ARG NEXT_PUBLIC_BASE_URL
 ARG NEXT_PUBLIC_SUB_VERSION
+# SSO（ADFS OAuth2）公开配置：client_id 为公开标识，redirect_uri 必须与
+# ADFS 注册地址及后端 AA_OAUTH_REDIRECT_URI 完全一致（https，区分大小写）。
+# client_secret 绝不可作为构建参数（会进入镜像层，不可泄露）。
+ARG NEXT_PUBLIC_SITE_URL
+ARG NEXT_PUBLIC_ADFS_CLIENT_ID
+ARG NEXT_PUBLIC_ADFS_REDIRECT_URI
+ARG NEXT_PUBLIC_ADFS_RESOURCE
+ARG NEXT_PUBLIC_ADFS_BASE_URL
 
-# 按 lockfile 严格安装（可复现构建；npm 扁平化 node_modules 自动解析
+# 国内部署用 cnpm 加速：先全局安装 cnpm
+RUN npm install -g cnpm --registry=https://registry.npmmirror.com
+
+# 按 lockfile 严格安装（可复现构建；cnpm 扁平化 node_modules 自动解析
 # @heroui/react 的 peer dep；npmmirror 镜像源保持国内构建速度）
 COPY package.json package-lock.json ./
-RUN npm ci --registry=https://registry.npmmirror.com
+RUN cnpm install --registry=https://registry.npmmirror.com
 
 # 再拷贝源码（.dockerignore 已排除 node_modules / .next / .env.local，
 # NEXT_PUBLIC_* 由下方 ENV 注入，优先级高于 .env.local）
@@ -27,12 +38,17 @@ COPY . .
 
 # 显式导出 ARG 为 ENV，确保 Next.js 构建期一定能拿到
 ENV NEXT_PUBLIC_BASE_URL=${NEXT_PUBLIC_BASE_URL} \
-    NEXT_PUBLIC_SUB_VERSION=${NEXT_PUBLIC_SUB_VERSION}
+    NEXT_PUBLIC_SUB_VERSION=${NEXT_PUBLIC_SUB_VERSION} \
+    NEXT_PUBLIC_SITE_URL=${NEXT_PUBLIC_SITE_URL} \
+    NEXT_PUBLIC_ADFS_CLIENT_ID=${NEXT_PUBLIC_ADFS_CLIENT_ID} \
+    NEXT_PUBLIC_ADFS_REDIRECT_URI=${NEXT_PUBLIC_ADFS_REDIRECT_URI} \
+    NEXT_PUBLIC_ADFS_RESOURCE=${NEXT_PUBLIC_ADFS_RESOURCE} \
+    NEXT_PUBLIC_ADFS_BASE_URL=${NEXT_PUBLIC_ADFS_BASE_URL}
 
 # 构建后裁掉 devDependencies（typescript / tailwind / @types 等），
 # 运行阶段只携带生产依赖
-RUN npm run build \
-    && npm prune --omit=dev
+RUN cnpm run build \
+    && cnpm prune --omit=dev
 
 # --------------------------- 运行阶段 ---------------------------
 FROM docker.io/library/node:24-alpine
@@ -55,4 +71,5 @@ COPY --from=build --chown=node:node /app/tsconfig.json ./
 USER node
 
 EXPOSE 2000
+# 运行阶段不安装 cnpm（仅构建期需要镜像加速），直接用自带的 npm 即可
 CMD ["npm", "start"]

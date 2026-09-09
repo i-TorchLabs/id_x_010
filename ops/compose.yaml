@@ -77,6 +77,13 @@ services:
       args:
         NEXT_PUBLIC_BASE_URL: ""
         NEXT_PUBLIC_SUB_VERSION: "/b/id_x_010/graphql"
+        # SSO（ADFS OAuth2）公开配置：从 .env 读取，构建期内联进客户端 bundle。
+        # client_secret 绝不作为构建参数（会进入镜像层，不可泄露）。
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-}
+        NEXT_PUBLIC_ADFS_CLIENT_ID: ${NEXT_PUBLIC_ADFS_CLIENT_ID:-}
+        NEXT_PUBLIC_ADFS_REDIRECT_URI: ${NEXT_PUBLIC_ADFS_REDIRECT_URI:-}
+        NEXT_PUBLIC_ADFS_RESOURCE: ${NEXT_PUBLIC_ADFS_RESOURCE:-}
+        NEXT_PUBLIC_ADFS_BASE_URL: ${NEXT_PUBLIC_ADFS_BASE_URL:-}
     image: localhost/id_x_010-web
     restart: unless-stopped
     healthcheck:

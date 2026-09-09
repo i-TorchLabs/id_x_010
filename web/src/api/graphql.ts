@@ -265,7 +265,56 @@ export const userGraphqlApi = {
       query: mutation,
     });
   },
+
+  /**
+   * SSO 单点登录（ADFS 授权码授予流，首次自动建档）
+   */
+  ssoLogin: async (input: SsoLoginInput): Promise<SsoLoginPayload> => {
+    const mutation = `
+      mutation SsoLogin($input: OauthInput!) {
+        ssoLogin(input: $input) {
+          success
+          message
+          token
+          expiresAt
+          user {
+            id
+            email
+            phone
+            createdAt
+          }
+        }
+      }
+    `;
+
+    return graphqlClient.request<SsoLoginPayload>({
+      query: mutation,
+      variables: { input },
+    });
+  },
 };
+
+// SSO 登录输入类型
+export interface SsoLoginInput {
+  code: string;
+  state: string;
+}
+
+// SSO 登录响应类型
+export interface SsoLoginPayload {
+  ssoLogin: {
+    success: boolean;
+    message: string;
+    token: string | null;
+    expiresAt: string | null;
+    user: {
+      id: number;
+      email: string;
+      phone: string | null;
+      createdAt: string | null;
+    } | null;
+  };
+}
 
 // 模型信息类型
 export interface ModelInfo {

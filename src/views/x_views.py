@@ -1,5 +1,10 @@
 import asyncio
+import hashlib
 import os
+import re
+import secrets
+import time
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import desc, select
@@ -9,10 +14,14 @@ from x_models.id_x_010.src.models.x_models import (
     ConversationLog,
     ExternalProvider,
     LocalProvider,
+    User,
     UserModelSettings,
+    UserToken,
     get_session,
     set_llm_provider_config,
 )
+from x_models.id_x_010.src.schemas.x_schemas import AuthResponseType, UserInfoType
+from x_models.id_x_010.src.utils import x_oauth
 
 DEFAULT_MAX_ROUNDS = 5
 
@@ -298,3 +307,172 @@ def merge_context(
         )
 
     return context
+
+
+# ==========================================
+# SSO 单点登录（ADFS OAuth2 授权码授予流）
+# ==========================================
+
+# client_secret 仅服务端持有，从环境变量读取，绝不进入前端代码。
+OAUTH_CLIENT_ID = os.environ.get("AA_OAUTH_CLIENT_ID", "")
+OAUTH_CLIENT_SECRET = os.environ.get("AA_OAUTH_CLIENT_SECRET", "")
+OAUTH_REDIRECT_URI = os.environ.get("AA_OAUTH_REDIRECT_URI", "")
+
+# SSO 用户无密码：写入一个不会被任何 sha256 摘要命中的占位符，
+# 既满足 users.password_hash NOT NULL 约束，又保证密码登录路径拒登。
+_SSO_PASSWORD_PLACEHOLDER = "SSO_USER_NO_PASSWORD"
+
+# 旧用户因邮箱大小写差异导致重复建档：SSO 入口统一以小写 email 建档与查询。
+def _normalize_email(email: str) -> str:
+    return (email or "").strip().lower()
+
+
+def _sanitize_header(value: object) -> str:
+    """剔除 CR/LF，防邮件头/用户名注入。"""
+    return re.sub(r"[\r\n]+", " ", str(value or "")).strip()
+
+
+def _oauth_config_missing() -> bool:
+    """SSO 服务端配置是否缺失。"""
+    return not (OAUTH_CLIENT_ID and OAUTH_CLIENT_SECRET and OAUTH_REDIRECT_URI)
+
+
+async def view_sso_login(code: str, state: str) -> AuthResponseType:
+    """SSO 登录：ADFS 授权码授予流。
+
+    流程：
+    1. 前端经 ADFS /authorize 重定向回业务站点，携带 code + state；
+    2. 本接口用 code + client_secret（仅服务端持有）到 /token 换 id_token；
+    3. 验签 / 校验 id_token，提取 upn/email/name 建档或更新会话；
+    4. 写入 user_tokens 行（与密码登录一致，Bearer 鉴权链路复用），
+       不再向 IdP 暴露会话 token。
+
+    返回结构与 login/register 一致（AuthResponseType），前端可复用登录态写入逻辑。
+    """
+    if _oauth_config_missing():
+        logger.error(
+            f"{get_request_id()}SSO 服务端配置缺失"
+            "（AA_OAUTH_CLIENT_ID/SECRET/REDIRECT_URI）"
+        )
+        return AuthResponseType(success=False, message="SSO 服务未配置")
+
+    rid = get_request_id()
+    logger.info(
+        f"{rid}SSO 登录请求: has_code={bool(code)} has_state={bool(state)}"
+    )
+    if not code:
+        return AuthResponseType(success=False, message="缺少授权码")
+
+    # 防重放 nonce：与本次授权码绑定，ADFS 回显后由 exchange_code_for_token 校验
+    expected_nonce = hashlib.sha256(code.encode("utf-8")).hexdigest()
+    token_resp = x_oauth.exchange_code_for_token(
+        code=code,
+        client_id=OAUTH_CLIENT_ID,
+        client_secret=OAUTH_CLIENT_SECRET,
+        redirect_uri=OAUTH_REDIRECT_URI,
+        expected_nonce=expected_nonce,
+    )
+    if token_resp is None:
+        logger.warning(
+            f"{rid}SSO /token 换取失败（code 无效/过期/已用/重放或网络问题）"
+        )
+        return AuthResponseType(success=False, message="授权码无效或已过期")
+
+    id_token = x_oauth.extract_id_token(token_resp)
+    if not id_token:
+        logger.warning(
+            f"{rid}SSO /token 响应缺少 id_token: keys={list(token_resp.keys())}"
+        )
+        return AuthResponseType(success=False, message="授权服务未返回令牌")
+
+    logger.info(f"{rid}SSO 换取 id_token 成功，开始验签")
+    payload_data, reason = x_oauth.verify_id_token(
+        id_token, expected_aud=OAUTH_CLIENT_ID
+    )
+    if payload_data is None:
+        # 失败诊断直接进 warn.log：payload keys 是定位 ADFS 配置问题的关键证据
+        _payload = x_oauth.decode_payload_unverified(id_token) or {}
+        logger.warning(
+            f"{rid}SSO id_token 验签/校验失败: reason={reason} "
+            f"keys={sorted(_payload.keys())} aud={_payload.get('aud')!r} "
+            f"iss={_payload.get('iss')!r} exp={_payload.get('exp')!r} now={int(time.time())}"
+        )
+        return AuthResponseType(success=False, message="令牌校验失败")
+
+    identity = x_oauth.resolve_identity_claims(payload_data)
+    if identity is None:
+        logger.warning(
+            f"{rid}SSO 身份声明解析失败: keys={sorted(payload_data.keys())}"
+        )
+        return AuthResponseType(success=False, message="身份声明不足，无法登录")
+
+    logger.info(
+        f"{rid}SSO 身份解析成功: upn_claim={identity['upn_claim']} "
+        f"email_claim={identity['email_claim']}"
+    )
+
+    email = _normalize_email(_sanitize_header(identity.get("email")))
+    upn = _sanitize_header(identity.get("upn")) or email
+    # 010 的 users 表无独立 username/number 字段，display_name 仅用于日志；
+    # 登录账号以 email 为唯一标识，与 register/login 路径一致。
+    if not email:
+        logger.warning(f"{rid}SSO email 缺失，拒绝登录: upn={upn}")
+        return AuthResponseType(success=False, message="身份声明缺少邮箱")
+
+    try:
+        async with get_session()() as session:
+            result = await session.execute(select(User).where(User.email == email))
+            user = result.scalar_one_or_none()
+
+            if user is None:
+                # 首次 SSO 登录：自动建档（与 register 不同的是直接置 is_active=True，
+                # 因为 SSO 断言本身就是身份认证，无需管理员激活）
+                user = User(
+                    email=email,
+                    password_hash=_SSO_PASSWORD_PLACEHOLDER,
+                    is_active=True,
+                )
+                session.add(user)
+                await session.flush()
+                logger.warning(
+                    f"{rid}SSO 新用户建档: email={email} upn={upn} "
+                    f"name={identity.get('display_name')}"
+                )
+            elif user.is_active is False:
+                # 老用户但已被停用：与 login 一致拒绝（防已注销账号经 SSO 绕过）
+                logger.warning(
+                    f"{rid}SSO 拒绝已停用账号: user_id={user.id} email={email}"
+                )
+                return AuthResponseType(success=False, message="账号已被停用")
+            elif user.is_active is not True:
+                # 老用户且 is_active 未显式置 True（如密码注册待激活），
+                # SSO 断言即身份认证，直接激活并补齐会话
+                logger.info(
+                    f"{rid}SSO 激活待启用账号: user_id={user.id} email={email}"
+                )
+                user.is_active = True
+
+            # 统一签发 24 小时会话令牌（与 login 一致），复用 UserToken 表与
+            # Bearer 鉴权链路。登出场景下旧令牌自然失效，无需主动清理。
+            token = secrets.token_urlsafe(32)
+            expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+            session.add(UserToken(user_id=user.id, token=token, expires_at=expires_at))
+            await session.commit()
+            await session.refresh(user)
+
+            logger.info(f"{rid}SSO 登录成功: user_id={user.id} email={email}")
+            return AuthResponseType(
+                success=True,
+                message="SSO 登录成功",
+                token=token,
+                expires_at=expires_at.isoformat(),
+                user=UserInfoType(
+                    id=user.id,
+                    email=user.email,
+                    phone=user.phone,
+                    created_at=user.created_at.isoformat() if user.created_at else None,
+                ),
+            )
+    except Exception as e:
+        logger.error(f"{rid}SSO 登录落库失败: {e}", exc_info=True)
+        return AuthResponseType(success=False, message=f"登录失败: {str(e)}")

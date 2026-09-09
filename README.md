@@ -203,7 +203,7 @@ sequenceDiagram
 ```text
 id_x_010/
 ├── x_plugin.py                  # 插件入口: load_plugin() 返回插件实例
-├── .env.template                # 模块环境变量模板: DB_* / LLM_PROVIDER（AGENT_DB_* 与提供商配置已迁移至数据库表）
+├── .env.template                # 模块环境变量模板: DB_* / LLM_PROVIDER / AA_OAUTH_*（AGENT_DB_* 与提供商配置已迁移至数据库表）
 ├── requirements.txt             # Python 依赖清单
 ├── LICENSE                      # AGPL-3.0 许可证
 ├── src/
@@ -216,9 +216,11 @@ id_x_010/
 │   ├── models/
 │   │   └── x_models.py          # SQLAlchemy ORM: User/ConversationLog/ExternalModel 等
 │   ├── schemas/
-│   │   └── x_schemas.py         # Strawberry 类型: ChatInput/StreamChunkType/AuthResponseType
+│   │   └── x_schemas.py         # Strawberry 类型: ChatInput/StreamChunkType/AuthResponseType/OauthInput
 │   ├── views/
-│   │   └── x_views.py           # 对话日志存取 + 上下文合并
+│   │   └── x_views.py           # 对话日志存取 + 上下文合并 + SSO 登录
+│   ├── utils/
+│   │   └── x_oauth.py           # ADFS OAuth2 客户端: id_token 验签 / 授权码换票 / 身份声明解析
 │   └── graphql/
 │       └── __init__.py          # GraphQL 包占位
 ├── web/                         # Next.js 前端
@@ -278,6 +280,7 @@ id_x_010 对外接口由 `register_routers` 统一注册至主程序 `/b/id_x_01
 
 - `chat(input: ChatInput!)`：非流式聊天。`ChatInput` 含 `query`、`model_type`（local/external）、`model_name`、`agent_type`（general/sql/code）、`conversation_id`、`db_name` 等字段，返回 `ChatResponseType{ response, thinking, conversation_id, model_used, success }`。
 - `login`/`register`/`logout`/`forgotPassword`：账户体系，令牌入库 `user_tokens`，24 小时过期。
+- `ssoLogin`：SSO 单点登录（ADFS OAuth2 授权码授予流），前端从 `/f/010/sso` 跳转 ADFS 授权页，回调 `/f/010/oauth2` 携带 `code`+`state` 后调用本变更换取会话令牌。首次登录自动建档（`is_active=true`），令牌同样入库 `user_tokens` 并复用 Bearer 鉴权链路。`client_secret` 仅存于服务端 `AA_OAUTH_CLIENT_SECRET` 环境变量，`id_token` 经 ADFS JWKS 验签（网络不可达时降级为结构+有效期校验）。
 
 ### 8.3 GraphQL 订阅 (Subscription)
 
@@ -417,6 +420,21 @@ VALUES ('analytics', '分析库', '127.0.0.1', 5432, 'readonly', 'secret');
 psql -h 127.0.0.1 -p 15432 -U postgres -d id_x_010 \
   -f x_models/id_x_010/ops/init.sql
 ```
+
+#### 9.3.1 SSO 单点登录配置（可选）
+
+平台支持接入 CUHK ADFS（OAuth2 授权码授予流）实现单点登录，首次 SSO 登录自动建档，令牌复用 `user_tokens` 表与 Bearer 鉴权链路。需配置以下环境变量：
+
+| 变量 | 作用端 | 说明 |
+|---|---|---|
+| `AA_OAUTH_CLIENT_ID` | 后端 | ADFS 分配的 Client ID（公开标识） |
+| `AA_OAUTH_CLIENT_SECRET` | 后端 | ADFS 分配的共享秘钥（**仅服务端，绝不进前端**） |
+| `AA_OAUTH_REDIRECT_URI` | 后端 | 回调地址，须与 ADFS 注册及前端一致（https） |
+| `NEXT_PUBLIC_ADFS_CLIENT_ID` | 前端构建期 | 同 `AA_OAUTH_CLIENT_ID`（公开，内联进 bundle） |
+| `NEXT_PUBLIC_ADFS_REDIRECT_URI` | 前端构建期 | 同 `AA_OAUTH_REDIRECT_URI` |
+| `NEXT_PUBLIC_SITE_URL` | 前端构建期 | 业务站点 https 域名（resource 参数） |
+
+后端变量写入 `ops/.env`（容器以 `--env-file` 注入）或模块 `.env`；前端变量写入 `web/.env.local`（构建期内联）或通过 `--build-arg` 注入。`client_secret` 绝不进入前端代码或镜像层。`id_token` 经 ADFS JWKS 公钥验签（RS256/384/512），网络不可达时降级为结构+有效期校验。
 
 前端环境变量写入 `web/.env.local`（可参考 `web/.env.local.example`），至少包含 `NEXT_PUBLIC_API_BASE`。
 

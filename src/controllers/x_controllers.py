@@ -40,6 +40,7 @@ from x_models.id_x_010.src.schemas.x_schemas import (
     ModelSettingsResponseType,
     ModelSettingsType,
     ModelType,
+    OauthInput,
     RegisterInput,
     StreamChunkType,
     UserInfoType,
@@ -53,6 +54,7 @@ from x_models.id_x_010.src.views.x_views import (
     save_conversation_log,
     test_model_connectivity,
     upsert_user_model_settings,
+    view_sso_login,
 )
 
 
@@ -456,6 +458,10 @@ class Mutation:
         except Exception as e:
             logger.error(f"{get_request_id()}登录失败: {e}", exc_info=True)
             return AuthResponseType(success=False, message=f"登录失败: {str(e)}")
+
+    @strawberry.mutation(description="SSO 单点登录（ADFS 授权码授予流，首次自动建档）")
+    async def sso_login(self, input: OauthInput) -> AuthResponseType:
+        return await view_sso_login(code=input.code, state=input.state)
 
     @strawberry.mutation(description="用户注册")
     async def register(self, input: RegisterInput) -> AuthResponseType:
