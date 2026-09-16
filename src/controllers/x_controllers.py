@@ -180,13 +180,15 @@ class Query:
                     for row in agent_db_rows
                 ]
             else:
-                # 表无数据时回退环境变量 AGENT_DB_LIST（JSON 或逗号分隔）
+                # 表无数据时回退环境变量 AGENT_DB_LIST（JSON 映射或逗号分隔）
+                # JSON 格式：{"显示名": "真实库名"}，前端渲染显示名（label），
+                # 后端按真实库名（key）匹配 agent_db_settings 并建连
                 db_list_str = os.getenv("AGENT_DB_LIST", "")
                 if db_list_str:
                     try:
                         db_dict = json.loads(db_list_str)
                         db_items = [
-                            DatabaseInfoType(key=k, label=v) for k, v in db_dict.items()
+                            DatabaseInfoType(key=v, label=k) for k, v in db_dict.items()
                         ]
                     except (json.JSONDecodeError, AttributeError):
                         # 兼容旧格式：逗号分隔的纯名称列表

@@ -15,7 +15,7 @@ export const API_BASE_URL = `${BASE_URL}${SUB_VERSION}`;
  * 故此处用 ||（空串视为未配置，回退默认）。
  */
 export const SITE_URL =
-    process.env.NEXT_PUBLIC_SITE_URL || "https://localhost:8010";
+    process.env.NEXT_PUBLIC_SITE_URL || "https://sme-tx-studio.cuhk.edu.cn";
 
 /** ADFS OAuth2 端点（CUHK 统一身份认证） */
 export const ADFS_BASE_URL =
