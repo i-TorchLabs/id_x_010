@@ -19,7 +19,7 @@ from __future__ import annotations
 DEFAULT_EXTERNAL_MODEL = "zai-org/GLM-5.2"
 
 # 更换模型的操作指引，追加在模型类错误提示之后
-_SETTINGS_HINT = "请在右上角「模型设置」中检查后更换为可用模型"
+_SETTINGS_HINT = "请在左下角「模型设置」中检查后更换为可用模型"
 
 
 def friendly_llm_error(e: Exception, model_name: str = "") -> str:
