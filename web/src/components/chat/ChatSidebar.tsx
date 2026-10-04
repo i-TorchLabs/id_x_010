@@ -1,7 +1,9 @@
 "use client";
 
-import { Avatar, Button, ScrollShadow, Separator } from "@heroui/react";
+import { Avatar, Button, Separator } from "@heroui/react";
 import { motion } from "framer-motion";
+import { PromptPanel } from "./PromptPanel";
+import type { MarkdownPromptItem } from "@/api/graphql";
 
 export type ModelType = "local" | "external";
 
@@ -16,8 +18,12 @@ interface ChatSidebarProps {
     onModelChange?: (model: ModelType) => void;
     userName?: string;
     userEmail?: string;
+    avatarUrl?: string | null;
     onLogout?: () => void;
     onSettings?: () => void;
+    onUsageStats?: () => void;
+    onEditProfile?: () => void;
+    onActivePromptChange?: (prompt: MarkdownPromptItem | null) => void;
 }
 
 export function ChatSidebar({
@@ -26,8 +32,12 @@ export function ChatSidebar({
     onModelChange,
     userName = "访客用户",
     userEmail = "guest@sme-ai.local",
+    avatarUrl,
     onLogout,
     onSettings,
+    onUsageStats,
+    onEditProfile,
+    onActivePromptChange,
 }: ChatSidebarProps) {
     const showModelSection = modelType !== undefined && onModelChange;
 
@@ -169,62 +179,51 @@ export function ChatSidebar({
                     </div>
                 )}
 
-                {/* ── History ── */}
-                <div className="flex-1 min-h-0 flex flex-col px-4 mt-6">
-                    <p
-                        className="font-text mb-2 px-1 shrink-0"
-                        style={{
-                            fontSize: "11px",
-                            fontWeight: 600,
-                            letterSpacing: "0.08em",
-                            textTransform: "uppercase",
-                            color: "var(--fg3)",
-                        }}
-                    >
-                        历史对话
-                    </p>
-                    <ScrollShadow className="flex-1 min-h-0">
-                        <div className="flex flex-col items-center justify-center py-10 gap-2">
-                            <svg
-                                className="w-8 h-8 opacity-50"
-                                fill="none"
-                                stroke="var(--fg3)"
-                                strokeWidth={1.5}
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                viewBox="0 0 24 24"
-                            >
-                                <path d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-                            </svg>
-                            <p
-                                className="font-text"
-                                style={{
-                                    fontSize: "12px",
-                                    color: "var(--fg3)",
-                                }}
-                            >
-                                暂无历史对话
-                            </p>
-                        </div>
-                    </ScrollShadow>
+                {/* ── Prompt Library ── */}
+                <div className="mt-4 shrink-0">
+                    <PromptPanel onActivePromptChange={onActivePromptChange} />
                 </div>
+
+                {/* 占位：将用户区推至侧栏底部（原“历史对话”页签已移除） */}
+                <div className="flex-1" aria-hidden />
 
                 <Separator />
 
                 {/* ── User Footer ── */}
                 <div className="px-4 py-3 shrink-0 flex items-center gap-2.5">
-                    <Avatar size="sm">
-                        <Avatar.Fallback
-                            className="text-xs font-semibold"
-                            style={{
-                                background: "var(--accent)",
-                                color: "var(--accent-fg)",
-                            }}
-                        >
-                            {userName.slice(0, 1).toUpperCase()}
-                        </Avatar.Fallback>
-                    </Avatar>
-                    <div className="flex-1 min-w-0">
+                    <button
+                        type="button"
+                        onClick={onEditProfile}
+                        disabled={!onEditProfile}
+                        aria-label="编辑个人资料"
+                        className="shrink-0 rounded-full transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2"
+                        style={{
+                            outlineOffset: 2,
+                            cursor: onEditProfile ? "pointer" : "default",
+                        }}
+                    >
+                        <Avatar size="sm">
+                            {avatarUrl && (
+                                <Avatar.Image
+                                    src={avatarUrl}
+                                    alt={userName}
+                                />
+                            )}
+                            <Avatar.Fallback
+                                className="text-xs font-semibold"
+                                style={{
+                                    background: "var(--accent)",
+                                    color: "var(--accent-fg)",
+                                }}
+                            >
+                                {userName.slice(0, 1).toUpperCase()}
+                            </Avatar.Fallback>
+                        </Avatar>
+                    </button>
+                    <div
+                        className={`flex-1 min-w-0 ${onEditProfile ? "cursor-pointer" : ""}`}
+                        onClick={onEditProfile}
+                    >
                         <p
                             className="font-text truncate"
                             style={{
@@ -245,6 +244,31 @@ export function ChatSidebar({
                             {userEmail}
                         </p>
                     </div>
+                    {onUsageStats && (
+                        <Button
+                            isIconOnly
+                            variant="ghost"
+                            size="sm"
+                            onPress={onUsageStats}
+                            aria-label="流量统计"
+                            className="icon-btn"
+                        >
+                            <svg
+                                className="w-5 h-5"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth={1.5}
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                viewBox="0 0 24 24"
+                            >
+                                <path d="M3 3v18h18" />
+                                <path d="M7 14v3" />
+                                <path d="M12 9v8" />
+                                <path d="M17 5v12" />
+                            </svg>
+                        </Button>
+                    )}
                     {onSettings && (
                         <Button
                             isIconOnly

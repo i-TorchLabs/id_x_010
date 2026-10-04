@@ -841,6 +841,18 @@ class LangGraphSupervisor:
 
         return intent
 
+    @staticmethod
+    def _build_injected_prompt(prompt_content: Optional[str]) -> Optional[str]:
+        """用户上传的 Markdown 文件作为系统提示词注入；仅文本前缀，不破坏既有路由逻辑。"""
+        if not prompt_content or not prompt_content.strip():
+            return None
+        return (
+            "以下是用户上传的 Markdown 提示词文件内容，请在回答时严格遵循其中的指令与约束：\n\n"
+            "----- BEGIN UPLOADED PROMPT -----\n"
+            f"{prompt_content}\n"
+            "----- END UPLOADED PROMPT -----\n"
+        )
+
     async def process(
         self,
         query: str,
@@ -852,12 +864,15 @@ class LangGraphSupervisor:
         db_name: Optional[str] = None,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
+        prompt_content: Optional[str] = None,
     ) -> Dict[str, Any]:
         if not conversation_id:
             conversation_id = str(uuid.uuid4())
 
         model_type = model_type or self.model_type
         model_name = model_name or self.model_name
+
+        injected_system_prompt = self._build_injected_prompt(prompt_content)
 
         if agent_type and agent_type in ["general", "sql", "code"]:
             logger.info(f"{get_request_id()}[直接调用] 用户指定 Agent: '{agent_type}'")
@@ -870,8 +885,14 @@ class LangGraphSupervisor:
                     base_url=base_url,
                     db_name=db_name,
                 )
+                sql_question = query
+                if injected_system_prompt:
+                    # SQL Agent 使用固定系统提示词，将上传的 Markdown 作为问题上下文前缀注入
+                    sql_question = (
+                        f"【参考提示词】\n{prompt_content}\n\n【用户问题】\n{query}"
+                    )
                 try:
-                    result = await sql_agent.query(question=query)
+                    result = await sql_agent.query(question=sql_question)
                     return {
                         "success": True,
                         "response": result.get("response", ""),
@@ -913,6 +934,8 @@ class LangGraphSupervisor:
 5. 遵循最佳实践和设计模式
 
 请在 <thinking></thinking> 标签中先思考，然后提供完整的代码实现。"""
+                if injected_system_prompt:
+                    code_system_prompt = f"{injected_system_prompt}\n{code_system_prompt}"
                 try:
                     response, thinking = await code_agent.chat(
                         query=query,
@@ -950,11 +973,14 @@ class LangGraphSupervisor:
                     api_key=api_key,
                     base_url=base_url,
                 )
+                general_system_prompt = DEFAULT_SYSTEM_PROMPT
+                if injected_system_prompt:
+                    general_system_prompt = f"{injected_system_prompt}\n{general_system_prompt}"
                 try:
                     response, thinking = await general_agent.chat(
                         query=query,
                         context=context,
-                        system_prompt=DEFAULT_SYSTEM_PROMPT,
+                        system_prompt=general_system_prompt,
                     )
                     return {
                         "success": True,
@@ -1033,12 +1059,16 @@ class LangGraphSupervisor:
         db_name: Optional[str] = None,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
+        prompt_content: Optional[str] = None,
     ):
         if not conversation_id:
             conversation_id = str(uuid.uuid4())
 
         model_type = model_type or self.model_type
         model_name = model_name or self.model_name
+
+        # 用户上传的 Markdown 文件作为系统提示词注入；仅文本前缀，不破坏既有路由逻辑
+        injected_system_prompt = self._build_injected_prompt(prompt_content)
 
         if agent_type and agent_type in ["general", "sql", "code"]:
             intent = agent_type
@@ -1080,7 +1110,13 @@ class LangGraphSupervisor:
                 db_name=db_name,
             )
 
-            async for chunk in sql_agent.stream_query(question=query):
+            sql_question = query
+            if injected_system_prompt:
+                # SQL Agent 使用固定系统提示词，将上传的 Markdown 作为问题上下文前缀注入
+                sql_question = (
+                    f"【参考提示词】\n{prompt_content}\n\n【用户问题】\n{query}"
+                )
+            async for chunk in sql_agent.stream_query(question=sql_question):
                 chunk["conversation_id"] = conversation_id
                 yield chunk
         elif intent == "code":
@@ -1103,6 +1139,8 @@ class LangGraphSupervisor:
 
 请在 <thinking></thinking> 标签中先思考，然后提供完整的代码实现。""",
             )
+            if injected_system_prompt:
+                code_system_prompt = f"{injected_system_prompt}\n{code_system_prompt}"
             async for chunk in code_agent.stream_chat(
                 query=query,
                 context=context,
@@ -1118,10 +1156,13 @@ class LangGraphSupervisor:
                 base_url=base_url,
             )
 
+            base_system_prompt = route_info.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
+            if injected_system_prompt:
+                base_system_prompt = f"{injected_system_prompt}\n{base_system_prompt}"
             async for chunk in agent.stream_chat(
                 query=query,
                 context=context,
-                system_prompt=route_info.get("system_prompt", DEFAULT_SYSTEM_PROMPT),
+                system_prompt=base_system_prompt,
             ):
                 chunk["conversation_id"] = conversation_id
                 yield chunk

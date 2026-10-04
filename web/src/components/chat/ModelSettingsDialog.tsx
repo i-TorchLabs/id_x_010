@@ -144,7 +144,7 @@ export function ModelSettingsDialog({
   return (
     <Modal.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>
       <Modal.Container>
-        <Modal.Dialog className="sm:max-w-[440px]">
+        <Modal.Dialog className="sm:max-w-[640px]">
           <Modal.CloseTrigger />
           <Modal.Header>
             <Modal.Heading>模型设置</Modal.Heading>

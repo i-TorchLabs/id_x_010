@@ -104,6 +104,9 @@ class GeneralAgent:
                 base_url=self.base_url,
                 temperature=0.7,
                 streaming=True,
+                # 让 OpenAI 兼容端点在流式末块返回 token 用量；
+                # 不支持的端点会忽略该参数，捕获逻辑降级为 0（非致命）
+                stream_usage=True,
             )
         else:
             local_config = get_local_model_config()
@@ -187,6 +190,7 @@ class GeneralAgent:
 
         thinking_buffer = []
         in_thinking = False
+        usage_meta = None
 
         try:
             async for chunk in self.llm.astream(messages):
@@ -196,6 +200,12 @@ class GeneralAgent:
                     token = "".join(
                         item if isinstance(item, str) else str(item) for item in token
                     )
+
+                # 捕获 token 用量：OpenAI 兼容端点（stream_usage=True）在末块携带
+                # usage_metadata；不支持时该属性为 None，降级为 0
+                meta = getattr(chunk, "usage_metadata", None)
+                if isinstance(meta, dict):
+                    usage_meta = meta
 
                 if "<thinking>" in token:
                     in_thinking = True
@@ -223,6 +233,7 @@ class GeneralAgent:
             yield {
                 "type": "done",
                 "model_used": self.model_name,
+                "usage": usage_meta,
             }
 
         except Exception as e:

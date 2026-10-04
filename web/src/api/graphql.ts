@@ -92,18 +92,23 @@ export interface RegisterInput {
   phone?: string;
 }
 
+// 用户信息（与后端 UserInfoType 对应，登录/注册/SSO/资料更新共用）
+export interface User {
+  id: number;
+  email: string;
+  phone: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+  createdAt: string | null;
+}
+
 // 注册响应类型
 export interface RegisterPayload {
   register: {
     success: boolean;
     message: string;
     token: string | null;
-    user: {
-      id: number;
-      email: string;
-      phone: string | null;
-      createdAt: string | null;
-    } | null;
+    user: User | null;
   };
 }
 
@@ -119,12 +124,7 @@ export interface LoginPayload {
     success: boolean;
     message: string;
     token: string | null;
-    user: {
-      id: number;
-      email: string;
-      phone: string | null;
-      createdAt: string | null;
-    } | null;
+    user: User | null;
   };
 }
 
@@ -149,6 +149,20 @@ export interface LogoutPayload {
     message: string;
     token: null;
     user: null;
+  };
+}
+
+// 更新资料输入类型
+export interface UpdateProfileInput {
+  displayName?: string | null;
+}
+
+// 更新资料响应类型
+export interface UpdateProfilePayload {
+  updateProfile: {
+    success: boolean;
+    message: string;
+    user: User | null;
   };
 }
 
@@ -184,6 +198,8 @@ export const userGraphqlApi = {
             id
             email
             phone
+            displayName
+            avatarUrl
             createdAt
           }
         }
@@ -210,6 +226,8 @@ export const userGraphqlApi = {
             id
             email
             phone
+            displayName
+            avatarUrl
             createdAt
           }
         }
@@ -281,6 +299,8 @@ export const userGraphqlApi = {
             id
             email
             phone
+            displayName
+            avatarUrl
             createdAt
           }
         }
@@ -288,6 +308,35 @@ export const userGraphqlApi = {
     `;
 
     return graphqlClient.request<SsoLoginPayload>({
+      query: mutation,
+      variables: { input },
+    });
+  },
+
+  /**
+   * 更新当前用户资料（显示名称）。
+   * 头像上传走 uploadAvatar() REST 端点（multipart/form-data）。
+   */
+  updateProfile: async (
+    input: UpdateProfileInput,
+  ): Promise<UpdateProfilePayload> => {
+    const mutation = `
+      mutation UpdateProfile($input: UpdateProfileInput!) {
+        updateProfile(input: $input) {
+          success
+          message
+          user {
+            id
+            email
+            phone
+            displayName
+            avatarUrl
+            createdAt
+          }
+        }
+      }
+    `;
+    return graphqlClient.request<UpdateProfilePayload>({
       query: mutation,
       variables: { input },
     });
@@ -307,12 +356,7 @@ export interface SsoLoginPayload {
     message: string;
     token: string | null;
     expiresAt: string | null;
-    user: {
-      id: number;
-      email: string;
-      phone: string | null;
-      createdAt: string | null;
-    } | null;
+    user: User | null;
   };
 }
 
@@ -491,6 +535,295 @@ export const databaseGraphqlApi = {
 
     return graphqlClient.request<DatabasesPayload>({
       query,
+    });
+  },
+};
+
+// ── Markdown 提示词库 ──
+
+// 提示词记录类型（与后端 MarkdownPromptType 对应）
+export interface MarkdownPromptItem {
+  id: number;
+  filename: string;
+  noteName: string | null;
+  content: string;
+  isActive: boolean;
+  charCount: number;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface ListMarkdownPromptsPayload {
+  listMarkdownPrompts: {
+    success: boolean;
+    message: string;
+    prompts: MarkdownPromptItem[];
+  };
+}
+
+export interface ActiveMarkdownPromptPayload {
+  getActiveMarkdownPrompt: {
+    success: boolean;
+    message: string;
+    prompt: MarkdownPromptItem | null;
+  };
+}
+
+export interface SelectMarkdownPromptPayload {
+  selectMarkdownPrompt: {
+    success: boolean;
+    message: string;
+    prompt: MarkdownPromptItem | null;
+  };
+}
+
+export interface DeleteMarkdownPromptPayload {
+  deleteMarkdownPrompt: {
+    success: boolean;
+    message: string;
+    prompt: MarkdownPromptItem | null;
+  };
+}
+
+export interface RenameMarkdownPromptPayload {
+  renameMarkdownPrompt: {
+    success: boolean;
+    message: string;
+    prompt: MarkdownPromptItem | null;
+  };
+}
+
+export interface UpdateMarkdownContentPayload {
+  updateMarkdownContent: {
+    success: boolean;
+    message: string;
+    prompt: MarkdownPromptItem | null;
+  };
+}
+
+/**
+ * 提示词库 GraphQL API
+ */
+export const promptGraphqlApi = {
+  /** 列出当前用户的全部 Markdown 提示词 */
+  listPrompts: async (
+    signal?: AbortSignal,
+  ): Promise<ListMarkdownPromptsPayload> => {
+    const query = `
+      query ListMarkdownPrompts {
+        listMarkdownPrompts {
+          success
+          message
+          prompts {
+            id
+            filename
+            noteName
+            content
+            isActive
+            charCount
+            createdAt
+            updatedAt
+          }
+        }
+      }
+    `;
+    return graphqlClient.request<ListMarkdownPromptsPayload>({ query }, signal);
+  },
+
+  /** 获取当前用户选中的提示词 */
+  getActivePrompt: async (): Promise<ActiveMarkdownPromptPayload> => {
+    const query = `
+      query GetActiveMarkdownPrompt {
+        getActiveMarkdownPrompt {
+          success
+          message
+          prompt {
+            id
+            filename
+            noteName
+            content
+            isActive
+            charCount
+            createdAt
+            updatedAt
+          }
+        }
+      }
+    `;
+    return graphqlClient.request<ActiveMarkdownPromptPayload>({ query });
+  },
+
+  /** 选中一个提示词作为当前提示词 */
+  selectPrompt: async (
+    promptId: number,
+  ): Promise<SelectMarkdownPromptPayload> => {
+    const mutation = `
+      mutation SelectMarkdownPrompt($promptId: Int!) {
+        selectMarkdownPrompt(promptId: $promptId) {
+          success
+          message
+          prompt {
+            id
+            filename
+            noteName
+            content
+            isActive
+            charCount
+            createdAt
+            updatedAt
+          }
+        }
+      }
+    `;
+    return graphqlClient.request<SelectMarkdownPromptPayload>({
+      query: mutation,
+      variables: { promptId },
+    });
+  },
+
+  /** 删除一个提示词 */
+  deletePrompt: async (
+    promptId: number,
+  ): Promise<DeleteMarkdownPromptPayload> => {
+    const mutation = `
+      mutation DeleteMarkdownPrompt($promptId: Int!) {
+        deleteMarkdownPrompt(promptId: $promptId) {
+          success
+          message
+          prompt {
+            id
+          }
+        }
+      }
+    `;
+    return graphqlClient.request<DeleteMarkdownPromptPayload>({
+      query: mutation,
+      variables: { promptId },
+    });
+  },
+
+  /** 更新提示词的备注名称（传 null 或空串清空备注，回退展示 filename） */
+  renamePrompt: async (
+    promptId: number,
+    noteName: string | null,
+  ): Promise<RenameMarkdownPromptPayload> => {
+    const mutation = `
+      mutation RenameMarkdownPrompt($promptId: Int!, $noteName: String) {
+        renameMarkdownPrompt(promptId: $promptId, noteName: $noteName) {
+          success
+          message
+          prompt {
+            id
+            filename
+            noteName
+            content
+            isActive
+            charCount
+            createdAt
+            updatedAt
+          }
+        }
+      }
+    `;
+    return graphqlClient.request<RenameMarkdownPromptPayload>({
+      query: mutation,
+      variables: { promptId, noteName },
+    });
+  },
+
+  /** 更新提示词的 Markdown 正文内容（编辑功能） */
+  updateContent: async (
+    promptId: number,
+    content: string,
+  ): Promise<UpdateMarkdownContentPayload> => {
+    const mutation = `
+      mutation UpdateMarkdownContent($promptId: Int!, $content: String!) {
+        updateMarkdownContent(promptId: $promptId, content: $content) {
+          success
+          message
+          prompt {
+            id
+            filename
+            noteName
+            content
+            isActive
+            charCount
+            createdAt
+            updatedAt
+          }
+        }
+      }
+    `;
+    return graphqlClient.request<UpdateMarkdownContentPayload>({
+      query: mutation,
+      variables: { promptId, content },
+    });
+  },
+};
+
+// ── 用量统计（流量统计面板）──
+
+export interface UsageDailyItem {
+  date: string;
+  requestCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  costUsd: number;
+}
+
+export interface UsageModelBreakdownItem {
+  modelName: string;
+  requestCount: number;
+  totalTokens: number;
+  costUsd: number;
+}
+
+export interface UsageStatsPayload {
+  usageStats: {
+    success: boolean;
+    message: string;
+    days: number;
+    daily: UsageDailyItem[];
+    byModel: UsageModelBreakdownItem[];
+    totalRequests: number;
+    totalTokens: number;
+    totalCostUsd: number;
+  };
+}
+
+export const usageGraphqlApi = {
+  /** 获取当前用户近 N 天的用量统计（按日 + 按模型聚合） */
+  getUsageStats: async (days: number = 30): Promise<UsageStatsPayload> => {
+    const query = `
+      query UsageStats($days: Int!) {
+        usageStats(days: $days) {
+          success
+          message
+          days
+          daily {
+            date
+            requestCount
+            inputTokens
+            outputTokens
+            totalTokens
+            costUsd
+          }
+          byModel {
+            modelName
+            requestCount
+            totalTokens
+            costUsd
+          }
+          totalRequests
+          totalTokens
+          totalCostUsd
+        }
+      }
+    `;
+    return graphqlClient.request<UsageStatsPayload>({
+      query,
+      variables: { days },
     });
   },
 };

@@ -7,12 +7,20 @@ import { MessageInput } from "@/components/chat/MessageInput";
 import { CenterHero } from "@/components/chat/CenterHero";
 import { ChatSidebar } from "@/components/chat/ChatSidebar";
 import { ModelSettingsDialog } from "@/components/chat/ModelSettingsDialog";
+import { UsageStatsDialog } from "@/components/chat/UsageStatsDialog";
+import { ProfileDialog } from "@/components/chat/ProfileDialog";
 import { useTheme } from "@/context/ThemeContext";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AnimatePresence, motion } from "framer-motion";
 import { streamChatClient, StreamChunk } from "@/api/streamChat";
 import { AgentType } from "@/components/chat/AgentSelector";
-import { userGraphqlApi, ModelInfo, modelGraphqlApi } from "@/api/graphql";
+import {
+  userGraphqlApi,
+  ModelInfo,
+  modelGraphqlApi,
+  MarkdownPromptItem,
+  type User,
+} from "@/api/graphql";
 import { AlertDialog, Button } from "@heroui/react";
 
 type ChatMessage = {
@@ -79,6 +87,10 @@ export default function ChatHome() {
   const [selectedAgent, setSelectedAgent] = useState<AgentType>("general");
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
+  // 当前用户选中的 Markdown 提示词（每轮对话由后端自动注入为系统提示词）
+  const [activePrompt, setActivePrompt] = useState<MarkdownPromptItem | null>(
+    null,
+  );
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { theme } = useTheme();
 
@@ -371,26 +383,34 @@ export default function ChatHome() {
   const router = useRouter();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showUsageStats, setShowUsageStats] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [userInfo, setUserInfo] = useState<{
-    username: string;
-    email: string | null;
-  } | null>(null);
+  const [userInfo, setUserInfo] = useState<User | null>(null);
 
   // 读取本地存储的用户信息（仅客户端）
   useEffect(() => {
     try {
       const raw = localStorage.getItem("user");
       if (raw) {
-        const parsed = JSON.parse(raw);
+        const parsed = JSON.parse(raw) as User;
         setUserInfo({
-          username: parsed.username ?? "用户",
-          email: parsed.email ?? null,
+          id: parsed.id,
+          email: parsed.email,
+          phone: parsed.phone ?? null,
+          displayName: parsed.displayName ?? null,
+          avatarUrl: parsed.avatarUrl ?? null,
+          createdAt: parsed.createdAt ?? null,
         });
       }
     } catch {
       // 忽略解析错误，使用默认展示
     }
+  }, []);
+
+  // 个人资料更新回调：刷新侧边栏展示（同时 ProfileDialog 已同步 localStorage）
+  const handleProfileSaved = useCallback((updated: User) => {
+    setUserInfo(updated);
   }, []);
 
   const handleNewChat = () => {
@@ -669,10 +689,19 @@ export default function ChatHome() {
         {isSidebarOpen && (
           <ChatSidebar
             onNewChat={handleNewChat}
-            userName={userInfo?.username ?? "用户"}
+            userName={
+              userInfo?.displayName ??
+              (userInfo?.email
+                ? userInfo.email.split("@")[0]
+                : "用户")
+            }
             userEmail={userInfo?.email ?? "已登录"}
+            avatarUrl={userInfo?.avatarUrl ?? null}
             onLogout={() => setShowLogoutConfirm(true)}
             onSettings={() => setShowSettings(true)}
+            onUsageStats={() => setShowUsageStats(true)}
+            onEditProfile={() => setShowProfile(true)}
+            onActivePromptChange={setActivePrompt}
           />
         )}
       </AnimatePresence>
@@ -702,6 +731,7 @@ export default function ChatHome() {
               onAgentChange={setSelectedAgent}
               models={models}
               isLoadingModels={isLoadingModels}
+              activePrompt={activePrompt}
             />
           </>
         ) : (
@@ -789,6 +819,7 @@ export default function ChatHome() {
               onAgentChange={setSelectedAgent}
               models={models}
               isLoadingModels={isLoadingModels}
+              activePrompt={activePrompt}
             />
           </>
         )}
@@ -798,6 +829,20 @@ export default function ChatHome() {
       <ModelSettingsDialog
         isOpen={showSettings}
         onOpenChange={setShowSettings}
+      />
+
+      {/* Usage Stats Dialog (流量统计) */}
+      <UsageStatsDialog
+        isOpen={showUsageStats}
+        onOpenChange={setShowUsageStats}
+      />
+
+      {/* Profile Dialog (头像 + 显示名称) */}
+      <ProfileDialog
+        isOpen={showProfile}
+        onOpenChange={setShowProfile}
+        user={userInfo}
+        onSaved={handleProfileSaved}
       />
 
       {/* Logout Confirmation Dialog (HeroUI) */}

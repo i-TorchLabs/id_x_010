@@ -7,10 +7,13 @@ from sqlalchemy import (
     JSON,
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import (
@@ -140,6 +143,49 @@ class ConversationLog(Base):
         }
 
 
+class UsageLog(Base):
+    """用量日志：每轮流式对话结束后写入一行，记录 token 消耗与估算花费。
+
+    供前端“流量统计”面板按日聚合展示。user_id 在用户登录时填充，未登录时为
+    None（匿名用量不纳入个人统计，但表中仍保留以便后续全局分析）。
+    """
+
+    __tablename__ = "usage_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id"), index=True, comment="用户ID（未登录时为 NULL）"
+    )
+    conversation_id: Mapped[Optional[str]] = mapped_column(
+        String(64), comment="会话 ID"
+    )
+    model_name: Mapped[Optional[str]] = mapped_column(
+        String(128), comment="调用的模型名称"
+    )
+    model_type: Mapped[Optional[str]] = mapped_column(
+        String(32), comment="模型类型: local 或 external"
+    )
+    intent: Mapped[Optional[str]] = mapped_column(String(64), comment="识别的意图")
+    input_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, comment="输入 token 数"
+    )
+    output_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, comment="输出 token 数"
+    )
+    total_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, comment="总 token 数"
+    )
+    cost_usd: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0, comment="估算花费（USD），本地模型为 0"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
+        comment="创建时间",
+    )
+
+
 class UserToken(Base):
     __tablename__ = "user_tokens"
 
@@ -192,6 +238,12 @@ class User(Base):
     )
     password_hash: Mapped[str] = mapped_column(
         String(256), nullable=False, comment="密码哈希"
+    )
+    display_name: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True, comment="显示名称（可由用户自定义，空则回退到 email 本地名）"
+    )
+    avatar: Mapped[Optional[bytes]] = mapped_column(
+        LargeBinary, nullable=True, comment="头像图片二进制（BYTEA）"
     )
     is_active: Mapped[Optional[bool]] = mapped_column(
         Boolean, default=True, comment="是否激活"
@@ -516,4 +568,63 @@ class LocalModel(Base):
             "provider": self.provider,
             "base_url": self.base_url,
             "api_key": self.api_key,
+        }
+
+
+class UserMarkdownPrompt(Base):
+    """用户级 Markdown 提示词库。
+
+    每用户可保存多条 Markdown 文件内容；同一用户同时仅有一条 is_active=True，
+    该条目的 content 会在每轮对话中作为系统提示词注入模型调用。
+
+    filename 保留原始文件名作溯源，note_name 是用户自定义的备注名（如"SQL 规范"），
+    为空时前端展示回退到 filename。
+    """
+
+    __tablename__ = "user_markdown_prompts"
+    __table_args__ = (
+        UniqueConstraint("user_id", "filename", name="uq_user_markdown_filename"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id"), nullable=False, index=True, comment="用户ID"
+    )
+    filename: Mapped[str] = mapped_column(
+        String(256), nullable=False, comment="原始文件名"
+    )
+    note_name: Mapped[Optional[str]] = mapped_column(
+        String(256), nullable=True, default=None, comment="备注名称，空则回退 filename"
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False, comment="Markdown 文本内容")
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, comment="是否为当前选中的提示词"
+    )
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        comment="创建时间",
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        comment="更新时间",
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "filename": self.filename,
+            "note_name": self.note_name,
+            "content": self.content,
+            "is_active": self.is_active,
+            "char_count": len(self.content) if self.content else 0,
+            "created_at": self.created_at.isoformat()
+            if self.created_at is not None
+            else None,
+            "updated_at": self.updated_at.isoformat()
+            if self.updated_at is not None
+            else None,
         }

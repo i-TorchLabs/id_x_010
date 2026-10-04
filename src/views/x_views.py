@@ -14,7 +14,9 @@ from x_models.id_x_010.src.models.x_models import (
     ConversationLog,
     ExternalProvider,
     LocalProvider,
+    UsageLog,
     User,
+    UserMarkdownPrompt,
     UserModelSettings,
     UserToken,
     get_session,
@@ -22,6 +24,7 @@ from x_models.id_x_010.src.models.x_models import (
 )
 from x_models.id_x_010.src.schemas.x_schemas import AuthResponseType, UserInfoType
 from x_models.id_x_010.src.utils import x_oauth
+from x_models.id_x_010.src.utils.x_pricing import compute_cost
 
 DEFAULT_MAX_ROUNDS = 5
 
@@ -53,6 +56,156 @@ async def save_conversation_log(
             )
     except Exception as e:
         logger.error(f"{get_request_id()}保存对话日志失败: {e}", exc_info=True)
+
+
+async def save_usage_log(
+    user_id: Optional[int],
+    conversation_id: str,
+    model_type: str,
+    model_name: str,
+    intent: str,
+    usage: Optional[dict],
+) -> None:
+    """落库一行用量记录（token 消耗 + 估算花费）。best-effort，绝不抛错。
+
+    Args:
+        user_id: 用户ID（未登录时为 None）
+        conversation_id: 会话 ID
+        model_type: ``local`` / ``external``
+        model_name: 模型名称
+        intent: 意图（general / sql / code）
+        usage: LangChain ``usage_metadata`` 字典，含 input_tokens / output_tokens /
+            total_tokens；为 None 或缺字段时按 0 处理
+    """
+    try:
+        input_tokens = int((usage or {}).get("input_tokens", 0) or 0)
+        output_tokens = int((usage or {}).get("output_tokens", 0) or 0)
+        total_tokens = int((usage or {}).get("total_tokens", 0) or 0)
+
+        # 本地模型运行在用户自有硬件上，不计费
+        if model_type == "local":
+            cost = 0.0
+        else:
+            cost = compute_cost(model_name, input_tokens, output_tokens)
+
+        async with get_session()() as session:
+            log = UsageLog(
+                user_id=user_id,
+                conversation_id=conversation_id or None,
+                model_name=model_name or None,
+                model_type=model_type or None,
+                intent=intent or None,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+                cost_usd=cost,
+            )
+            session.add(log)
+            await session.commit()
+            logger.info(
+                f"{get_request_id()}用量日志已保存: user_id={user_id}, "
+                f"model={model_name}, in={input_tokens}, out={output_tokens}, "
+                f"cost=${cost:.6f}"
+            )
+    except Exception as e:
+        logger.error(f"{get_request_id()}保存用量日志失败: {e}", exc_info=True)
+
+
+# ==========================================
+# 用户资料（display_name / avatar）
+# ==========================================
+
+# 头像字节读取端点的路由前缀，与 register_routers() 中的 route_prefix 一致；
+# views 层用它组装返回给前端的 avatar_url
+_AVATAR_ROUTE_PREFIX = "/b/id_x_010"
+
+
+def build_user_info(user: User) -> "UserInfoType":
+    """由 User 行构造 UserInfoType，统一填充 avatar_url（带版本号防缓存）。
+
+    所有 AuthResponseType.user 与 UpdateProfileResponseType.user 都应通过本函数构造，
+    避免三个调用点各自维护字段一致性。
+    """
+    from x_models.id_x_010.src.schemas.x_schemas import UserInfoType
+
+    avatar_url: Optional[str] = None
+    if user.avatar:
+        # 版本号用 updated_at 时间戳；头像更新后 updated_at 自动刷新（数据库触发器）
+        version = int(user.updated_at.timestamp()) if user.updated_at else 0
+        avatar_url = f"{_AVATAR_ROUTE_PREFIX}/avatar/{user.id}?v={version}"
+
+    return UserInfoType(
+        id=user.id,
+        email=user.email,
+        phone=user.phone,
+        display_name=user.display_name,
+        avatar_url=avatar_url,
+        created_at=user.created_at.isoformat() if user.created_at else None,
+    )
+
+
+async def update_user_profile(
+    user_id: int,
+    display_name: Optional[str] = None,
+) -> Optional[User]:
+    """更新用户资料。display_name 传 None 表示不改；传空串表示清空回退到 email 本地名。
+
+    返回更新后的 User 行；用户不存在或 DB 异常时返回 None。
+    """
+    try:
+        async with get_session()() as session:
+            result = await session.execute(select(User).where(User.id == user_id))
+            user = result.scalar_one_or_none()
+            if user is None:
+                return None
+
+            if display_name is not None:
+                # 规范化：去首尾空白；超长截断；空串视为清空（写 None）
+                trimmed = display_name.strip()
+                if len(trimmed) > 64:
+                    trimmed = trimmed[:64]
+                user.display_name = trimmed if trimmed else None
+
+            await session.commit()
+            await session.refresh(user)
+            return user
+    except Exception as e:
+        logger.error(f"{get_request_id()}更新用户资料失败: {e}", exc_info=True)
+        return None
+
+
+async def set_user_avatar(user_id: int, avatar_bytes: bytes) -> Optional[User]:
+    """写入/覆盖用户头像二进制。传空 bytes 表示清空头像。返回更新后的 User 行。"""
+    try:
+        async with get_session()() as session:
+            result = await session.execute(select(User).where(User.id == user_id))
+            user = result.scalar_one_or_none()
+            if user is None:
+                return None
+
+            user.avatar = avatar_bytes if avatar_bytes else None
+            await session.commit()
+            await session.refresh(user)
+            return user
+    except Exception as e:
+        logger.error(f"{get_request_id()}设置用户头像失败: {e}", exc_info=True)
+        return None
+
+
+async def get_user_avatar(user_id: int) -> Optional[bytes]:
+    """读取用户头像二进制；用户不存在或未设头像时返回 None。"""
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(User.avatar).where(User.id == user_id)
+            )
+            row = result.one_or_none()
+            if row is None:
+                return None
+            return row[0]
+    except Exception as e:
+        logger.error(f"{get_request_id()}读取用户头像失败: {e}", exc_info=True)
+        return None
 
 
 async def get_conversation_history(
@@ -147,6 +300,252 @@ async def upsert_user_model_settings(
             f"provider={provider}, model={model_name}"
         )
         return settings
+
+
+# ---------------------------------------------------------------------------
+# Markdown 提示词库
+# ---------------------------------------------------------------------------
+
+
+async def list_user_markdown_prompts(user_id: int) -> List[UserMarkdownPrompt]:
+    """列出指定用户的全部 Markdown 提示词，按创建时间倒序。"""
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(UserMarkdownPrompt)
+                .where(UserMarkdownPrompt.user_id == user_id)
+                .order_by(desc(UserMarkdownPrompt.created_at))
+            )
+            return list(result.scalars().all())
+    except Exception as e:
+        logger.error(f"{get_request_id()}列出用户提示词失败: {e}", exc_info=True)
+        return []
+
+
+async def get_active_markdown_prompt(user_id: int) -> Optional[UserMarkdownPrompt]:
+    """读取用户当前选中的提示词（is_active=True），无则返回 None。"""
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(UserMarkdownPrompt).where(
+                    UserMarkdownPrompt.user_id == user_id,
+                    UserMarkdownPrompt.is_active.is_(True),
+                )
+            )
+            return result.scalar_one_or_none()
+    except Exception as e:
+        logger.error(f"{get_request_id()}读取活跃提示词失败: {e}", exc_info=True)
+        return None
+
+
+async def create_user_markdown_prompt(
+    user_id: int,
+    filename: str,
+    content: str,
+) -> Optional[UserMarkdownPrompt]:
+    """新建或覆盖同名提示词。同名时更新内容并保持原 is_active 状态。"""
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(UserMarkdownPrompt).where(
+                    UserMarkdownPrompt.user_id == user_id,
+                    UserMarkdownPrompt.filename == filename,
+                )
+            )
+            prompt = result.scalar_one_or_none()
+
+            if prompt is None:
+                # 用户首条提示词自动设为活跃
+                count_result = await session.execute(
+                    select(UserMarkdownPrompt).where(
+                        UserMarkdownPrompt.user_id == user_id
+                    )
+                )
+                is_first = count_result.scalars().first() is None
+                prompt = UserMarkdownPrompt(
+                    user_id=user_id,
+                    filename=filename,
+                    content=content,
+                    is_active=is_first,
+                )
+                session.add(prompt)
+            else:
+                prompt.content = content
+
+            await session.commit()
+            await session.refresh(prompt)
+            logger.info(
+                f"{get_request_id()}提示词已保存: user_id={user_id}, "
+                f"filename={filename}, chars={len(content)}"
+            )
+            return prompt
+    except Exception as e:
+        logger.error(f"{get_request_id()}保存提示词失败: {e}", exc_info=True)
+        return None
+
+
+async def select_markdown_prompt(
+    user_id: int, prompt_id: int
+) -> Optional[UserMarkdownPrompt]:
+    """将指定提示词设为当前选中（互斥：同用户其余项取消选中）。"""
+    try:
+        async with get_session()() as session:
+            # 先取消该用户全部已选中项
+            result = await session.execute(
+                select(UserMarkdownPrompt).where(
+                    UserMarkdownPrompt.user_id == user_id,
+                    UserMarkdownPrompt.is_active.is_(True),
+                )
+            )
+            for p in result.scalars().all():
+                p.is_active = False
+
+            # 再设目标为选中
+            target_result = await session.execute(
+                select(UserMarkdownPrompt).where(
+                    UserMarkdownPrompt.id == prompt_id,
+                    UserMarkdownPrompt.user_id == user_id,
+                )
+            )
+            target = target_result.scalar_one_or_none()
+            if target is None:
+                return None
+            target.is_active = True
+
+            await session.commit()
+            await session.refresh(target)
+            logger.info(
+                f"{get_request_id()}提示词已选中: user_id={user_id}, "
+                f"prompt_id={prompt_id}, filename={target.filename}"
+            )
+            return target
+    except Exception as e:
+        logger.error(f"{get_request_id()}选中提示词失败: {e}", exc_info=True)
+        return None
+
+
+async def delete_markdown_prompt(user_id: int, prompt_id: int) -> bool:
+    """删除指定提示词。若删除的恰为活跃项，自动将最新一条设为活跃。"""
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(UserMarkdownPrompt).where(
+                    UserMarkdownPrompt.id == prompt_id,
+                    UserMarkdownPrompt.user_id == user_id,
+                )
+            )
+            prompt = result.scalar_one_or_none()
+            if prompt is None:
+                return False
+
+            was_active = prompt.is_active
+            await session.delete(prompt)
+            await session.flush()
+
+            # 删除的是活跃项时，自动选最近一条续用
+            if was_active:
+                latest_result = await session.execute(
+                    select(UserMarkdownPrompt)
+                    .where(UserMarkdownPrompt.user_id == user_id)
+                    .order_by(desc(UserMarkdownPrompt.created_at))
+                    .limit(1)
+                )
+                latest = latest_result.scalars().first()
+                if latest is not None:
+                    latest.is_active = True
+
+            await session.commit()
+            logger.info(
+                f"{get_request_id()}提示词已删除: user_id={user_id}, prompt_id={prompt_id}"
+            )
+            return True
+    except Exception as e:
+        logger.error(f"{get_request_id()}删除提示词失败: {e}", exc_info=True)
+        return False
+
+
+async def rename_markdown_prompt(
+    user_id: int, prompt_id: int, note_name: Optional[str]
+) -> Optional[UserMarkdownPrompt]:
+    """更新提示词的备注名称。
+
+    note_name 传入空字符串或 None 时清空备注，前端展示回退到 filename。
+    去除首尾空白后入库；超长（>256）截断。
+    """
+    # 统一规整：去首尾空白，空串视为 None（清空）
+    if note_name is not None:
+        note_name = note_name.strip()
+        if note_name == "":
+            note_name = None
+        elif len(note_name) > 256:
+            note_name = note_name[:256]
+
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(UserMarkdownPrompt).where(
+                    UserMarkdownPrompt.id == prompt_id,
+                    UserMarkdownPrompt.user_id == user_id,
+                )
+            )
+            prompt = result.scalar_one_or_none()
+            if prompt is None:
+                return None
+
+            prompt.note_name = note_name
+            await session.commit()
+            await session.refresh(prompt)
+            logger.info(
+                f"{get_request_id()}提示词已重命名: user_id={user_id}, "
+                f"prompt_id={prompt_id}, note_name={note_name!r}"
+            )
+            return prompt
+    except Exception as e:
+        logger.error(f"{get_request_id()}重命名提示词失败: {e}", exc_info=True)
+        return None
+
+
+async def update_markdown_content(
+    user_id: int, prompt_id: int, content: str
+) -> Optional[UserMarkdownPrompt]:
+    """更新提示词的 Markdown 正文内容。
+
+    用于「编辑」功能：用户在前端 textarea 中修改后写回 DB，
+    下轮对话即注入新内容。空内容拒绝；超 2MB 截断（与上传上限一致）。
+    """
+    if content is None:
+        return None
+    # 规整：去除首尾空白；空内容拒绝
+    content = content.strip()
+    if not content:
+        return None
+    max_len = 2 * 1024 * 1024  # 与上传上限一致
+    if len(content) > max_len:
+        content = content[:max_len]
+
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(UserMarkdownPrompt).where(
+                    UserMarkdownPrompt.id == prompt_id,
+                    UserMarkdownPrompt.user_id == user_id,
+                )
+            )
+            prompt = result.scalar_one_or_none()
+            if prompt is None:
+                return None
+
+            prompt.content = content
+            await session.commit()
+            await session.refresh(prompt)
+            logger.info(
+                f"{get_request_id()}提示词内容已更新: user_id={user_id}, "
+                f"prompt_id={prompt_id}, chars={len(content)}"
+            )
+            return prompt
+    except Exception as e:
+        logger.error(f"{get_request_id()}更新提示词内容失败: {e}", exc_info=True)
+        return None
 
 
 async def test_model_connectivity(
@@ -466,12 +865,7 @@ async def view_sso_login(code: str, state: str) -> AuthResponseType:
                 message="SSO 登录成功",
                 token=token,
                 expires_at=expires_at.isoformat(),
-                user=UserInfoType(
-                    id=user.id,
-                    email=user.email,
-                    phone=user.phone,
-                    created_at=user.created_at.isoformat() if user.created_at else None,
-                ),
+                user=build_user_info(user),
             )
     except Exception as e:
         logger.error(f"{rid}SSO 登录落库失败: {e}", exc_info=True)

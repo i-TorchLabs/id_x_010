@@ -12,7 +12,15 @@ FROM docker.io/library/python:3.10-slim AS builder
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
+    PIP_TRUSTED_HOST=mirrors.aliyun.com
+
+# 切换为阿里云 Debian 镜像源（基础镜像为 bookworm；写入 sources.list 供后续
+# 多阶段构建的运行阶段也能复用同一基础设施加速）。
+RUN sed -i 's|http://deb.debian.org|http://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null \
+    || sed -i 's|http://deb.debian.org|http://mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null \
+    || true
 
 # 编译型依赖（psycopg2 等）所需工具链仅存在于本阶段，不进入最终镜像：
 #   build-essential  编译 C 扩展
@@ -32,6 +40,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 # 先装依赖（利用 layer cache：requirements 变化才重装）。
 # 插件 requirements.txt 覆盖引擎层依赖（granian / litestar / advanced_alchemy 等）。
+# PIP_INDEX_URL 已在 ENV 中指向阿里云 PyPI 镜像。
 COPY x_models/id_x_010/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
@@ -52,7 +61,11 @@ WORKDIR /app/i-Core
 #   curl             容器健康检查
 #   libgl1           matplotlib 运行时
 #   libglib2.0-0     matplotlib 字体渲染
-RUN apt-get update \
+# 阿里云 Debian 镜像源（与 builder 阶段保持一致）。
+RUN sed -i 's|http://deb.debian.org|http://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null \
+    || sed -i 's|http://deb.debian.org|http://mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null \
+    || true \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
         libpq5 \
         curl \

@@ -1,35 +1,35 @@
 "use client";
 
+import { Button } from "@heroui/react";
 import { useTheme } from "@/context/ThemeContext";
-import type { HTMLAttributes } from "react";
 
-interface ThemeToggleProps extends HTMLAttributes<HTMLButtonElement> {}
+interface ThemeToggleProps {
+    className?: string;
+}
 
-export function ThemeToggle({ className = "", ...props }: ThemeToggleProps) {
+/**
+ * 明暗模式切换按钮
+ *
+ * 使用与 header 中"清空对话"按钮完全相同的 HeroUI Button API
+ * (`isIconOnly` + `variant="ghost"` + `size="sm"` + `w-5 h-5` 图标)，
+ * 保证两者在并排展示时像素级一致。
+ */
+export function ThemeToggle({ className = "" }: ThemeToggleProps) {
     const { theme, toggleTheme } = useTheme();
     const isDark = theme === "dark";
 
     return (
-        <button
-            onClick={toggleTheme}
-            className={`p-3 rounded-full transition-colors duration-200 ${className}`}
-            style={{
-                color: "var(--fg)",
-            }}
-            onMouseEnter={(e) => {
-                e.currentTarget.style.background = isDark
-                    ? "rgba(255,255,255,0.08)"
-                    : "rgba(0,0,0,0.05)";
-            }}
-            onMouseLeave={(e) => {
-                e.currentTarget.style.background = "transparent";
-            }}
+        <Button
+            isIconOnly
+            variant="ghost"
+            size="sm"
+            onPress={toggleTheme}
             aria-label={`Switch to ${isDark ? "light" : "dark"} mode`}
-            {...props}
+            className={className}
         >
             {isDark ? (
                 <svg
-                    className="w-8 h-8"
+                    className="w-5 h-5"
                     fill="none"
                     stroke="currentColor"
                     strokeWidth={1.5}
@@ -43,7 +43,7 @@ export function ThemeToggle({ className = "", ...props }: ThemeToggleProps) {
                 </svg>
             ) : (
                 <svg
-                    className="w-8 h-8"
+                    className="w-5 h-5"
                     fill="none"
                     stroke="currentColor"
                     strokeWidth={1.5}
@@ -55,6 +55,6 @@ export function ThemeToggle({ className = "", ...props }: ThemeToggleProps) {
                     <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
                 </svg>
             )}
-        </button>
+        </Button>
     );
 }

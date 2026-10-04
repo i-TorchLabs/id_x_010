@@ -105,7 +105,29 @@ class UserInfoType:
     id: int = strawberry.field(description="用户ID")
     email: str = strawberry.field(description="邮箱")
     phone: Optional[str] = strawberry.field(default=None, description="电话号码")
+    display_name: Optional[str] = strawberry.field(
+        default=None, description="显示名称（用户可自定义，空则回退到 email 本地名）"
+    )
+    avatar_url: Optional[str] = strawberry.field(
+        default=None, description="头像 URL（已设置头像时为 /b/id_x_010/avatar/<user_id>?v=<ts>）"
+    )
     created_at: Optional[str] = strawberry.field(default=None, description="创建时间")
+
+
+@strawberry.input
+class UpdateProfileInput:
+    display_name: Optional[str] = strawberry.field(
+        default=None, description="新的显示名称；传空串清空，回退到 email 本地名"
+    )
+
+
+@strawberry.type
+class UpdateProfileResponseType:
+    success: bool = strawberry.field(description="是否成功")
+    message: str = strawberry.field(description="消息")
+    user: Optional[UserInfoType] = strawberry.field(
+        default=None, description="更新后的用户信息"
+    )
 
 
 @strawberry.type
@@ -197,3 +219,83 @@ class ChatInput:
     db_name: Optional[str] = strawberry.field(
         default=None, description="数据库名称，用于 SQL Agent 指定查询的数据库"
     )
+
+
+# ---------------------------------------------------------------------------
+# Markdown 提示词库
+# ---------------------------------------------------------------------------
+
+
+@strawberry.type
+class MarkdownPromptType:
+    id: int = strawberry.field(description="提示词记录ID")
+    filename: str = strawberry.field(description="原始文件名")
+    note_name: Optional[str] = strawberry.field(
+        default=None, description="备注名称，空则展示回退到 filename"
+    )
+    content: str = strawberry.field(description="Markdown 文本内容")
+    is_active: bool = strawberry.field(description="是否为当前选中的提示词")
+    char_count: int = strawberry.field(description="字符数")
+    created_at: Optional[str] = strawberry.field(default=None, description="创建时间")
+    updated_at: Optional[str] = strawberry.field(default=None, description="更新时间")
+
+
+@strawberry.type
+class MarkdownPromptListResponseType:
+    success: bool = strawberry.field(description="是否成功")
+    message: str = strawberry.field(description="消息")
+    prompts: List[MarkdownPromptType] = strawberry.field(
+        default_factory=list, description="提示词列表"
+    )
+
+
+@strawberry.type
+class MarkdownPromptResponseType:
+    success: bool = strawberry.field(description="是否成功")
+    message: str = strawberry.field(description="消息")
+    prompt: Optional[MarkdownPromptType] = strawberry.field(
+        default=None, description="提示词记录（上传成功或当前选中时返回）"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 用量统计（流量统计面板）
+# ---------------------------------------------------------------------------
+
+
+@strawberry.type
+class UsageDailyType:
+    """单日聚合记录。"""
+
+    date: str = strawberry.field(description="日期（UTC, YYYY-MM-DD）")
+    request_count: int = strawberry.field(description="请求次数")
+    input_tokens: int = strawberry.field(description="输入 token 合计")
+    output_tokens: int = strawberry.field(description="输出 token 合计")
+    total_tokens: int = strawberry.field(description="总 token 合计")
+    cost_usd: float = strawberry.field(description="花费合计（USD）")
+
+
+@strawberry.type
+class UsageModelBreakdownType:
+    """按模型维度的聚合记录。"""
+
+    model_name: str = strawberry.field(description="模型名称")
+    request_count: int = strawberry.field(description="请求次数")
+    total_tokens: int = strawberry.field(description="总 token 合计")
+    cost_usd: float = strawberry.field(description="花费合计（USD）")
+
+
+@strawberry.type
+class UsageStatsResponseType:
+    success: bool = strawberry.field(description="是否成功")
+    message: str = strawberry.field(description="消息")
+    days: int = strawberry.field(description="统计天数")
+    daily: List[UsageDailyType] = strawberry.field(
+        default_factory=list, description="按日聚合明细"
+    )
+    by_model: List[UsageModelBreakdownType] = strawberry.field(
+        default_factory=list, description="按模型聚合明细"
+    )
+    total_requests: int = strawberry.field(description="请求总次数")
+    total_tokens: int = strawberry.field(description="总 token 合计")
+    total_cost_usd: float = strawberry.field(description="花费总计（USD）")

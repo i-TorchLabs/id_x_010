@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { useTheme } from "@/context/ThemeContext";
 import { motion } from "framer-motion";
 import { Button, ListBox, Select } from "@heroui/react";
-import { modelGraphqlApi, ModelInfo } from "@/api/graphql";
+import { modelGraphqlApi, ModelInfo, MarkdownPromptItem } from "@/api/graphql";
 import { AgentSelector, AgentType } from "./AgentSelector";
 import { DatabaseSelector } from "./DatabaseSelector";
 
@@ -146,6 +146,8 @@ interface MessageInputProps {
   onAgentChange?: (agent: AgentType) => void;
   models?: ModelInfo[];
   isLoadingModels?: boolean;
+  /** 当前生效的提示词（由后端每轮对话自动注入）；仅作展示徽标用 */
+  activePrompt?: MarkdownPromptItem | null;
 }
 
 export function MessageInput({
@@ -160,6 +162,7 @@ export function MessageInput({
   onAgentChange,
   models: controlledModels,
   isLoadingModels: controlledIsLoadingModels,
+  activePrompt,
 }: MessageInputProps) {
   const [input, setInput] = useState("");
   const [internalModels, setInternalModels] = useState<ModelInfo[]>([]);
@@ -282,26 +285,34 @@ export function MessageInput({
     />
   );
 
-  const renderAttachmentButton = (isSmall: boolean) => (
-    <Button
-      isIconOnly
-      variant="ghost"
-      size={isSmall ? "sm" : "md"}
-      aria-label="添加附件"
-    >
-      <svg
-        className={isSmall ? "w-4 h-4" : "w-5 h-5"}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        viewBox="0 0 24 24"
+  // 当前生效的提示词徽标（仅展示；选中态由侧边栏「提示词库」分区管理）
+  const renderActivePromptBadge = () =>
+    activePrompt ? (
+      <div
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium"
+        style={{
+          background: isDark
+            ? "rgba(255,255,255,0.06)"
+            : "rgba(0,0,0,0.04)",
+          color: isDark ? "rgba(255,255,255,0.85)" : "rgba(0,0,0,0.8)",
+        }}
       >
-        <path d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-      </svg>
-    </Button>
-  );
+        <svg
+          className="w-3 h-3 shrink-0"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          viewBox="0 0 24 24"
+        >
+          <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+          <path d="M14 2v6h6" />
+        </svg>
+        <span className="truncate max-w-[200px]">
+          {activePrompt.noteName ?? activePrompt.filename}
+        </span>
+        <span className="opacity-60 shrink-0">· 已注入</span>
+      </div>
+    ) : null;
 
   const renderSendButton = (isSmall: boolean) => (
     <Button
@@ -345,6 +356,7 @@ export function MessageInput({
               className="flex flex-col justify-between h-full p-4"
               style={{ minHeight: "210px" }}
             >
+              {renderActivePromptBadge()}
               <div className="flex-1 min-h-0 relative">
                 <textarea
                   ref={textareaRef}
@@ -367,10 +379,6 @@ export function MessageInput({
                     margin: "8px",
                   }}
                 />
-
-                <div className="absolute left-3 bottom-3 flex items-center">
-                  {renderAttachmentButton(false)}
-                </div>
 
                 <div className="absolute right-3 bottom-3 flex items-center gap-3">
                   {selectedAgent !== "general" && (
@@ -413,8 +421,8 @@ export function MessageInput({
           : "0.5px solid rgba(0,0,0,0.06)",
       }}
     >
-      <div className="py-3 pb-4 px-6.75">
-        <div className="w-full max-w-270 mx-auto">
+      <div className="py-3 pb-4 px-4">
+        <div className="w-full">
           <div className="flex items-end gap-3">
             <div
               className="flex-1 relative transition-all duration-200"
@@ -449,10 +457,6 @@ export function MessageInput({
                 }}
               />
 
-              <div className="absolute left-3 bottom-3 flex items-center gap-2">
-                {renderAttachmentButton(true)}
-              </div>
-
               <div className="absolute right-3 bottom-3 flex items-center gap-2">
                 {selectedAgent !== "general" && (
                   <DatabaseSelector
@@ -476,7 +480,8 @@ export function MessageInput({
             </div>
           </div>
 
-          <div className="flex items-center justify-center mt-2 px-1">
+          <div className="flex items-center justify-center gap-2 mt-2 px-1 flex-wrap">
+            {renderActivePromptBadge()}
             <p
               className="font-text"
               style={{

@@ -11,10 +11,16 @@ CREATE TABLE IF NOT EXISTS users (
     email VARCHAR(128) NOT NULL UNIQUE,
     phone VARCHAR(20),
     password_hash VARCHAR(256) NOT NULL,
+    display_name VARCHAR(64),
+    avatar BYTEA,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 兼容已有库：仅当列缺失时追加（幂等）
+ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name VARCHAR(64);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar BYTEA;
 
 -- 用户表索引
 CREATE INDEX IF NOT EXISTS ix_users_email ON users(email);
@@ -26,6 +32,8 @@ COMMENT ON COLUMN users.id IS '用户ID';
 COMMENT ON COLUMN users.email IS '邮箱';
 COMMENT ON COLUMN users.phone IS '电话号码';
 COMMENT ON COLUMN users.password_hash IS '密码哈希';
+COMMENT ON COLUMN users.display_name IS '显示名称（可由用户自定义，空则回退到 email 本地名）';
+COMMENT ON COLUMN users.avatar IS '头像图片二进制（BYTEA），通过 /avatar/<user_id> 端点按需输出';
 COMMENT ON COLUMN users.is_active IS '是否激活';
 COMMENT ON COLUMN users.created_at IS '创建时间';
 COMMENT ON COLUMN users.updated_at IS '更新时间';
@@ -264,6 +272,41 @@ COMMENT ON COLUMN local_provider.vl_base_url IS '视觉模型访问地址';
 -- 示例（按需修改后执行）：
 -- INSERT INTO local_provider (api_key, llm_base_url, embd_base_url, vl_base_url)
 -- VALUES ('ollama', 'http://localhost:11434/v1', 'http://localhost:11434/v1', 'http://localhost:11434/v1');
+
+-- ============================================
+-- 11. 用量日志表 (usage_logs)
+--     每轮流式对话结束后写入一行，记录 token 消耗与估算花费，
+--     供前端“流量统计”面板按日聚合展示
+-- ============================================
+CREATE TABLE IF NOT EXISTS usage_logs (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id),
+    conversation_id VARCHAR(64),
+    model_name VARCHAR(128),
+    model_type VARCHAR(32),
+    intent VARCHAR(64),
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ix_usage_logs_user_id ON usage_logs(user_id);
+CREATE INDEX IF NOT EXISTS ix_usage_logs_created_at ON usage_logs(created_at);
+CREATE INDEX IF NOT EXISTS ix_usage_logs_user_created ON usage_logs(user_id, created_at);
+
+COMMENT ON TABLE usage_logs IS '用量日志表（token 消耗与花费）';
+COMMENT ON COLUMN usage_logs.user_id IS '用户ID（未登录时为 NULL）';
+COMMENT ON COLUMN usage_logs.conversation_id IS '会话 ID';
+COMMENT ON COLUMN usage_logs.model_name IS '调用的模型名称';
+COMMENT ON COLUMN usage_logs.model_type IS '模型类型: local 或 external';
+COMMENT ON COLUMN usage_logs.intent IS '识别的意图（general/sql/code）';
+COMMENT ON COLUMN usage_logs.input_tokens IS '输入 token 数';
+COMMENT ON COLUMN usage_logs.output_tokens IS '输出 token 数';
+COMMENT ON COLUMN usage_logs.total_tokens IS '总 token 数';
+COMMENT ON COLUMN usage_logs.cost_usd IS '估算花费（USD），本地模型为 0';
+COMMENT ON COLUMN usage_logs.created_at IS '创建时间';
 
 -- ============================================
 -- 触发器：自动更新 users 表的 updated_at 字段

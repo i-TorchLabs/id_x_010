@@ -1,14 +1,15 @@
 import hashlib
+import imghdr
 import json
 import os
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator, List, Optional
 
 import strawberry
-from litestar import MediaType, Request, Response, Router, post
+from litestar import MediaType, Request, Response, Router, get, post
 from litestar.response import Stream
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from utils.log_util import get_request_id, logger, request_id_var
 from x_models.id_x_010.src.agents.x_langgraph_supervisor import (
@@ -20,7 +21,9 @@ from x_models.id_x_010.src.models.x_models import (
     ExternalModel,
     LocalModel,
     PasswordResetToken,
+    UsageLog,
     User,
+    UserMarkdownPrompt,
     UserModelSettings,
     UserToken,
     get_session,
@@ -35,6 +38,9 @@ from x_models.id_x_010.src.schemas.x_schemas import (
     ForgotPasswordResponseType,
     HealthType,
     LoginInput,
+    MarkdownPromptListResponseType,
+    MarkdownPromptResponseType,
+    MarkdownPromptType,
     ModelListResponseType,
     ModelSettingsInput,
     ModelSettingsResponseType,
@@ -43,16 +49,33 @@ from x_models.id_x_010.src.schemas.x_schemas import (
     OauthInput,
     RegisterInput,
     StreamChunkType,
+    UsageDailyType,
+    UsageModelBreakdownType,
+    UsageStatsResponseType,
     UserInfoType,
+    UpdateProfileInput,
+    UpdateProfileResponseType,
 )
 from x_models.id_x_010.src.views.x_views import (
+    build_user_info,
+    create_user_markdown_prompt,
+    delete_markdown_prompt,
+    get_active_markdown_prompt,
     get_conversation_history,
+    get_user_avatar,
     get_user_model_settings,
     list_agent_db_settings,
+    list_user_markdown_prompts,
     load_llm_provider_config,
     merge_context,
+    rename_markdown_prompt,
     save_conversation_log,
+    save_usage_log,
+    select_markdown_prompt,
+    set_user_avatar,
     test_model_connectivity,
+    update_markdown_content,
+    update_user_profile,
     upsert_user_model_settings,
     view_sso_login,
 )
@@ -244,6 +267,178 @@ class Query:
                 success=False, message=f"获取模型设置失败: {str(e)}", settings=None
             )
 
+    @strawberry.field(description="列出当前用户的全部 Markdown 提示词")
+    async def list_markdown_prompts(
+        self, info: strawberry.Info
+    ) -> MarkdownPromptListResponseType:
+        try:
+            request = _get_info_request(info)
+            user = await _get_bearer_user(request)
+            if user is None:
+                return MarkdownPromptListResponseType(
+                    success=False, message="未登录或登录已过期", prompts=[]
+                )
+
+            prompts = await list_user_markdown_prompts(user.id)
+            return MarkdownPromptListResponseType(
+                success=True,
+                message=f"成功获取 {len(prompts)} 条提示词",
+                prompts=[_prompt_type(p) for p in prompts],
+            )
+        except Exception as e:
+            logger.error(f"{get_request_id()}列出提示词失败: {e}", exc_info=True)
+            return MarkdownPromptListResponseType(
+                success=False, message=f"列出提示词失败: {str(e)}", prompts=[]
+            )
+
+    @strawberry.field(description="获取当前用户选中的提示词（每轮对话自动注入）")
+    async def get_active_markdown_prompt(
+        self, info: strawberry.Info
+    ) -> MarkdownPromptResponseType:
+        try:
+            request = _get_info_request(info)
+            user = await _get_bearer_user(request)
+            if user is None:
+                return MarkdownPromptResponseType(
+                    success=False, message="未登录或登录已过期", prompt=None
+                )
+
+            prompt = await get_active_markdown_prompt(user.id)
+            if prompt is None:
+                return MarkdownPromptResponseType(
+                    success=True, message="未选中任何提示词", prompt=None
+                )
+            return MarkdownPromptResponseType(
+                success=True, message="获取成功", prompt=_prompt_type(prompt)
+            )
+        except Exception as e:
+            logger.error(f"{get_request_id()}获取活跃提示词失败: {e}", exc_info=True)
+            return MarkdownPromptResponseType(
+                success=False, message=f"获取活跃提示词失败: {str(e)}", prompt=None
+            )
+
+    @strawberry.field(description="获取当前用户的用量统计（按日聚合，用于流量统计面板）")
+    async def usage_stats(
+        self, info: strawberry.Info, days: int = 30
+    ) -> UsageStatsResponseType:
+        try:
+            request = _get_info_request(info)
+            user = await _get_bearer_user(request)
+            if user is None:
+                return UsageStatsResponseType(
+                    success=False,
+                    message="未登录或登录已过期",
+                    days=days,
+                    daily=[],
+                    by_model=[],
+                    total_requests=0,
+                    total_tokens=0,
+                    total_cost_usd=0.0,
+                )
+
+            days = max(1, min(days, 365))
+            start = datetime.now(timezone.utc) - timedelta(days=days)
+
+            async with get_session()() as session:
+                # —— 按日聚合（func.date 将 timestamptz 截断为 UTC 日期文本）——
+                date_col = func.date(UsageLog.created_at).label("d")
+                in_col = func.coalesce(func.sum(UsageLog.input_tokens), 0).label(
+                    "in_tok"
+                )
+                out_col = func.coalesce(func.sum(UsageLog.output_tokens), 0).label(
+                    "out_tok"
+                )
+                tot_col = func.coalesce(func.sum(UsageLog.total_tokens), 0).label(
+                    "tot_tok"
+                )
+                cost_col = func.coalesce(func.sum(UsageLog.cost_usd), 0.0).label(
+                    "cost"
+                )
+                daily_stmt = (
+                    select(date_col, func.count().label("cnt"), in_col, out_col, tot_col, cost_col)
+                    .where(
+                        UsageLog.user_id == user.id,
+                        UsageLog.created_at >= start,
+                    )
+                    .group_by(date_col)
+                    .order_by(date_col)
+                )
+                daily_rows = (await session.execute(daily_stmt)).all()
+
+                daily: List[UsageDailyType] = []
+                for row in daily_rows:
+                    daily.append(
+                        UsageDailyType(
+                            date=str(row.d),
+                            request_count=int(row.cnt),
+                            input_tokens=int(row.in_tok),
+                            output_tokens=int(row.out_tok),
+                            total_tokens=int(row.tot_tok),
+                            cost_usd=float(row.cost),
+                        )
+                    )
+
+                # —— 按模型聚合 ——
+                model_cost_col = func.coalesce(
+                    func.sum(UsageLog.cost_usd), 0.0
+                ).label("cost")
+                model_tot_col = func.coalesce(
+                    func.sum(UsageLog.total_tokens), 0
+                ).label("tot_tok")
+                model_stmt = (
+                    select(
+                        UsageLog.model_name,
+                        func.count().label("cnt"),
+                        model_tot_col,
+                        model_cost_col,
+                    )
+                    .where(
+                        UsageLog.user_id == user.id,
+                        UsageLog.created_at >= start,
+                    )
+                    .group_by(UsageLog.model_name)
+                    .order_by(model_cost_col.desc())
+                )
+                model_rows = (await session.execute(model_stmt)).all()
+
+                by_model: List[UsageModelBreakdownType] = []
+                for row in model_rows:
+                    by_model.append(
+                        UsageModelBreakdownType(
+                            model_name=row.model_name or "未知模型",
+                            request_count=int(row.cnt),
+                            total_tokens=int(row.tot_tok),
+                            cost_usd=float(row.cost),
+                        )
+                    )
+
+                total_requests = sum(d.request_count for d in daily)
+                total_tokens = sum(d.total_tokens for d in daily)
+                total_cost = sum(d.cost_usd for d in daily)
+
+                return UsageStatsResponseType(
+                    success=True,
+                    message=f"近 {days} 天用量统计",
+                    days=days,
+                    daily=daily,
+                    by_model=by_model,
+                    total_requests=total_requests,
+                    total_tokens=total_tokens,
+                    total_cost_usd=round(total_cost, 6),
+                )
+        except Exception as e:
+            logger.error(f"{get_request_id()}获取用量统计失败: {e}", exc_info=True)
+            return UsageStatsResponseType(
+                success=False,
+                message=f"获取用量统计失败: {str(e)}",
+                days=days,
+                daily=[],
+                by_model=[],
+                total_requests=0,
+                total_tokens=0,
+                total_cost_usd=0.0,
+            )
+
 
 async def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
@@ -373,6 +568,18 @@ class Mutation:
                 chat_base_url = None
                 chat_model_name = input.model_name
 
+            # 自动注入用户当前选中的 Markdown 提示词（每轮对话均携带）
+            active_prompt_content: Optional[str] = None
+            user = await _get_bearer_user(request)
+            if user is not None:
+                active_prompt = await get_active_markdown_prompt(user.id)
+                if active_prompt is not None:
+                    active_prompt_content = active_prompt.content
+                    logger.info(
+                        f"{get_request_id()}已注入提示词: filename={active_prompt.filename}, "
+                        f"chars={len(active_prompt.content)}"
+                    )
+
             result = await orchestrator.process(
                 query=input.query,
                 model_type=input.model_type,
@@ -383,6 +590,7 @@ class Mutation:
                 db_name=input.db_name,
                 api_key=chat_api_key,
                 base_url=chat_base_url,
+                prompt_content=active_prompt_content,
             )
 
             try:
@@ -447,14 +655,7 @@ class Mutation:
                     message="登录成功",
                     token=token,
                     expires_at=expires_at.isoformat(),
-                    user=UserInfoType(
-                        id=user.id,
-                        email=user.email,
-                        phone=user.phone,
-                        created_at=user.created_at.isoformat()
-                        if user.created_at
-                        else None,
-                    ),
+                    user=build_user_info(user),
                 )
 
         except Exception as e:
@@ -498,14 +699,7 @@ class Mutation:
                     success=True,
                     message="注册成功，请等待管理员激活账户",
                     token=None,
-                    user=UserInfoType(
-                        id=new_user.id,
-                        email=new_user.email,
-                        phone=new_user.phone,
-                        created_at=new_user.created_at.isoformat()
-                        if new_user.created_at
-                        else None,
-                    ),
+                    user=build_user_info(new_user),
                 )
 
         except Exception as e:
@@ -713,6 +907,147 @@ class Mutation:
             logger.error(f"{get_request_id()}登出失败: {e}", exc_info=True)
             return AuthResponseType(success=False, message=f"登出失败: {str(e)}")
 
+    @strawberry.mutation(description="更新当前用户资料（显示名称；头像走 /upload-avatar 端点）")
+    async def update_profile(
+        self, info: strawberry.Info, input: UpdateProfileInput
+    ) -> UpdateProfileResponseType:
+        try:
+            request = _get_info_request(info)
+            user = await _get_bearer_user(request)
+            if user is None:
+                return UpdateProfileResponseType(
+                    success=False, message="未登录或登录已过期", user=None
+                )
+
+            updated = await update_user_profile(
+                user_id=user.id, display_name=input.display_name
+            )
+            if updated is None:
+                return UpdateProfileResponseType(
+                    success=False, message="用户不存在或更新失败", user=None
+                )
+
+            return UpdateProfileResponseType(
+                success=True,
+                message="资料已更新",
+                user=build_user_info(updated),
+            )
+        except Exception as e:
+            logger.error(f"{get_request_id()}更新资料失败: {e}", exc_info=True)
+            return UpdateProfileResponseType(
+                success=False, message=f"更新资料失败: {str(e)}", user=None
+            )
+
+    @strawberry.mutation(description="选中一个 Markdown 提示词作为当前提示词")
+    async def select_markdown_prompt(
+        self, info: strawberry.Info, prompt_id: int
+    ) -> MarkdownPromptResponseType:
+        try:
+            request = _get_info_request(info)
+            user = await _get_bearer_user(request)
+            if user is None:
+                return MarkdownPromptResponseType(
+                    success=False, message="未登录或登录已过期", prompt=None
+                )
+
+            prompt = await select_markdown_prompt(user.id, prompt_id)
+            if prompt is None:
+                return MarkdownPromptResponseType(
+                    success=False, message="提示词不存在或无权操作", prompt=None
+                )
+            return MarkdownPromptResponseType(
+                success=True, message="已设为当前提示词", prompt=_prompt_type(prompt)
+            )
+        except Exception as e:
+            logger.error(f"{get_request_id()}选中提示词失败: {e}", exc_info=True)
+            return MarkdownPromptResponseType(
+                success=False, message=f"选中提示词失败: {str(e)}", prompt=None
+            )
+
+    @strawberry.mutation(description="删除一个 Markdown 提示词")
+    async def delete_markdown_prompt(
+        self, info: strawberry.Info, prompt_id: int
+    ) -> MarkdownPromptResponseType:
+        try:
+            request = _get_info_request(info)
+            user = await _get_bearer_user(request)
+            if user is None:
+                return MarkdownPromptResponseType(
+                    success=False, message="未登录或登录已过期", prompt=None
+                )
+
+            deleted = await delete_markdown_prompt(user.id, prompt_id)
+            if not deleted:
+                return MarkdownPromptResponseType(
+                    success=False, message="提示词不存在或无权操作", prompt=None
+                )
+            return MarkdownPromptResponseType(
+                success=True, message="提示词已删除", prompt=None
+            )
+        except Exception as e:
+            logger.error(f"{get_request_id()}删除提示词失败: {e}", exc_info=True)
+            return MarkdownPromptResponseType(
+                success=False, message=f"删除提示词失败: {str(e)}", prompt=None
+            )
+
+    @strawberry.mutation(description="更新提示词的备注名称")
+    async def rename_markdown_prompt(
+        self, info: strawberry.Info, prompt_id: int, note_name: Optional[str]
+    ) -> MarkdownPromptResponseType:
+        try:
+            request = _get_info_request(info)
+            user = await _get_bearer_user(request)
+            if user is None:
+                return MarkdownPromptResponseType(
+                    success=False, message="未登录或登录已过期", prompt=None
+                )
+
+            renamed = await rename_markdown_prompt(user.id, prompt_id, note_name)
+            if renamed is None:
+                return MarkdownPromptResponseType(
+                    success=False, message="提示词不存在或无权操作", prompt=None
+                )
+            return MarkdownPromptResponseType(
+                success=True,
+                message="备注名称已更新",
+                prompt=_prompt_type(renamed),
+            )
+        except Exception as e:
+            logger.error(f"{get_request_id()}重命名提示词失败: {e}", exc_info=True)
+            return MarkdownPromptResponseType(
+                success=False, message=f"重命名提示词失败: {str(e)}", prompt=None
+            )
+
+    @strawberry.mutation(description="更新提示词的 Markdown 正文内容")
+    async def update_markdown_content(
+        self, info: strawberry.Info, prompt_id: int, content: str
+    ) -> MarkdownPromptResponseType:
+        try:
+            request = _get_info_request(info)
+            user = await _get_bearer_user(request)
+            if user is None:
+                return MarkdownPromptResponseType(
+                    success=False, message="未登录或登录已过期", prompt=None
+                )
+
+            updated = await update_markdown_content(user.id, prompt_id, content)
+            if updated is None:
+                return MarkdownPromptResponseType(
+                    success=False,
+                    message="提示词不存在、无权操作或内容为空",
+                    prompt=None,
+                )
+            return MarkdownPromptResponseType(
+                success=True,
+                message="内容已更新",
+                prompt=_prompt_type(updated),
+            )
+        except Exception as e:
+            logger.error(f"{get_request_id()}更新提示词内容失败: {e}", exc_info=True)
+            return MarkdownPromptResponseType(
+                success=False, message=f"更新提示词内容失败: {str(e)}", prompt=None
+            )
+
 
 @strawberry.type
 class Subscription:
@@ -786,10 +1121,23 @@ class Subscription:
                 override_base_url = None
                 orchestrator = get_orchestrator()
 
+            # 自动注入用户当前选中的 Markdown 提示词（每轮对话均携带）
+            active_prompt_content: Optional[str] = None
+            user = await _get_bearer_user(request)
+            if user is not None:
+                active_prompt = await get_active_markdown_prompt(user.id)
+                if active_prompt is not None:
+                    active_prompt_content = active_prompt.content
+                    logger.info(
+                        f"{get_request_id()}已注入提示词: filename={active_prompt.filename}, "
+                        f"chars={len(active_prompt.content)}"
+                    )
+
             full_response = []
             thinking_buffer = []
             model_used = ""
             intent = ""
+            captured_usage: Optional[dict] = None
 
             async for chunk in orchestrator.stream_process(
                 query=query,
@@ -801,6 +1149,7 @@ class Subscription:
                 db_name=db_name,
                 api_key=override_api_key,
                 base_url=override_base_url,
+                prompt_content=active_prompt_content,
             ):
                 chunk_type = StreamChunkType(
                     type=chunk.get("type", ""),
@@ -818,6 +1167,10 @@ class Subscription:
                     full_response.append(chunk_type.content or "")
                     model_used = chunk_type.model_used or ""
 
+                # 捕获 LLM 末块返回的 token 用量（best-effort，可能为 None）
+                if chunk.get("usage"):
+                    captured_usage = chunk["usage"]
+
                 yield chunk_type
 
             try:
@@ -832,6 +1185,19 @@ class Subscription:
                 )
             except Exception as e:
                 logger.error(f"{get_request_id()}保存对话日志失败: {e}", exc_info=True)
+
+            # 落库用量统计（token 消耗 + 估算花费），best-effort，不影响主链路
+            try:
+                await save_usage_log(
+                    user_id=user.id if user is not None else None,
+                    conversation_id=conversation_id or "",
+                    model_type=model_type,
+                    model_name=model_used or model_name or "",
+                    intent=intent or "",
+                    usage=captured_usage,
+                )
+            except Exception as e:
+                logger.error(f"{get_request_id()}保存用量日志失败: {e}", exc_info=True)
 
         except Exception as e:
             logger.error(f"{get_request_id()}流式聊天接口错误: {e}", exc_info=True)
@@ -856,6 +1222,385 @@ async def _generate_cancel_response():
         }
     )
     yield f"data: {data}\n\n"
+
+
+# ---------------------------------------------------------------------------
+# Markdown 文件上传
+# ---------------------------------------------------------------------------
+
+_MARKDOWN_EXTENSIONS: tuple[str, ...] = (".md", ".markdown", ".mdown", ".mkd")
+_MARKDOWN_CONTENT_TYPES: tuple[str, ...] = (
+    "text/markdown",
+    "text/x-markdown",
+    # 许多系统对 .md 默认返回 text/plain，予以放行后由内容嗅探兜底校验
+    "text/plain",
+    "application/octet-stream",
+)
+_MARKDOWN_MAX_BYTES: int = 2 * 1024 * 1024  # 2MB
+_MARKDOWN_SNIFF_HINTS: tuple[str, ...] = (
+    "#", "##", "###", "- ", "* ", "> ", "```", "---", "| ", "[", "](", "1. ",
+)
+
+
+def _validate_markdown_file(
+    filename: Optional[str],
+    content_type: Optional[str],
+    raw: bytes,
+) -> tuple[bool, str, str]:
+    """服务端 Markdown 校验：扩展名 → Content-Type → 大小 → UTF-8 解码 → 内容嗅探。
+
+    返回 (是否通过, 文本内容, 错误信息)。文本内容仅在通过时有效。
+    """
+    if not filename:
+        return False, "", "未提供文件名"
+
+    name_lower = filename.lower()
+    if not name_lower.endswith(_MARKDOWN_EXTENSIONS):
+        return (
+            False,
+            "",
+            f"仅支持 Markdown 文件（扩展名 .md / .markdown），当前文件：{filename}",
+        )
+
+    if content_type and content_type.lower() not in _MARKDOWN_CONTENT_TYPES:
+        return False, "", f"文件 Content-Type 非 Markdown 文本：{content_type}"
+
+    if not raw:
+        return False, "", "文件内容为空"
+
+    if len(raw) > _MARKDOWN_MAX_BYTES:
+        return (
+            False,
+            "",
+            f"文件过大（>{_MARKDOWN_MAX_BYTES // 1024 // 1024}MB），请精简后再上传",
+        )
+
+    # 优先 UTF-8，兼容 BOM
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            return False, "", "文件非 UTF-8 文本，无法作为 Markdown 解析"
+
+    # 内容嗅探：前 2KB 内须出现 Markdown 结构性标志，避免上传任意文本冒充
+    head = text[:2048]
+    if not any(hint in head for hint in _MARKDOWN_SNIFF_HINTS):
+        return (
+            False,
+            "",
+            "文件内容未检测到 Markdown 结构（标题 / 列表 / 代码块 / 引用 / 链接等）",
+        )
+
+    return True, text, ""
+
+
+def _prompt_type(prompt: UserMarkdownPrompt) -> MarkdownPromptType:
+    """ORM → GraphQL 类型转换。"""
+    return MarkdownPromptType(
+        id=prompt.id,
+        filename=prompt.filename,
+        note_name=prompt.note_name,
+        content=prompt.content,
+        is_active=prompt.is_active,
+        char_count=len(prompt.content) if prompt.content else 0,
+        created_at=prompt.created_at.isoformat() if prompt.created_at else None,
+        updated_at=prompt.updated_at.isoformat() if prompt.updated_at else None,
+    )
+
+
+@post("/upload-markdown", media_type=MediaType.JSON)
+async def upload_markdown_endpoint(request: Request) -> Response:
+    """接收前端上传的 Markdown 文件，校验通过后按用户持久化到提示词库。
+
+    需携带 Authorization: Bearer <token>。同名文件覆盖内容并保持原选中状态；
+    用户首条提示词自动设为活跃。
+    """
+    import json as _json
+
+    # 鉴权：未登录拒绝上传
+    user = await _get_bearer_user(request)
+    if user is None:
+        return Response(
+            content=_json.dumps(
+                {"success": False, "error": "未登录或登录已过期，无法上传"},
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            status_code=401,
+            media_type="application/json",
+        )
+
+    try:
+        form = await request.form()
+    except Exception as e:
+        logger.warning(f"{get_request_id()}Markdown 上传表单解析失败: {e}")
+        return Response(
+            content=_json.dumps(
+                {"success": False, "error": f"表单解析失败: {type(e).__name__}"},
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            status_code=400,
+            media_type="application/json",
+        )
+
+    upload_file = form.get("file") if form else None
+    if upload_file is None:
+        return Response(
+            content=_json.dumps(
+                {"success": False, "error": "未接收到文件，请选择一个 Markdown 文件"},
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            status_code=400,
+            media_type="application/json",
+        )
+
+    filename = getattr(upload_file, "filename", None)
+    content_type = getattr(upload_file, "content_type", None)
+    try:
+        raw = await upload_file.read()
+    except Exception as e:
+        logger.warning(f"{get_request_id()}Markdown 上传读取失败: {e}")
+        return Response(
+            content=_json.dumps(
+                {"success": False, "error": f"文件读取失败: {type(e).__name__}"},
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            status_code=400,
+            media_type="application/json",
+        )
+
+    ok, text, err = _validate_markdown_file(filename, content_type, raw)
+    if not ok:
+        logger.warning(f"{get_request_id()}Markdown 上传校验失败: {err}")
+        return Response(
+            content=_json.dumps(
+                {"success": False, "error": err},
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            status_code=400,
+            media_type="application/json",
+        )
+
+    # 按用户持久化
+    saved = await create_user_markdown_prompt(
+        user_id=user.id, filename=filename, content=text
+    )
+    if saved is None:
+        return Response(
+            content=_json.dumps(
+                {"success": False, "error": "保存到数据库失败，请重试"},
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            status_code=500,
+            media_type="application/json",
+        )
+
+    logger.info(
+        f"{get_request_id()}Markdown 上传成功: user_id={user.id}, filename={filename}, "
+        f"size={len(raw)}B, chars={len(text)}, is_active={saved.is_active}"
+    )
+    return Response(
+        content=_json.dumps(
+            {
+                "success": True,
+                "prompt": saved.to_dict(),
+            },
+            ensure_ascii=False,
+        ).encode("utf-8"),
+        status_code=200,
+        media_type="application/json",
+    )
+
+
+# ============================================
+# 头像上传 / 头像读取
+# ============================================
+
+_AVATAR_ALLOWED_TYPES: tuple[str, ...] = (
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+)
+_AVATAR_MAX_BYTES: int = 8 * 1024 * 1024  # 8MB
+# imghdr 返回的图片类型标识 → Content-Type
+_AVATAR_CONTENT_TYPES: dict[str, str] = {
+    "jpeg": "image/jpeg",
+    "jpg": "image/jpeg",
+    "png": "image/png",
+    "webp": "image/webp",
+    "gif": "image/gif",
+}
+
+
+@post("/upload-avatar", media_type=MediaType.JSON)
+async def upload_avatar_endpoint(request: Request) -> Response:
+    """接收前端上传的头像图片，校验通过后写入 users.avatar 字段。
+
+    需携带 Authorization: Bearer <token>。仅支持 JPEG/PNG/WebP/GIF，≤2MB。
+    成功后返回新的 avatar_url（带版本号防缓存）。
+    """
+    import json as _json
+
+    user = await _get_bearer_user(request)
+    if user is None:
+        return Response(
+            content=_json.dumps(
+                {"success": False, "error": "未登录或登录已过期，无法上传"},
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            status_code=401,
+            media_type="application/json",
+        )
+
+    try:
+        form = await request.form()
+    except Exception as e:
+        logger.warning(f"{get_request_id()}头像上传表单解析失败: {e}")
+        return Response(
+            content=_json.dumps(
+                {"success": False, "error": f"表单解析失败: {type(e).__name__}"},
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            status_code=400,
+            media_type="application/json",
+        )
+
+    upload_file = form.get("file") if form else None
+    if upload_file is None:
+        return Response(
+            content=_json.dumps(
+                {"success": False, "error": "未接收到文件"},
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            status_code=400,
+            media_type="application/json",
+        )
+
+    content_type = getattr(upload_file, "content_type", None)
+    try:
+        raw = await upload_file.read()
+    except Exception as e:
+        logger.warning(f"{get_request_id()}头像上传读取失败: {e}")
+        return Response(
+            content=_json.dumps(
+                {"success": False, "error": f"文件读取失败: {type(e).__name__}"},
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            status_code=400,
+            media_type="application/json",
+        )
+
+    if not raw:
+        return Response(
+            content=_json.dumps(
+                {"success": False, "error": "文件内容为空"},
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            status_code=400,
+            media_type="application/json",
+        )
+    if len(raw) > _AVATAR_MAX_BYTES:
+        return Response(
+            content=_json.dumps(
+                {
+                    "success": False,
+                    "error": "头像过大（>8MB），请压缩后重试",
+                },
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            status_code=400,
+            media_type="application/json",
+        )
+
+    # 双重校验：MIME 头 + 内容嗅探（imghdr 根据文件头识别真实格式）
+    if content_type and content_type.lower() not in _AVATAR_ALLOWED_TYPES:
+        return Response(
+            content=_json.dumps(
+                {
+                    "success": False,
+                    "error": f"仅支持 JPEG/PNG/WebP/GIF，当前类型：{content_type}",
+                },
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            status_code=400,
+            media_type="application/json",
+        )
+    sniffed = imghdr.what(None, h=raw)
+    if sniffed not in _AVATAR_CONTENT_TYPES:
+        return Response(
+            content=_json.dumps(
+                {
+                    "success": False,
+                    "error": "文件内容不是有效图片（嗅探失败），请检查文件是否损坏",
+                },
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            status_code=400,
+            media_type="application/json",
+        )
+
+    updated = await set_user_avatar(user.id, raw)
+    if updated is None:
+        return Response(
+            content=_json.dumps(
+                {"success": False, "error": "保存到数据库失败，请重试"},
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            status_code=500,
+            media_type="application/json",
+        )
+
+    info = build_user_info(updated)
+    logger.info(
+        f"{get_request_id()}头像上传成功: user_id={user.id}, size={len(raw)}B, "
+        f"type={sniffed}"
+    )
+    return Response(
+        content=_json.dumps(
+            {
+                "success": True,
+                "avatarUrl": info.avatar_url,
+                "user": {
+                    "id": info.id,
+                    "email": info.email,
+                    "phone": info.phone,
+                    "displayName": info.display_name,
+                    "avatarUrl": info.avatar_url,
+                    "createdAt": info.created_at,
+                },
+            },
+            ensure_ascii=False,
+        ).encode("utf-8"),
+        status_code=200,
+        media_type="application/json",
+    )
+
+
+@get("/avatar/{user_id:int}", media_type=MediaType.JSON)
+async def serve_avatar_endpoint(user_id: int) -> Response:
+    """按 user_id 输出头像二进制。无头像时返回 404，由前端回退到字母占位。
+
+    响应体为图片字节；Content-Type 由嗅探的真实格式决定。
+    """
+    avatar = await get_user_avatar(user_id)
+    if not avatar:
+        return Response(
+            content=b"",
+            status_code=404,
+            media_type="application/json",
+        )
+    sniffed = imghdr.what(None, h=avatar)
+    media_type = _AVATAR_CONTENT_TYPES.get(sniffed or "", "image/jpeg")
+    return Response(
+        content=avatar,
+        status_code=200,
+        media_type=media_type,
+        headers={
+            "Cache-Control": "no-cache, must-revalidate",
+        },
+    )
 
 
 def register_routers(route_prefix: str) -> Router:
@@ -1040,6 +1785,9 @@ def register_routers(route_prefix: str) -> Router:
             GraphQLController,
             graphql_stream_subscription,
             sql_approval_endpoint,
+            upload_markdown_endpoint,
+            upload_avatar_endpoint,
+            serve_avatar_endpoint,
         ],
     )
 

@@ -4,7 +4,7 @@ import { MessageInput } from "@/components/chat/MessageInput";
 import { useTheme } from "@/context/ThemeContext";
 import { motion } from "framer-motion";
 import { AgentType } from "./AgentSelector";
-import { ModelInfo } from "@/api/graphql";
+import { ModelInfo, MarkdownPromptItem } from "@/api/graphql";
 
 interface CenterHeroProps {
     onSubmit: (
@@ -21,6 +21,7 @@ interface CenterHeroProps {
     onAgentChange?: (agent: AgentType) => void;
     models?: ModelInfo[];
     isLoadingModels?: boolean;
+    activePrompt?: MarkdownPromptItem | null;
 }
 
 export function CenterHero({
@@ -33,6 +34,7 @@ export function CenterHero({
     onAgentChange,
     models,
     isLoadingModels,
+    activePrompt,
 }: CenterHeroProps) {
     const { theme } = useTheme();
     const isDark = theme === "dark";
@@ -183,6 +185,7 @@ export function CenterHero({
                             onAgentChange={onAgentChange}
                             models={models}
                             isLoadingModels={isLoadingModels}
+                            activePrompt={activePrompt}
                         />
                     </motion.div>
 

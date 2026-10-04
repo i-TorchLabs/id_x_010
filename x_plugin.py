@@ -63,3 +63,4 @@ class _Idx010Plugin:
 def load_plugin() -> PluginInterface:
     """返回 id_x_010 插件实例。"""
     return _Idx010Plugin()
+
