@@ -74,7 +74,7 @@ function toPrompt(raw: any): MarkdownPrompt {
 export function prevalidateMarkdownFile(file: File): string | null {
   const name = file.name.toLowerCase();
   if (!ALLOWED_EXTENSIONS.some((ext) => name.endsWith(ext))) {
-    return `仅支持 Markdown 文件（扩展名 .md / .markdown），当前文件：${file.name}`;
+    return `Only Markdown files are supported (.md / .markdown). Selected: ${file.name}`;
   }
 
   // file.type 在某些系统下为空，仅当存在且非允许值时报错
@@ -82,15 +82,15 @@ export function prevalidateMarkdownFile(file: File): string | null {
     file.type &&
     !ALLOWED_MIME_TYPES.includes(file.type.toLowerCase())
   ) {
-    return `文件类型不支持：${file.type}，请上传 Markdown 文件`;
+    return `Unsupported file type: ${file.type}. Please upload a Markdown file.`;
   }
 
   if (file.size === 0) {
-    return "文件内容为空";
+    return "File is empty";
   }
 
   if (file.size > MAX_FILE_SIZE) {
-    return `文件过大（>${MAX_FILE_SIZE / 1024 / 1024}MB），请精简后再上传`;
+    return `File too large (>${MAX_FILE_SIZE / 1024 / 1024}MB). Please reduce the size.`;
   }
 
   return null;
@@ -127,7 +127,7 @@ export async function uploadMarkdown(
 
     if (response.status === 401) {
       handleUnauthorized();
-      return { success: false, error: "未授权访问，请重新登录" };
+      return { success: false, error: "Unauthorized. Please sign in again." };
     }
 
     const data = await response.json().catch(() => ({}));
@@ -135,7 +135,7 @@ export async function uploadMarkdown(
       return {
         success: false,
         error:
-          data?.error || `上传失败（HTTP ${response.status}），请稍后重试`,
+          data?.error || `Upload failed (HTTP ${response.status}). Please try again later.`,
       };
     }
 
@@ -145,11 +145,11 @@ export async function uploadMarkdown(
     };
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
-      return { success: false, error: "上传已取消" };
+      return { success: false, error: "Upload cancelled" };
     }
     return {
       success: false,
-      error: err instanceof Error ? err.message : "上传过程发生未知错误",
+      error: err instanceof Error ? err.message : "An unknown error occurred during upload",
     };
   }
 }
@@ -178,14 +178,14 @@ export interface UploadAvatarResult {
  * 返回错误信息字符串，通过校验返回 null。
  */
 export function prevalidateAvatarFile(file: File): string | null {
-  if (file.size === 0) return "文件内容为空";
+  if (file.size === 0) return "File is empty";
   if (file.size > AVATAR_MAX_SIZE) {
-    return `头像过大（>${AVATAR_MAX_SIZE / 1024 / 1024}MB），请压缩后重试`;
+    return `Avatar too large (>${AVATAR_MAX_SIZE / 1024 / 1024}MB). Please compress it first.`;
   }
   // 注：上限与后端 _AVATAR_MAX_BYTES 保持一致（8MB）；如需调整请同步修改两端
   // file.type 在某些系统下可能为空，仅在非空且不支持时报错；空类型交由后端嗅探兜底
   if (file.type && !AVATAR_ALLOWED_TYPES.includes(file.type.toLowerCase())) {
-    return `仅支持 JPEG/PNG/WebP/GIF，当前类型：${file.type}`;
+    return `Only JPEG/PNG/WebP/GIF are supported. Got: ${file.type}`;
   }
   return null;
 }
@@ -223,7 +223,7 @@ export async function uploadAvatar(
 
     if (response.status === 401) {
       handleUnauthorized();
-      return { success: false, error: "未授权访问，请重新登录" };
+      return { success: false, error: "Unauthorized. Please sign in again." };
     }
 
     const data = await response.json().catch(() => ({}));
@@ -231,7 +231,7 @@ export async function uploadAvatar(
       return {
         success: false,
         error:
-          data?.error || `上传失败（HTTP ${response.status}），请稍后重试`,
+          data?.error || `Upload failed (HTTP ${response.status}). Please try again later.`,
       };
     }
 
@@ -242,11 +242,11 @@ export async function uploadAvatar(
     };
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
-      return { success: false, error: "上传已取消" };
+      return { success: false, error: "Upload cancelled" };
     }
     return {
       success: false,
-      error: err instanceof Error ? err.message : "上传过程发生未知错误",
+      error: err instanceof Error ? err.message : "An unknown error occurred during upload",
     };
   }
 }

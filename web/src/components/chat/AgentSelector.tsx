@@ -25,19 +25,19 @@ export const AGENT_OPTIONS: AgentOption[] = [
     {
         value: "general",
         label: "General Agent",
-        description: "适用于日常对话、知识问答等",
+        description: "For general conversation and Q&A",
         icon: "💬",
     },
     {
         value: "sql",
         label: "SQL Agent",
-        description: "适用于数据库查询和数据分析",
+        description: "For database queries and data analysis",
         icon: "🗄️",
     },
     {
         value: "code",
         label: "Code Agent",
-        description: "适用于代码编写和程序开发",
+        description: "For code generation and development",
         icon: "💻",
         disabled: true, // 标记为开发中，不可选择
         badge: "Under development", // 显示开发中徽章
@@ -82,7 +82,7 @@ export function AgentSelector({
                     >
                         {({ selectedText, isPlaceholder }) => (
                             <span className="block w-full text-center truncate">
-                                {isPlaceholder ? "选择 Agent" : selectedText}
+                                {isPlaceholder ? "Select Agent" : selectedText}
                             </span>
                         )}
                     </Select.Value>

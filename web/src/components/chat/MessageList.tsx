@@ -63,27 +63,34 @@ export function MessageList({
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="text-center py-12"
+            className="text-center py-16"
           >
             <div
-              className="inline-flex items-center justify-center w-16 h-16 mb-4"
+              className="inline-flex items-center justify-center w-14 h-14 mb-5"
               style={{
-                borderRadius: "20px",
-                background: "var(--input-bg)",
+                borderRadius: "18px",
+                background: "var(--surface-1)",
+                border: "0.5px solid var(--divider)",
+                boxShadow: "var(--shadow-sm)",
               }}
             >
-              <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 20 20">
+              <svg
+                className="w-7 h-7"
+                fill="currentColor"
+                viewBox="0 0 20 20"
+                style={{ color: "var(--fg2)" }}
+              >
                 <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
               </svg>
             </div>
             <h3
               className="font-display"
               style={{
-                fontSize: "24px",
+                fontSize: "22px",
                 fontWeight: 600,
-                letterSpacing: "-0.32px",
-                color: "var(--fg)",
-                marginBottom: "8px",
+                letterSpacing: "-0.28px",
+                color: "var(--fg1)",
+                marginBottom: "6px",
               }}
             >
               Welcome to AI Assistant
@@ -91,8 +98,11 @@ export function MessageList({
             <p
               className="font-text"
               style={{
-                fontSize: "14px",
+                fontSize: "13px",
+                lineHeight: 1.5,
                 color: "var(--fg3)",
+                maxWidth: "360px",
+                margin: "0 auto",
               }}
             >
               Start a conversation and I'll help you with anything you need

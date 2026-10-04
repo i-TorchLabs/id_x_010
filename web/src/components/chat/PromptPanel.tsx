@@ -66,7 +66,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
         setError(result.listMarkdownPrompts.message);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "加载提示词列表失败");
+      setError(err instanceof Error ? err.message : "Failed to load prompt list");
     } finally {
       setIsLoading(false);
     }
@@ -112,7 +112,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
     try {
       const result = await uploadMarkdown(file);
       if (!result.success || !result.prompt) {
-        setError(result.error || "上传失败，请重试");
+        setError(result.error || "Upload failed, please try again");
         return;
       }
       await loadPrompts();
@@ -139,7 +139,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
         setError(result.selectMarkdownPrompt.message);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "切换提示词失败");
+      setError(err instanceof Error ? err.message : "Failed to switch prompt");
     }
   };
 
@@ -160,7 +160,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
         setError(result.deleteMarkdownPrompt.message);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "删除提示词失败");
+      setError(err instanceof Error ? err.message : "Failed to delete prompt");
     }
   };
 
@@ -212,10 +212,10 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
         }
         cancelEditing();
       } else {
-        setError(result.renameMarkdownPrompt.message || "保存失败");
+        setError(result.renameMarkdownPrompt.message || "Save failed");
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "保存备注名失败");
+      setError(err instanceof Error ? err.message : "Failed to save note name");
     } finally {
       setIsSaving(false);
     }
@@ -256,7 +256,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
   const saveContentEditing = async () => {
     if (editingPrompt === null) return;
     if (!editContentValue.trim()) {
-      setError("内容不能为空");
+      setError("Content cannot be empty");
       return;
     }
 
@@ -281,10 +281,10 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
         setEditingPrompt(null);
         setEditContentValue("");
       } else {
-        setError(result.updateMarkdownContent.message || "保存失败");
+        setError(result.updateMarkdownContent.message || "Save failed");
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "保存内容失败");
+      setError(err instanceof Error ? err.message : "Failed to save content");
     } finally {
       setIsSavingContent(false);
     }
@@ -302,23 +302,14 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
   return (
     <div className="px-4 shrink-0">
       <div className="flex items-center justify-between mb-2 px-1">
-        <p
-          className="font-text"
-          style={{
-            fontSize: "11px",
-            fontWeight: 600,
-            letterSpacing: "0.08em",
-            textTransform: "uppercase",
-            color: "var(--fg3)",
-          }}
-        >
-          提示词库
+        <p className="label-section">
+          Prompt Library
         </p>
         <Button
           isIconOnly
           variant="ghost"
           size="sm"
-          aria-label="上传 Markdown 提示词"
+          aria-label="Upload Markdown prompt"
           onPress={() => fileInputRef.current?.click()}
           isDisabled={isUploading || isLoading}
           className="icon-btn !h-6 !w-6"
@@ -385,7 +376,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                 type="button"
                 onClick={() => setError(null)}
                 className="shrink-0 opacity-60 hover:opacity-100"
-                aria-label="关闭错误提示"
+                aria-label="Close error"
               >
                 <svg
                   className="w-3 h-3"
@@ -424,7 +415,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
               <path d="M5 13l4 4L19 7" />
             </svg>
             <span className="truncate flex-1">
-              当前生效：{activePrompt.noteName ?? activePrompt.filename}
+              Active: {activePrompt.noteName ?? activePrompt.filename}
             </span>
           </div>
         </div>
@@ -452,7 +443,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
               className="font-text"
               style={{ fontSize: "12px", color: "var(--fg3)" }}
             >
-              加载中...
+              Loading...
             </p>
           </div>
         ) : prompts.length === 0 ? (
@@ -473,13 +464,13 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
               className="font-text"
               style={{ fontSize: "12px", color: "var(--fg3)" }}
             >
-              暂无提示词
+              No prompts
             </p>
             <p
               className="font-text text-center px-2"
               style={{ fontSize: "11px", color: "var(--fg3)", opacity: 0.7 }}
             >
-              点击上方 + 上传 Markdown 文件
+              Click + above to upload a Markdown file
             </p>
           </div>
         ) : (
@@ -506,8 +497,8 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                       className="shrink-0 flex items-center justify-center"
                       aria-label={
                         prompt.isActive
-                          ? "已选中"
-                          : "设为当前提示词"
+                          ? "Selected"
+                          : "Set as active prompt"
                       }
                       style={{ width: "16px", height: "16px" }}
                     >
@@ -567,7 +558,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                           }}
                           disabled={isSaving}
                           className="shrink-0 opacity-70 hover:opacity-100 transition-opacity"
-                          aria-label="保存备注名"
+                          aria-label="Save note name"
                         >
                           <svg
                             className="w-3.5 h-3.5"
@@ -587,7 +578,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                           }}
                           disabled={isSaving}
                           className="shrink-0 opacity-50 hover:opacity-100 transition-opacity"
-                          aria-label="取消编辑"
+                          aria-label="Cancel editing"
                         >
                           <svg
                             className="w-3.5 h-3.5"
@@ -651,7 +642,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                           type="button"
                           onClick={() => handleDownload(prompt)}
                           className="shrink-0 opacity-50 hover:opacity-100 transition-opacity"
-                          aria-label="下载 Markdown 文件"
+                          aria-label="Download Markdown file"
                         >
                           <svg
                             className="w-3.5 h-3.5"
@@ -673,7 +664,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                           type="button"
                           onClick={() => startEditing(prompt)}
                           className="shrink-0 opacity-50 hover:opacity-100 transition-opacity"
-                          aria-label="编辑备注名称"
+                          aria-label="Edit note name"
                         >
                           <svg
                             className="w-3.5 h-3.5"
@@ -695,7 +686,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                           type="button"
                           onClick={() => openContentEditor(prompt)}
                           className="shrink-0 opacity-50 hover:opacity-100 transition-opacity"
-                          aria-label="编辑内容"
+                          aria-label="Edit content"
                         >
                           <svg
                             className="w-3.5 h-3.5"
@@ -716,7 +707,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                           type="button"
                           onClick={() => setPromptToDelete(prompt)}
                           className="shrink-0 opacity-50 hover:opacity-100 transition-opacity"
-                          aria-label="删除提示词"
+                          aria-label="Delete prompt"
                         >
                           <svg
                             className="w-3.5 h-3.5"
@@ -770,9 +761,9 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                             color: "var(--fg3)",
                           }}
                         >
-                          {prompt.charCount} 字符
+                          {prompt.charCount} characters
                           {prompt.updatedAt
-                            ? ` · 更新于 ${new Date(prompt.updatedAt).toLocaleDateString()}`
+                            ? ` · updated ${new Date(prompt.updatedAt).toLocaleDateString()}`
                             : ""}
                         </p>
                       </motion.div>
@@ -799,17 +790,17 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
             />
             <AlertDialog.Header>
               <AlertDialog.Icon status="warning" />
-              <AlertDialog.Heading>确认删除提示词</AlertDialog.Heading>
+              <AlertDialog.Heading>Confirm Delete Prompt</AlertDialog.Heading>
             </AlertDialog.Header>
             <AlertDialog.Body>
               <p>
-                确定要删除提示词
+                Are you sure you want to delete prompt
                 <strong
                   style={{ margin: "0 4px" }}
                 >
                   {promptToDelete?.noteName ?? promptToDelete?.filename}
                 </strong>
-                吗？此操作不可撤销。
+                ? This action cannot be undone.
               </p>
               {promptToDelete?.isActive && (
                 <p
@@ -819,7 +810,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                     color: isDark ? "#ffb84d" : "#a86800",
                   }}
                 >
-                  注意：这是当前生效的提示词，删除后系统将自动续用最近一条。
+                  Note: This is the active prompt. After deletion, the system will automatically use the most recent one.
                 </p>
               )}
             </AlertDialog.Body>
@@ -829,14 +820,14 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                 variant="tertiary"
                 onPress={() => setPromptToDelete(null)}
               >
-                取消
+                Cancel
               </Button>
               <Button
                 slot="close"
                 variant="danger"
                 onPress={confirmDelete}
               >
-                确认删除
+                Delete
               </Button>
             </AlertDialog.Footer>
           </AlertDialog.Dialog>
@@ -855,7 +846,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
             <Modal.CloseTrigger onPress={closeContentEditor} />
             <Modal.Header>
               <Modal.Heading>
-                编辑内容 · {editingPrompt?.noteName ?? editingPrompt?.filename}
+                Edit Content · {editingPrompt?.noteName ?? editingPrompt?.filename}
               </Modal.Heading>
             </Modal.Header>
             <Modal.Body>
@@ -899,12 +890,12 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                 style={{ fontSize: "11px", color: "var(--fg3)" }}
               >
                 <span>
-                  {editContentValue.length} 字符
+                  {editContentValue.length} characters
                   {editContentValue.length > 2 * 1024 * 1024
-                    ? " · 超出 2MB 上限"
+                    ? " · exceeds 2MB limit"
                     : ""}
                 </span>
-                <span>Ctrl+Enter 保存 · Esc 取消</span>
+                <span>Ctrl+Enter to save · Esc to cancel</span>
               </div>
             </Modal.Body>
             <Modal.Footer>
@@ -913,7 +904,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                 onPress={closeContentEditor}
                 isDisabled={isSavingContent}
               >
-                取消
+                Cancel
               </Button>
               <Button
                 variant="primary"
@@ -924,7 +915,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                   editContentValue.length > 2 * 1024 * 1024
                 }
               >
-                {isSavingContent ? "保存中..." : "保存"}
+                {isSavingContent ? "Saving..." : "Save"}
               </Button>
             </Modal.Footer>
           </Modal.Dialog>

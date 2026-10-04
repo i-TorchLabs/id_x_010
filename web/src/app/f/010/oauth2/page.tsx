@@ -40,7 +40,7 @@ export default function OAuthCallbackPage() {
         const resp = result.ssoLogin;
         if (!resp.success || !resp.token || !resp.user) {
           router.replace(
-            `/f/login?error=${encodeURIComponent(resp.message || "SSO 登录失败")}`,
+            `/f/login?error=${encodeURIComponent(resp.message || "SSO sign-in failed")}`,
           );
           return;
         }
@@ -53,7 +53,7 @@ export default function OAuthCallbackPage() {
       .catch((error) => {
         console.error("SSO login failed:", error);
         router.replace(
-          `/f/login?error=${encodeURIComponent(error.message || "SSO 登录失败")}`,
+          `/f/login?error=${encodeURIComponent(error.message || "SSO sign-in failed")}`,
         );
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -61,7 +61,7 @@ export default function OAuthCallbackPage() {
 
   return (
     <div className="flex h-screen items-center justify-center">
-      <p>正在完成 SSO 登录...</p>
+      <p>Completing SSO sign-in...</p>
     </div>
   );
 }

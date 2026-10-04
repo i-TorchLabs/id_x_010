@@ -49,7 +49,7 @@ function SidebarToggle({
     <motion.button
       type="button"
       onClick={onToggle}
-      aria-label={open ? "收起侧边栏" : "展开侧边栏"}
+      aria-label={open ? "Collapse sidebar" : "Expand sidebar"}
       whileTap={{ x: open ? -2 : 2 }}
       className={`absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 z-50 w-6 h-12 rounded-full flex items-center justify-center shadow-md transition-colors ${
         isDark
@@ -123,7 +123,7 @@ export default function ChatHome() {
           } else if (attempt < MAX_RETRIES) {
             const delay = BASE_DELAY * Math.pow(2, attempt);
             console.warn(
-              `加载模型列表失败（第 ${attempt + 1} 次）: ${response.getModels.message}，${delay}ms 后重试`,
+              `Failed to load models (attempt ${attempt + 1}): ${response.getModels.message}; retrying in ${delay}ms`,
             );
             retrying = true;
             setTimeout(() => loadModels(attempt + 1), delay);
@@ -138,14 +138,14 @@ export default function ChatHome() {
         if (attempt < MAX_RETRIES) {
           const delay = BASE_DELAY * Math.pow(2, attempt);
           console.warn(
-            `加载模型列表异常（第 ${attempt + 1} 次），${delay}ms 后重试:`,
+            `Model list load error (attempt ${attempt + 1}); retrying in ${delay}ms:`,
             error,
           );
           retrying = true;
           setTimeout(() => loadModels(attempt + 1), delay);
           return;
         }
-        console.error("加载模型列表最终失败:", error);
+        console.error("Final model list load failure:", error);
       } finally {
         if (!cancelled && !retrying) {
           setIsLoadingModels(false);
@@ -693,9 +693,9 @@ export default function ChatHome() {
               userInfo?.displayName ??
               (userInfo?.email
                 ? userInfo.email.split("@")[0]
-                : "用户")
+                : "User")
             }
-            userEmail={userInfo?.email ?? "已登录"}
+            userEmail={userInfo?.email ?? "Signed in"}
             avatarUrl={userInfo?.avatarUrl ?? null}
             onLogout={() => setShowLogoutConfirm(true)}
             onSettings={() => setShowSettings(true)}
@@ -740,50 +740,71 @@ export default function ChatHome() {
             <motion.header
               initial={{ y: -20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
-              className={`px-4 py-3 backdrop-blur-md ${
-                isDark ? "bg-[#000000]/80" : "bg-[#f5f5f7]/80"
-              }`}
+              className="px-4 py-3 backdrop-blur-md"
               style={{
-                borderBottom: isDark ? "none" : "1px solid rgba(0, 0, 0, 0.08)",
+                background: "var(--nav-bg)",
+                WebkitBackdropFilter: "var(--backdrop)",
+                backdropFilter: "var(--backdrop)",
+                borderBottom: "0.5px solid var(--divider)",
               }}
             >
-              <div className="w-full flex items-center justify-between px-2">
-                {/* Left side - Title */}
-                <div className="flex items-center gap-3">
-                  <div className="pl-1">
+              <div className="w-full flex items-center justify-between px-1">
+                {/* Left side - Title + status dot */}
+                <div className="flex items-center gap-2.5">
+                  <span
+                    className="inline-block rounded-full"
+                    style={{
+                      width: "6px",
+                      height: "6px",
+                      background: isTyping ? "var(--fg3)" : "var(--accent)",
+                      opacity: isTyping ? 0.6 : 1,
+                      transition: "opacity 200ms ease, background 200ms ease",
+                    }}
+                    aria-hidden
+                  />
+                  <div className="flex flex-col">
                     <h2
-                      className={`text-base font-semibold ${isDark ? "text-white" : "text-[#1d1d1f]"}`}
+                      className="font-display leading-tight"
+                      style={{
+                        fontSize: "15px",
+                        fontWeight: 600,
+                        letterSpacing: "-0.01em",
+                        color: "var(--fg1)",
+                      }}
                     >
                       AI Assistant
                     </h2>
                     <p
-                      className={`text-xs ${isDark ? "text-[rgba(255,255,255,0.48)]" : "text-[rgba(0,0,0,0.48)]"}`}
+                      className="font-text leading-tight"
+                      style={{
+                        fontSize: "11px",
+                        color: "var(--fg3)",
+                      }}
                     >
                       {isTyping ? "Typing..." : "Online"}
                     </p>
                   </div>
                 </div>
                 {/* Right side - New Chat, Theme Toggle */}
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1">
                   <Button
                     isIconOnly
                     variant="ghost"
                     size="sm"
                     onPress={handleNewChat}
-                    aria-label="New Chat"
+                    aria-label="Clear conversation"
+                    className="icon-btn"
                   >
                     <svg
-                      className="w-5 h-5"
+                      className="w-[18px] h-[18px]"
                       fill="none"
                       stroke="currentColor"
+                      strokeWidth={1.6}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
                       viewBox="0 0 24 24"
                     >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={1.5}
-                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                      />
+                      <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                     </svg>
                   </Button>
                   <ThemeToggle />
@@ -855,17 +876,17 @@ export default function ChatHome() {
             <AlertDialog.CloseTrigger />
             <AlertDialog.Header>
               <AlertDialog.Icon status="warning" />
-              <AlertDialog.Heading>确认登出</AlertDialog.Heading>
+              <AlertDialog.Heading>Confirm Log Out</AlertDialog.Heading>
             </AlertDialog.Header>
             <AlertDialog.Body>
-              <p>您确定要登出吗？登出后需要重新登录才能继续使用。</p>
+              <p>Are you sure you want to log out? You'll need to sign in again to continue.</p>
             </AlertDialog.Body>
             <AlertDialog.Footer>
               <Button slot="close" variant="tertiary">
-                取消
+                Cancel
               </Button>
               <Button slot="close" variant="danger" onPress={handleLogout}>
-                确认登出
+                Confirm
               </Button>
             </AlertDialog.Footer>
           </AlertDialog.Dialog>

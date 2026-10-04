@@ -25,9 +25,9 @@ import {
 type Metric = "tokens" | "cost";
 
 const RANGE_OPTIONS: { value: number; label: string }[] = [
-  { value: 7, label: "7 天" },
-  { value: 30, label: "30 天" },
-  { value: 90, label: "90 天" },
+  { value: 7, label: "7d" },
+  { value: 30, label: "30d" },
+  { value: 90, label: "90d" },
 ];
 
 interface StatsData {
@@ -121,7 +121,7 @@ function BarChart({
         className="flex items-center justify-center"
         style={{ height: CHART_H, color: labelColor, fontSize: "13px" }}
       >
-        暂无用量数据
+        No usage data
       </div>
     );
   }
@@ -132,7 +132,7 @@ function BarChart({
       className="w-full"
       style={{ height: "auto", display: "block" }}
       role="img"
-      aria-label="每日用量柱状图"
+      aria-label="Daily usage bar chart"
     >
       {/* 网格线 + Y 轴标签 */}
       {gridFractions.map((f) => {
@@ -247,7 +247,7 @@ function BarChart({
                         fill="var(--fg)"
                       >
                         {metric === "tokens"
-                          ? `${formatTokens(d.totalTokens)} · ${d.requestCount} 次`
+                          ? `${formatTokens(d.totalTokens)} · ${d.requestCount}`
                           : `${formatCost(d.costUsd)} · ${formatTokens(
                               d.totalTokens,
                             )}`}
@@ -348,7 +348,7 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
         });
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "加载失败");
+      setError(e instanceof Error ? e.message : "Load failed");
       setData(null);
     } finally {
       setLoading(false);
@@ -372,7 +372,7 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
         <Modal.Dialog className="sm:max-w-[1040px]">
           <Modal.CloseTrigger />
           <Modal.Header>
-            <Modal.Heading>流量统计</Modal.Heading>
+            <Modal.Heading>Usage Statistics</Modal.Heading>
           </Modal.Header>
           <Modal.Body>
             {/* 时间范围 + 指标切换 */}
@@ -418,7 +418,7 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
                         color: selected ? "var(--accent-fg)" : "var(--fg3)",
                       }}
                     >
-                      {m === "tokens" ? "Token 用量" : "花费"}
+                      {m === "tokens" ? "Token Usage" : "Cost"}
                     </button>
                   );
                 })}
@@ -428,7 +428,7 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
             {/* 汇总卡片 */}
             {loading && !data ? (
               <p className="text-sm py-8 text-center" style={{ color: "var(--fg3)" }}>
-                加载中...
+                Loading...
               </p>
             ) : error ? (
               <div
@@ -444,23 +444,23 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
               <>
                 <div className="grid grid-cols-3 gap-2.5">
                   <StatCard
-                    label="请求次数"
+                    label="Requests"
                     value={formatTokens(data.totalRequests)}
-                    sub={`近 ${data.days} 天`}
+                    sub={`Last ${data.days} days`}
                   />
                   <StatCard
-                    label="Token 消耗"
+                    label="Token Usage"
                     value={formatTokens(data.totalTokens)}
                     sub={
                       data.daily.length > 0
-                        ? `日均 ${formatTokens(
+                        ? `Daily avg ${formatTokens(
                             Math.round(data.totalTokens / data.days),
                           )}`
                         : undefined
                     }
                   />
                   <StatCard
-                    label="花费"
+                    label="Cost"
                     value={formatCost(data.totalCostUsd)}
                     sub="USD"
                   />
@@ -484,7 +484,7 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
                       color: "var(--fg3)",
                     }}
                   >
-                    {metric === "tokens" ? "每日 Token 消耗" : "每日花费"}
+                    {metric === "tokens" ? "Daily Token Usage" : "Daily Cost"}
                   </div>
                   <BarChart daily={data.daily} metric={metric} isDark={isDark} />
                 </div>
@@ -501,14 +501,14 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
                       color: "var(--fg3)",
                     }}
                   >
-                    模型调用明细
+                    Model Breakdown
                   </div>
                   {data.byModel.length === 0 ? (
                     <p
                       className="text-xs py-4 text-center"
                       style={{ color: "var(--fg3)" }}
                     >
-                      暂无模型调用记录
+                      No model usage records
                     </p>
                   ) : (
                     <div
@@ -563,7 +563,7 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
                                 {formatTokens(m.totalTokens)} token
                               </div>
                               <div className="mt-0.5">
-                                {m.requestCount} 次 · {formatCost(m.costUsd)}
+                                {m.requestCount} · {formatCost(m.costUsd)}
                               </div>
                             </div>
                           </div>
@@ -577,7 +577,7 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
           </Modal.Body>
           <Modal.Footer>
             <Button slot="close" variant="tertiary">
-              关闭
+              Close
             </Button>
           </Modal.Footer>
         </Modal.Dialog>

@@ -74,7 +74,7 @@ class GraphQLClient {
     }
 
     if (result.data === undefined || result.data === null) {
-      throw new Error("GraphQL 响应中缺少 data 字段");
+      throw new Error("GraphQL response missing data field");
     }
 
     return result.data;

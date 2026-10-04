@@ -8,8 +8,8 @@ import type { MarkdownPromptItem } from "@/api/graphql";
 export type ModelType = "local" | "external";
 
 const MODEL_OPTIONS: { value: ModelType; label: string }[] = [
-    { value: "local", label: "本地模型" },
-    { value: "external", label: "外部模型" },
+    { value: "local", label: "Local Model" },
+    { value: "external", label: "External Model" },
 ];
 
 interface ChatSidebarProps {
@@ -30,7 +30,7 @@ export function ChatSidebar({
     onNewChat,
     modelType,
     onModelChange,
-    userName = "访客用户",
+    userName = "Guest",
     userEmail = "guest@sme-ai.local",
     avatarUrl,
     onLogout,
@@ -59,14 +59,15 @@ export function ChatSidebar({
                     <div
                         className="flex items-center justify-center"
                         style={{
-                            width: "22px",
-                            height: "22px",
-                            borderRadius: "6px",
+                            width: "24px",
+                            height: "24px",
+                            borderRadius: "7px",
                             background: "var(--accent)",
+                            boxShadow: "var(--shadow-sm)",
                         }}
                     >
                         <svg
-                            className="w-3.5 h-3.5"
+                            className="w-4 h-4"
                             fill="none"
                             stroke="var(--accent-fg)"
                             strokeWidth={1.8}
@@ -81,10 +82,10 @@ export function ChatSidebar({
                         <span
                             className="font-display leading-tight"
                             style={{
-                                fontSize: "17px",
+                                fontSize: "16px",
                                 fontWeight: 600,
-                                letterSpacing: "-0.374px",
-                                color: "var(--fg)",
+                                letterSpacing: "-0.32px",
+                                color: "var(--fg1)",
                             }}
                         >
                           Data Agent
@@ -93,13 +94,13 @@ export function ChatSidebar({
                             className="font-text leading-tight"
                             style={{
                                 fontSize: "11px",
-                                fontWeight: 600,
-                                letterSpacing: "0.08em",
+                                fontWeight: 500,
+                                letterSpacing: "0.06em",
                                 textTransform: "uppercase",
                                 color: "var(--fg3)",
                             }}
                         >
-                            智能问数系统
+                            Intelligent Query System
                         </span>
                     </div>
                 </div>
@@ -107,25 +108,29 @@ export function ChatSidebar({
                 <Separator />
 
                 {/* ── New Chat ── */}
-                <div className="px-4 py-4 shrink-0">
+                <div className="px-4 py-3 shrink-0">
                     <Button
                         fullWidth
                         variant="primary"
                         onPress={onNewChat}
                         className="rounded-full font-semibold"
+                        style={{
+                            boxShadow: "var(--shadow-sm)",
+                            letterSpacing: "-0.01em",
+                        }}
                     >
                         <svg
                             className="w-4 h-4"
                             fill="none"
                             stroke="currentColor"
-                            strokeWidth={1.5}
+                            strokeWidth={2}
                             strokeLinecap="round"
                             strokeLinejoin="round"
                             viewBox="0 0 24 24"
                         >
                             <path d="M12 4v16m8-8H4" />
                         </svg>
-                        新对话
+                        New Chat
                     </Button>
                 </div>
 
@@ -133,18 +138,11 @@ export function ChatSidebar({
                 {showModelSection && (
                     <div className="px-4 shrink-0">
                         <p
-                            className="font-text mb-2 px-1"
-                            style={{
-                                fontSize: "11px",
-                                fontWeight: 600,
-                                letterSpacing: "0.08em",
-                                textTransform: "uppercase",
-                                color: "var(--fg3)",
-                            }}
+                            className="label-section mb-2 px-1"
                         >
-                            模型选择
+                            Model Selection
                         </p>
-                        <div className="flex flex-col gap-1.5">
+                        <div className="flex flex-col gap-1">
                             {MODEL_OPTIONS.map((option) => {
                                 const isSelected = modelType === option.value;
                                 return (
@@ -154,8 +152,26 @@ export function ChatSidebar({
                                         variant={isSelected ? "secondary" : "ghost"}
                                         onPress={() => onModelChange(option.value)}
                                         className="justify-start"
+                                        style={{
+                                            borderRadius: "10px",
+                                            background: isSelected
+                                                ? "var(--surface-1)"
+                                                : "transparent",
+                                            border: isSelected
+                                                ? "0.5px solid var(--divider-strong)"
+                                                : "0.5px solid transparent",
+                                        }}
                                     >
-                                        <span className="flex-1 text-left">
+                                        <span
+                                            className="flex-1 text-left"
+                                            style={{
+                                                fontSize: "13px",
+                                                fontWeight: isSelected ? 600 : 500,
+                                                color: isSelected
+                                                    ? "var(--fg1)"
+                                                    : "var(--fg2)",
+                                            }}
+                                        >
                                             {option.label}
                                         </span>
                                         {isSelected && (
@@ -163,7 +179,7 @@ export function ChatSidebar({
                                                 className="w-4 h-4"
                                                 fill="currentColor"
                                                 viewBox="0 0 20 20"
-                                                style={{ color: "var(--fg)" }}
+                                                style={{ color: "var(--fg1)" }}
                                             >
                                                 <path
                                                     fillRule="evenodd"
@@ -190,12 +206,18 @@ export function ChatSidebar({
                 <Separator />
 
                 {/* ── User Footer ── */}
-                <div className="px-4 py-3 shrink-0 flex items-center gap-2.5">
+                <div
+                    className="px-3 py-2.5 shrink-0 flex items-center gap-2 mx-2 mb-2 rounded-xl"
+                    style={{
+                        background: "var(--surface-1)",
+                        border: "0.5px solid var(--divider)",
+                    }}
+                >
                     <button
                         type="button"
                         onClick={onEditProfile}
                         disabled={!onEditProfile}
-                        aria-label="编辑个人资料"
+                        aria-label="Edit profile"
                         className="shrink-0 rounded-full transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2"
                         style={{
                             outlineOffset: 2,
@@ -227,9 +249,10 @@ export function ChatSidebar({
                         <p
                             className="font-text truncate"
                             style={{
-                                fontSize: "14px",
-                                fontWeight: 500,
-                                color: "var(--fg)",
+                                fontSize: "13px",
+                                fontWeight: 600,
+                                color: "var(--fg1)",
+                                letterSpacing: "-0.01em",
                             }}
                         >
                             {userName}
@@ -250,14 +273,14 @@ export function ChatSidebar({
                             variant="ghost"
                             size="sm"
                             onPress={onUsageStats}
-                            aria-label="流量统计"
+                            aria-label="Usage statistics"
                             className="icon-btn"
                         >
                             <svg
-                                className="w-5 h-5"
+                                className="w-[18px] h-[18px]"
                                 fill="none"
                                 stroke="currentColor"
-                                strokeWidth={1.5}
+                                strokeWidth={1.6}
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
                                 viewBox="0 0 24 24"
@@ -275,14 +298,14 @@ export function ChatSidebar({
                             variant="ghost"
                             size="sm"
                             onPress={onSettings}
-                            aria-label="设置"
+                            aria-label="Settings"
                             className="icon-btn"
                         >
                             <svg
-                                className="w-5 h-5"
+                                className="w-[18px] h-[18px]"
                                 fill="none"
                                 stroke="currentColor"
-                                strokeWidth={1.5}
+                                strokeWidth={1.6}
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
                                 viewBox="0 0 24 24"
@@ -298,14 +321,14 @@ export function ChatSidebar({
                             variant="ghost"
                             size="sm"
                             onPress={onLogout}
-                            aria-label="登出"
+                            aria-label="Log out"
                             className="icon-btn"
                         >
                             <svg
-                                className="w-5 h-5"
+                                className="w-[18px] h-[18px]"
                                 fill="none"
                                 stroke="currentColor"
-                                strokeWidth={1.5}
+                                strokeWidth={1.6}
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
                                 viewBox="0 0 24 24"

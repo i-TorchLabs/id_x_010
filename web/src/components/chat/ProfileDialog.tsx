@@ -81,16 +81,16 @@ export function ProfileDialog({
       });
       const { success, message, user: updated } = res.updateProfile;
       if (success && updated) {
-        setFeedback({ type: "success", text: message || "名称已更新" });
+        setFeedback({ type: "success", text: message || "Name updated" });
         syncLocalStorage(updated);
         onSaved?.(updated);
       } else {
-        setFeedback({ type: "error", text: message || "保存失败" });
+        setFeedback({ type: "error", text: message || "Save failed" });
       }
     } catch (err) {
       setFeedback({
         type: "error",
-        text: err instanceof Error ? err.message : "保存失败，请稍后重试",
+        text: err instanceof Error ? err.message : "Save failed, please try again later",
       });
     } finally {
       setIsSavingName(false);
@@ -116,13 +116,13 @@ export function ProfileDialog({
         const result = await uploadAvatar(file);
         if (result.success && result.user) {
           setAvatarUrl(result.avatarUrl ?? result.user.avatarUrl);
-          setFeedback({ type: "success", text: "头像已更新" });
+          setFeedback({ type: "success", text: "Avatar updated" });
           syncLocalStorage(result.user);
           onSaved?.(result.user);
         } else {
           setFeedback({
             type: "error",
-            text: result.error || "头像上传失败",
+            text: result.error || "Avatar upload failed",
           });
         }
       } finally {
@@ -138,7 +138,7 @@ export function ProfileDialog({
         <Modal.Dialog className="sm:max-w-[480px]">
           <Modal.CloseTrigger />
           <Modal.Header>
-            <Modal.Heading>个人资料</Modal.Heading>
+            <Modal.Heading>Profile</Modal.Heading>
           </Modal.Header>
           <Modal.Body>
             <div className="flex flex-col items-center gap-4">
@@ -147,14 +147,14 @@ export function ProfileDialog({
                 <div
                   className="relative group cursor-pointer"
                   onClick={() => fileInputRef.current?.click()}
-                  aria-label="点击更换头像"
+                  aria-label="Click to change avatar"
                   role="button"
                 >
                   {avatarUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={avatarUrl}
-                      alt="头像"
+                      alt="Avatar"
                       className="w-24 h-24 rounded-full object-cover"
                       style={{
                         border: "0.5px solid var(--divider)",
@@ -234,7 +234,7 @@ export function ProfileDialog({
                   isDisabled={isUploading}
                   className="text-xs"
                 >
-                  {isUploading ? "上传中..." : "更换头像"}
+                  {isUploading ? "Uploading..." : "Change Avatar"}
                 </Button>
                 <p
                   className="font-text"
@@ -243,28 +243,28 @@ export function ProfileDialog({
                     color: "var(--fg3)",
                   }}
                 >
-                  支持 JPEG / PNG / WebP / GIF，≤ 8MB
+                  Supports JPEG / PNG / WebP / GIF, ≤ 8MB
                 </p>
               </div>
 
               {/* 显示名称 */}
               <TextField fullWidth className="flex flex-col gap-1.5 mt-2">
-                <Label className="text-sm font-medium">显示名称</Label>
+                <Label className="text-sm font-medium">Display Name</Label>
                 <Input
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="留空则回退到邮箱本地名"
+                  placeholder="Leave empty to use email local-part"
                   maxLength={64}
                 />
               </TextField>
 
               {/* 邮箱（只读展示） */}
               <TextField fullWidth className="flex flex-col gap-1.5" isDisabled>
-                <Label className="text-sm font-medium">邮箱</Label>
+                <Label className="text-sm font-medium">Email</Label>
                 <Input
                   value={user?.email ?? ""}
                   readOnly
-                  aria-label="邮箱（不可修改）"
+                  aria-label="Email (read-only)"
                 />
               </TextField>
 
@@ -291,14 +291,14 @@ export function ProfileDialog({
           </Modal.Body>
           <Modal.Footer>
             <Button slot="close" variant="tertiary" isDisabled={isSavingName}>
-              关闭
+              Close
             </Button>
             <Button
               variant="primary"
               onPress={handleSaveName}
               isDisabled={isSavingName || isUploading}
             >
-              {isSavingName ? "保存中..." : "保存名称"}
+              {isSavingName ? "Saving..." : "Save Name"}
             </Button>
           </Modal.Footer>
         </Modal.Dialog>

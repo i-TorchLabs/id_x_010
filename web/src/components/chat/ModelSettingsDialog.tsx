@@ -22,7 +22,7 @@ import { settingsGraphqlApi } from "@/api/graphql";
 const PROVIDER_PRESETS: { value: string; label: string; baseUrl: string }[] = [
   {
     value: "siliconflow",
-    label: "硅基流动 SiliconFlow",
+    label: "SiliconFlow",
     baseUrl: "https://api.siliconflow.cn/v1",
   },
   { value: "openai", label: "OpenAI", baseUrl: "https://api.openai.com/v1" },
@@ -34,15 +34,15 @@ const PROVIDER_PRESETS: { value: string; label: string; baseUrl: string }[] = [
   },
   {
     value: "dashscope",
-    label: "阿里百炼 DashScope",
+    label: "Alibaba DashScope",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
   },
   {
     value: "zhipu",
-    label: "智谱 AI",
+    label: "Zhipu AI",
     baseUrl: "https://open.bigmodel.cn/api/paas/v4",
   },
-  { value: "custom", label: "自定义", baseUrl: "" },
+  { value: "custom", label: "Custom", baseUrl: "" },
 ];
 
 const DEFAULT_PROVIDER = PROVIDER_PRESETS[0];
@@ -91,7 +91,7 @@ export function ModelSettingsDialog({
         }
       })
       .catch((err) => {
-        console.error("加载模型设置失败:", err);
+        console.error("Failed to load model settings:", err);
       })
       .finally(() => setIsLoading(false));
   }, [isOpen]);
@@ -108,7 +108,7 @@ export function ModelSettingsDialog({
     if (isSaving) return;
 
     if (!provider || !baseUrl.trim() || !apiKey.trim() || !modelName.trim()) {
-      setFeedback({ type: "error", text: "请完整填写厂商、访问地址、API-KEY 与模型名称" });
+      setFeedback({ type: "error", text: "Please complete provider, endpoint, API key and model name" });
       return;
     }
 
@@ -134,7 +134,7 @@ export function ModelSettingsDialog({
     } catch (err) {
       setFeedback({
         type: "error",
-        text: err instanceof Error ? err.message : "保存失败，请稍后重试",
+        text: err instanceof Error ? err.message : "Save failed, please try again later",
       });
     } finally {
       setIsSaving(false);
@@ -147,20 +147,20 @@ export function ModelSettingsDialog({
         <Modal.Dialog className="sm:max-w-[640px]">
           <Modal.CloseTrigger />
           <Modal.Header>
-            <Modal.Heading>模型设置</Modal.Heading>
+            <Modal.Heading>Model Settings</Modal.Heading>
           </Modal.Header>
           <Modal.Body>
             {isLoading ? (
               <p className="text-sm" style={{ color: "var(--fg3)" }}>
-                加载已保存的设置...
+                Loading saved settings...
               </p>
             ) : (
               <div className="flex flex-col gap-4">
                 {/* 模型厂商 */}
                 <div className="flex flex-col gap-1.5">
-                  <Label className="text-sm font-medium">模型厂商</Label>
+                  <Label className="text-sm font-medium">Model Provider</Label>
                   <Select
-                    aria-label="模型厂商"
+                    aria-label="Model provider"
                     value={provider}
                     onChange={(key) =>
                       handleProviderChange(key ? String(key) : "custom")
@@ -206,7 +206,7 @@ export function ModelSettingsDialog({
 
                 {/* 访问地址 */}
                 <TextField fullWidth className="flex flex-col gap-1.5">
-                  <Label className="text-sm font-medium">访问地址 (base_url)</Label>
+                  <Label className="text-sm font-medium">Endpoint (base_url)</Label>
                   <Input
                     placeholder="https://api.example.com/v1"
                     value={baseUrl}
@@ -227,9 +227,9 @@ export function ModelSettingsDialog({
 
                 {/* 模型名称 */}
                 <TextField fullWidth className="flex flex-col gap-1.5">
-                  <Label className="text-sm font-medium">模型名称</Label>
+                  <Label className="text-sm font-medium">Model Name</Label>
                   <Input
-                    placeholder="如 zai-org/GLM-5.2"
+                    placeholder="e.g. zai-org/GLM-5.2"
                     value={modelName}
                     onChange={(e) => setModelName(e.target.value)}
                   />
@@ -259,14 +259,14 @@ export function ModelSettingsDialog({
           </Modal.Body>
           <Modal.Footer>
             <Button slot="close" variant="tertiary" isDisabled={isSaving}>
-              取消
+              Cancel
             </Button>
             <Button
               variant="primary"
               onPress={handleSave}
               isDisabled={isSaving || isLoading}
             >
-              {isSaving ? "连通性检测中..." : "保存"}
+              {isSaving ? "Testing connection..." : "Save"}
             </Button>
           </Modal.Footer>
         </Modal.Dialog>

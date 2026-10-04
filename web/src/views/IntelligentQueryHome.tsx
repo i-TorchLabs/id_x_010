@@ -78,7 +78,7 @@ export default function IntelligentQueryHome() {
         const reply: ChatMessage = {
           id: String(Date.now() + 1),
           type: "assistant",
-          content: data.answer || data.code || "抱歉，处理您的请求时出现错误。",
+          content: data.answer || data.code || "Sorry, an error occurred while processing your request.",
           timestamp: new Date(),
           sql: data.sql,
           code: data.code,
@@ -93,7 +93,7 @@ export default function IntelligentQueryHome() {
         const errorMessage: ChatMessage = {
           id: String(Date.now() + 1),
           type: "assistant",
-          content: "抱歉，连接服务器失败。请确保后端服务正在运行。",
+          content: "Sorry, could not connect to the server. Please ensure the backend is running.",
           timestamp: new Date(),
         };
         setMessages((prev) => [...prev, errorMessage]);
@@ -155,7 +155,7 @@ export default function IntelligentQueryHome() {
                     variant="ghost"
                     size="sm"
                     onPress={() => setIsSidebarOpen(!isSidebarOpen)}
-                    aria-label={isSidebarOpen ? "收起侧边栏" : "展开侧边栏"}
+                    aria-label={isSidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
                     className="icon-btn"
                   >
                     <svg
@@ -186,7 +186,7 @@ export default function IntelligentQueryHome() {
                         color: "var(--fg)",
                       }}
                     >
-                      智能问数助手
+                      Intelligent Query Assistant
                     </h2>
                     <p
                       style={{
@@ -198,8 +198,8 @@ export default function IntelligentQueryHome() {
                       }}
                     >
                       {isTyping
-                        ? "思考中..."
-                        : `当前模型: ${modelType === "local" ? "本地模型" : "外部模型"}`}
+                        ? "Thinking..."
+                        : `Current model: ${modelType === "local" ? "Local Model" : "External Model"}`}
                     </p>
                   </div>
                 </div>
@@ -209,7 +209,7 @@ export default function IntelligentQueryHome() {
                     variant="ghost"
                     size="sm"
                     onPress={handleNewChat}
-                    aria-label="清空对话"
+                    aria-label="Clear conversation"
                     className="icon-btn"
                   >
                     <svg

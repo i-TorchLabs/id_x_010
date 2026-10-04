@@ -38,7 +38,7 @@ export function DatabaseSelector({
           }
         }
       } catch (error) {
-        console.error("加载数据库列表失败:", error);
+        console.error("Failed to load database list:", error);
       } finally {
         setIsLoading(false);
       }
@@ -50,11 +50,11 @@ export function DatabaseSelector({
 
   return (
     <Select
-      aria-label="数据库"
+      aria-label="Database"
       value={selectedDb}
       onChange={(key) => onDbChange(key ? String(key) : null)}
       isDisabled={isLoading || databases.length === 0}
-      placeholder={isLoading ? "加载中..." : "无数据库"}
+      placeholder={isLoading ? "Loading..." : "No databases"}
       variant="secondary"
       className="w-auto"
     >
@@ -66,7 +66,7 @@ export function DatabaseSelector({
         >
           {({ selectedText, isPlaceholder }) => (
             <span className="block w-full text-center truncate">
-              {isPlaceholder ? (isLoading ? "加载中..." : "无数据库") : selectedText}
+              {isPlaceholder ? (isLoading ? "Loading..." : "No databases") : selectedText}
             </span>
           )}
         </Select.Value>

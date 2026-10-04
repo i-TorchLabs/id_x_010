@@ -138,7 +138,7 @@ class StreamChatClient {
       // 检查 401 未授权响应
       if (response.status === 401) {
         this.handleUnauthorized();
-        throw new Error("未授权访问，请重新登录");
+        throw new Error("Unauthorized. Please sign in again.");
       }
 
       if (!response.ok) {
@@ -275,7 +275,7 @@ class StreamChatClient {
 
       if (response.status === 401) {
         this.handleUnauthorized();
-        throw new Error("未授权访问，请重新登录");
+        throw new Error("Unauthorized. Please sign in again.");
       }
 
       if (!response.ok) {

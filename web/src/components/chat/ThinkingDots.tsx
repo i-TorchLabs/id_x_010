@@ -10,7 +10,7 @@ interface ThinkingDotsProps {
 
 export function ThinkingDots({
   visible = true,
-  label = "执行中",
+  label = "Running",
 }: ThinkingDotsProps) {
   const { theme } = useTheme();
   const isDark = theme === "dark";

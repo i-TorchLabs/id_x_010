@@ -55,7 +55,7 @@ export default function ForgotPasswordPage() {
                 // 检查是否成功
                 if (!result.forgotPassword.success) {
                     setErrorMsg(
-                        result.forgotPassword.message || "处理失败，请重试",
+                        result.forgotPassword.message || "Operation failed, please try again",
                     );
                     return;
                 }
@@ -63,7 +63,7 @@ export default function ForgotPasswordPage() {
                 setIsSuccess(true);
             } catch (error: any) {
                 console.error("Forgot password failed:", error);
-                setErrorMsg(error.message || "处理失败，请重试");
+                setErrorMsg(error.message || "Operation failed, please try again");
             } finally {
                 setIsSubmitting(false);
             }

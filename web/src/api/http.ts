@@ -116,7 +116,7 @@ class HttpClient {
    */
   private async handleResponse<T>(response: Response): Promise<T> {
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ message: "请求失败" }));
+      const error = await response.json().catch(() => ({ message: "Request failed" }));
       throw new Error(error.message || `HTTP error! status: ${response.status}`);
     }
 

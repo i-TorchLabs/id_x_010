@@ -16,15 +16,22 @@
     --error: #dc2626;
     --success: #000000;
 
-    /* Text opacity tiers */
-    --fg2: rgba(0, 0, 0, 0.7);
-    --fg3: rgba(0, 0, 0, 0.45);
-    --fg4: rgba(0, 0, 0, 0.25);
+    /* Text opacity tiers —— 四档明确分层，避免相邻文字权重模糊 */
+    --fg1: rgba(0, 0, 0, 0.92);
+    --fg2: rgba(0, 0, 0, 0.62);
+    --fg3: rgba(0, 0, 0, 0.40);
+    --fg4: rgba(0, 0, 0, 0.22);
+
+    /* Layered surfaces —— 三级灰阶让卡片 / 面板 / 内嵌区块产生层次感 */
+    --surface-1: rgba(0, 0, 0, 0.025);   /* 极浅：分组容器、内嵌框 */
+    --surface-2: #ffffff;                /* 标准：卡片、弹层 */
+    --surface-3: #ffffff;                /* 抬升：选中态、悬浮态（叠加阴影时用） */
 
     /* Surface & borders */
     --input-bg: rgba(0, 0, 0, 0.03);
     --input-border: rgba(0, 0, 0, 0.1);
     --divider: rgba(0, 0, 0, 0.06);
+    --divider-strong: rgba(0, 0, 0, 0.12);
 
     /* Badge backgrounds */
     --badge-bg: rgba(0, 0, 0, 0.06);
@@ -34,11 +41,14 @@
     --error-bg: rgba(255, 59, 48, 0.05);
     --error-border: rgba(255, 59, 48, 0.15);
 
-    /* Shadows */
-    --shadow-card: 0 4px 48px rgba(0, 0, 0, 0.08);
+    /* Shadows —— 双层阴影（近距接触 + 远距氛围）增强卡片悬浮层次 */
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.06);
+    --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.04), 0 8px 32px rgba(0, 0, 0, 0.08);
+    --shadow-pop: 0 4px 12px rgba(0, 0, 0, 0.06), 0 16px 48px rgba(0, 0, 0, 0.12);
 
     /* Hover */
     --hover-bg: rgba(0, 0, 0, 0.05);
+    --hover-bg-strong: rgba(0, 0, 0, 0.08);
 
     /* Glassmorphism */
     --backdrop: saturate(180%) blur(20px);
@@ -70,15 +80,22 @@
     --error: #dc2626;
     --success: #ffffff;
 
-    /* Text opacity tiers */
-    --fg2: rgba(255, 255, 255, 0.7);
-    --fg3: rgba(255, 255, 255, 0.45);
-    --fg4: rgba(255, 255, 255, 0.25);
+    /* Text opacity tiers —— 暗色背景需要略高的最低对比度，否则 fg4 几乎不可见 */
+    --fg1: rgba(255, 255, 255, 0.95);
+    --fg2: rgba(255, 255, 255, 0.62);
+    --fg3: rgba(255, 255, 255, 0.42);
+    --fg4: rgba(255, 255, 255, 0.26);
+
+    /* Layered surfaces —— 暗色用半透明白叠加产生纵深 */
+    --surface-1: rgba(255, 255, 255, 0.035);
+    --surface-2: #1c1c1e;
+    --surface-3: #2c2c2e;
 
     /* Surface & borders */
     --input-bg: rgba(255, 255, 255, 0.05);
     --input-border: rgba(255, 255, 255, 0.12);
     --divider: rgba(255, 255, 255, 0.08);
+    --divider-strong: rgba(255, 255, 255, 0.16);
 
     /* Badge backgrounds */
     --badge-bg: rgba(255, 255, 255, 0.10);
@@ -88,11 +105,14 @@
     --error-bg: rgba(255, 59, 48, 0.10);
     --error-border: rgba(255, 59, 48, 0.20);
 
-    /* Shadows */
-    --shadow-card: 0 4px 48px rgba(0, 0, 0, 0.5);
+    /* Shadows —— 暗色用更深的环境光遮蔽营造层次 */
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.4);
+    --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.3), 0 8px 32px rgba(0, 0, 0, 0.5);
+    --shadow-pop: 0 4px 12px rgba(0, 0, 0, 0.4), 0 16px 48px rgba(0, 0, 0, 0.6);
 
     /* Hover */
     --hover-bg: rgba(255, 255, 255, 0.08);
+    --hover-bg-strong: rgba(255, 255, 255, 0.12);
 
     /* Glassmorphism */
     --backdrop: saturate(180%) blur(20px);
@@ -210,16 +230,33 @@ body {
     box-shadow: var(--shadow-card);
 }
 
-/* ── Icon Button ── */
+/* ── Section Label ──
+   侧栏 / 弹窗内分组的统一小标题样式，集中维护避免散落 inline style */
+.label-section {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--fg3);
+}
 
+/* ── Icon Button ──
+   HeroUI ghost 图标按钮的统一 hover 增强：略微加深背景 + 轻微缩放，
+   既保持极简又给出可感知的反馈层次。
+   主背景侧栏按钮默认 className 会带上 icon-btn。*/
 .icon-btn {
-    padding: 12px;
+    padding: 8px;
     border-radius: 50%;
-    transition: background-color 200ms;
+    transition: background-color 180ms ease, transform 180ms ease, color 180ms ease;
 }
 
 .icon-btn:hover {
     background-color: var(--hover-bg);
+}
+
+.icon-btn:active {
+    background-color: var(--hover-bg-strong);
+    transform: scale(0.94);
 }
 
 /* ── Transition Helpers ── */

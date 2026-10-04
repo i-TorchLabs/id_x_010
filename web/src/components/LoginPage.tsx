@@ -32,8 +32,8 @@ export default function LoginPage() {
         const err = searchParams.get("error");
         if (err) {
             const map: Record<string, string> = {
-                sso_missing_code: "SSO 回调缺少授权码",
-                sso_state_mismatch: "SSO state 校验失败，疑似 CSRF 攻击",
+                sso_missing_code: "SSO callback missing authorization code",
+                sso_state_mismatch: "SSO state validation failed (possible CSRF attack)",
             };
             setErrorMsg(map[err] ?? err);
         }
@@ -76,12 +76,12 @@ export default function LoginPage() {
                 console.log("Login result:", result);
 
                 if (!result.login.success) {
-                    setErrorMsg(result.login.message || "邮箱或密码错误");
+                    setErrorMsg(result.login.message || "Invalid email or password");
                     return;
                 }
 
                 if (!result.login.user) {
-                    setErrorMsg("登录失败，请重试");
+                    setErrorMsg("Sign-in failed, please try again");
                     return;
                 }
 
@@ -96,7 +96,7 @@ export default function LoginPage() {
                 router.push("/f/home");
             } catch (error: any) {
                 console.error("Login failed:", error);
-                setErrorMsg(error.message || "邮箱或密码错误，请重试");
+                setErrorMsg(error.message || "Invalid email or password, please try again");
             } finally {
                 setIsSubmitting(false);
             }

@@ -84,7 +84,7 @@ export default function RegisterPage() {
 
                 // 检查是否注册成功
                 if (!result.register.success) {
-                    setErrorMsg(result.register.message || "注册失败，请重试");
+                    setErrorMsg(result.register.message || "Registration failed, please try again");
                     return;
                 }
 
@@ -92,7 +92,7 @@ export default function RegisterPage() {
                 router.push("/f/login?registered=true");
             } catch (error: any) {
                 console.error("Registration failed:", error);
-                setErrorMsg(error.message || "注册失败，请重试");
+                setErrorMsg(error.message || "Registration failed, please try again");
             } finally {
                 setIsSubmitting(false);
             }

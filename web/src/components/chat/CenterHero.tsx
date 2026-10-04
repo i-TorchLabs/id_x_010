@@ -71,22 +71,26 @@ export function CenterHero({
                             duration: 0.45,
                             ease: [0.25, 0.4, 0.25, 1],
                         }}
-                        className="mb-8"
+                        className="mb-7"
                     >
                         <div
                             className="flex items-center justify-center"
                             style={{
-                                width: "56px",
-                                height: "56px",
-                                borderRadius: "20px",
-                                background: "transparent",
+                                width: "60px",
+                                height: "60px",
+                                borderRadius: "18px",
+                                background: isDark
+                                    ? "rgba(255,255,255,0.06)"
+                                    : "rgba(0,0,0,0.04)",
+                                border: "0.5px solid var(--divider)",
+                                boxShadow: "var(--shadow-sm)",
                             }}
                         >
                             <svg
                                 className="w-8 h-8"
                                 fill="none"
                                 stroke={isDark ? "#ffffff" : "#1d1d1f"}
-                                strokeWidth={1.8}
+                                strokeWidth={1.6}
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
                                 viewBox="0 0 24 24"
@@ -108,18 +112,17 @@ export function CenterHero({
                         className="text-center"
                     >
                         {/* Badge */}
-                        <div className="flex justify-center mb-6">
+                        <div className="flex justify-center mb-5">
                             <span
                                 className="font-text"
                                 style={{
                                     fontSize: "11px",
                                     fontWeight: 600,
-                                    letterSpacing: "0.08em",
+                                    letterSpacing: "0.1em",
                                     textTransform: "uppercase",
-                                    color: isDark ? "#ffffff" : "#000000",
-                                    background: isDark
-                                        ? "rgba(255,255,255,0.10)"
-                                        : "rgba(0,0,0,0.06)",
+                                    color: "var(--fg2)",
+                                    background: "var(--surface-1)",
+                                    border: "0.5px solid var(--divider)",
                                     borderRadius: "980px",
                                     padding: "5px 14px",
                                 }}
@@ -131,11 +134,11 @@ export function CenterHero({
                         <h1
                             className="font-display"
                             style={{
-                                fontSize: "52px",
+                                fontSize: "48px",
                                 fontWeight: 600,
-                                letterSpacing: "-0.52px",
+                                letterSpacing: "-0.48px",
                                 lineHeight: 1.05,
-                                color: isDark ? "#ffffff" : "#1d1d1f",
+                                color: "var(--fg1)",
                             }}
                         >
                           Data Agent
@@ -144,20 +147,18 @@ export function CenterHero({
                             className="font-text"
                             style={{
                                 fontSize: "15px",
-                                lineHeight: 1.4,
-                                letterSpacing: "-0.20px",
+                                lineHeight: 1.5,
+                                letterSpacing: "-0.15px",
                                 fontWeight: 400,
-                                color: isDark
-                                    ? "rgba(255,255,255,0.45)"
-                                    : "rgba(0,0,0,0.45)",
+                                color: "var(--fg3)",
                                 maxWidth: "520px",
-                                margin: "24px auto 0",
+                                margin: "20px auto 0",
                             }}
                             initial={{ opacity: 0, y: 10 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ delay: 0.5 }}
                         >
-                            自然语言问答、数据库检索、可执行代码生成
+                            Natural language Q&A, database retrieval, executable code generation
                         </motion.p>
                     </motion.div>
                 </motion.div>
@@ -195,16 +196,14 @@ export function CenterHero({
                         transition={{ delay: 1.2 }}
                         className="text-center font-text"
                         style={{
-                            fontSize: "12px",
-                            fontWeight: 600,
+                            fontSize: "11px",
+                            fontWeight: 500,
                             letterSpacing: "0.04em",
-                            marginTop: "8px",
-                            color: isDark
-                                ? "rgba(255,255,255,0.25)"
-                                : "rgba(0,0,0,0.25)",
+                            marginTop: "10px",
+                            color: "var(--fg4)",
                         }}
                     >
-                        支持本地模型 / 外部模型切换 · 基于 LangGraph + Semantic
+                        Local / external model switching · Built on LangGraph + Semantic
                         Router
                     </motion.p>
                 </div>

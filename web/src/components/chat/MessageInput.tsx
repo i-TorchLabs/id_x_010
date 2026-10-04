@@ -30,8 +30,8 @@ function ModelSelector({
   const displayText = selectedModel
     ? `${selectedModel.name} (${selectedModel.provider})`
     : isLoadingModels
-      ? "加载中..."
-      : "无可用模型";
+      ? "Loading..."
+      : "No models available";
 
   useLayoutEffect(() => {
     if (measureRef.current) {
@@ -48,7 +48,7 @@ function ModelSelector({
 
   return (
     <Select
-      aria-label="模型"
+      aria-label="Model"
       value={selectedModel ? String(selectedModel.id) : null}
       onChange={(key) => {
         const model = models.find((m) => m.id === Number(key));
@@ -62,7 +62,7 @@ function ModelSelector({
             m.provider.includes("Under deployment"),
         )
         .map((m) => String(m.id))}
-      placeholder={isLoadingModels ? "加载中..." : "无可用模型"}
+      placeholder={isLoadingModels ? "Loading..." : "No models available"}
       variant="secondary"
       className="w-auto"
       style={{ width: triggerWidth }}
@@ -77,8 +77,8 @@ function ModelSelector({
             <span className="block w-full text-center truncate">
               {isPlaceholder
                 ? isLoadingModels
-                  ? "加载中..."
-                  : "无可用模型"
+                  ? "Loading..."
+                  : "No models available"
                 : selectedText}
             </span>
           )}
@@ -218,7 +218,7 @@ export function MessageInput({
           } else if (attempt < MAX_RETRIES) {
             const delay = BASE_DELAY * Math.pow(2, attempt);
             console.warn(
-              `加载模型列表失败（第 ${attempt + 1} 次）: ${response.getModels.message}，${delay}ms 后重试`,
+              `Failed to load models (attempt ${attempt + 1}): ${response.getModels.message}; retrying in ${delay}ms`,
             );
             retrying = true;
             setTimeout(() => loadModels(attempt + 1), delay);
@@ -233,14 +233,14 @@ export function MessageInput({
         if (attempt < MAX_RETRIES) {
           const delay = BASE_DELAY * Math.pow(2, attempt);
           console.warn(
-            `加载模型列表异常（第 ${attempt + 1} 次），${delay}ms 后重试:`,
+            `Model list load error (attempt ${attempt + 1}); retrying in ${delay}ms:`,
             error,
           );
           retrying = true;
           setTimeout(() => loadModels(attempt + 1), delay);
           return;
         }
-        console.error("加载模型列表最终失败:", error);
+        console.error("Final model list load failure:", error);
       } finally {
         if (!cancelled && !retrying) {
           setInternalIsLoadingModels(false);
@@ -289,19 +289,18 @@ export function MessageInput({
   const renderActivePromptBadge = () =>
     activePrompt ? (
       <div
-        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium"
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium"
         style={{
-          background: isDark
-            ? "rgba(255,255,255,0.06)"
-            : "rgba(0,0,0,0.04)",
-          color: isDark ? "rgba(255,255,255,0.85)" : "rgba(0,0,0,0.8)",
+          background: "var(--surface-1)",
+          border: "0.5px solid var(--divider)",
+          color: "var(--fg2)",
         }}
       >
         <svg
           className="w-3 h-3 shrink-0"
           fill="none"
           stroke="currentColor"
-          strokeWidth={2}
+          strokeWidth={1.8}
           viewBox="0 0 24 24"
         >
           <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
@@ -310,7 +309,7 @@ export function MessageInput({
         <span className="truncate max-w-[200px]">
           {activePrompt.noteName ?? activePrompt.filename}
         </span>
-        <span className="opacity-60 shrink-0">· 已注入</span>
+        <span style={{ color: "var(--fg4)" }} className="shrink-0">· injected</span>
       </div>
     ) : null;
 
@@ -321,8 +320,14 @@ export function MessageInput({
       size={isSmall ? "sm" : "md"}
       onPress={handleSend}
       isDisabled={!input.trim() || isStreaming}
-      aria-label="发送"
+      aria-label="Send"
       className="rounded-full"
+      style={{
+        boxShadow:
+          !input.trim() || isStreaming ? "none" : "var(--shadow-sm)",
+        opacity: !input.trim() || isStreaming ? 0.5 : 1,
+        transition: "opacity 180ms ease, box-shadow 180ms ease",
+      }}
     >
       <svg
         className={isSmall ? "w-4 h-4" : "w-5 h-5"}
@@ -346,8 +351,9 @@ export function MessageInput({
           <motion.div
             className="w-full transition-all duration-300"
             style={{
-              background: isDark ? "#1c1c1e" : "#ffffff",
+              background: "var(--surface-2)",
               borderRadius: "20px",
+              border: "0.5px solid var(--divider-strong)",
               boxShadow: "var(--shadow-card)",
               minHeight: "210px",
             }}
@@ -427,13 +433,12 @@ export function MessageInput({
             <div
               className="flex-1 relative transition-all duration-200"
               style={{
-                background: isDark ? "#1c1c1e" : "#ffffff",
+                background: "var(--surface-2)",
                 borderRadius: "16px",
+                border: "0.5px solid var(--divider-strong)",
                 minHeight: "120px",
                 margin: "8px",
-                boxShadow: isDark
-                  ? "none"
-                  : "0 4px 48px rgba(0,0,0,0.08)",
+                boxShadow: "var(--shadow-card)",
               }}
             >
               <textarea
@@ -485,12 +490,10 @@ export function MessageInput({
             <p
               className="font-text"
               style={{
-                fontSize: "12px",
-                fontWeight: 600,
+                fontSize: "11px",
+                fontWeight: 500,
                 letterSpacing: "0.04em",
-                color: isDark
-                  ? "rgba(255,255,255,0.25)"
-                  : "rgba(0,0,0,0.25)",
+                color: "var(--fg4)",
               }}
             >
               Enter to send · Shift+Enter for new line
