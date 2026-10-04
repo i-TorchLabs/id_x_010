@@ -93,7 +93,7 @@ class GeneralAgent:
         else:
             return "qwen2.5"
 
-    def _create_llm(self) -> ChatOpenAI:
+    def _create_llm(self, temperature: float = 0.7) -> ChatOpenAI:
         if self.model_type == "external":
             model_identifier = self.EXTERNAL_MODELS.get(
                 self.model_name, self.model_name
@@ -102,7 +102,7 @@ class GeneralAgent:
                 model=model_identifier,
                 api_key=SecretStr(self.api_key) if self.api_key else None,
                 base_url=self.base_url,
-                temperature=0.7,
+                temperature=temperature,
                 streaming=True,
                 # 让 OpenAI 兼容端点在流式末块返回 token 用量；
                 # 不支持的端点会忽略该参数，捕获逻辑降级为 0（非致命）
@@ -117,9 +117,17 @@ class GeneralAgent:
                 model=self.LOCAL_MODELS.get(self.model_name, self.model_name),
                 api_key=SecretStr(local_api_key),
                 base_url=local_base_url,
-                temperature=0.7,
+                temperature=temperature,
                 streaming=True,
             )
+
+    @staticmethod
+    def _is_temp_error(err: Exception) -> bool:
+        """判断异常是否为 temperature 限制错误（reasoning 模型只允许 1）。"""
+        lower = str(err).lower()
+        return "temperature" in lower and (
+            "only 1 is allowed" in lower or "invalid" in lower
+        )
 
     async def chat(
         self,
@@ -144,11 +152,19 @@ class GeneralAgent:
         try:
             response = await self.llm.ainvoke(messages)
         except Exception as e:
-            logger.error(
-                f"{get_request_id()}第三方模型调用失败 [chat] | model={self.model_name}, model_type={self.model_type}, "
-                f"base_url={self.base_url} | 原因: {type(e).__name__}: {e}"
-            )
-            raise
+            # reasoning 模型只允许 temperature=1，回退重试一次
+            if self._is_temp_error(e):
+                logger.info(
+                    f"{get_request_id()}模型限制 temperature=1，回退重试 [chat]: model={self.model_name}"
+                )
+                self.llm = self._create_llm(temperature=1.0)
+                response = await self.llm.ainvoke(messages)
+            else:
+                logger.error(
+                    f"{get_request_id()}第三方模型调用失败 [chat] | model={self.model_name}, model_type={self.model_type}, "
+                    f"base_url={self.base_url} | 原因: {type(e).__name__}: {e}"
+                )
+                raise
 
         content = response.content
 
@@ -237,14 +253,66 @@ class GeneralAgent:
             }
 
         except Exception as e:
-            logger.error(
-                f"{get_request_id()}第三方模型调用失败 [stream_chat] | model={self.model_name}, model_type={self.model_type}, "
-                f"base_url={self.base_url} | 原因: {type(e).__name__}: {e}"
-            )
-            yield {
-                "type": "error",
-                "content": friendly_llm_error(e, self.model_name),
-            }
+            # reasoning 模型只允许 temperature=1，重建 LLM 后整个流重试一次
+            if self._is_temp_error(e):
+                logger.info(
+                    f"{get_request_id()}模型限制 temperature=1，回退重试 [stream_chat]: model={self.model_name}"
+                )
+                self.llm = self._create_llm(temperature=1.0)
+                # 清空 buffer，重新开始流式生成
+                thinking_buffer = []
+                in_thinking = False
+                usage_meta = None
+                async for chunk in self.llm.astream(messages):
+                    token = chunk.content
+
+                    if isinstance(token, list):
+                        token = "".join(
+                            item if isinstance(item, str) else str(item)
+                            for item in token
+                        )
+
+                    meta = getattr(chunk, "usage_metadata", None)
+                    if isinstance(meta, dict):
+                        usage_meta = meta
+
+                    if "<thinking>" in token:
+                        in_thinking = True
+                        token = token.replace("<thinking>", "")
+
+                    if "</thinking>" in token:
+                        in_thinking = False
+                        token = token.replace("</thinking>", "")
+
+                    if token:
+                        if in_thinking:
+                            thinking_buffer.append(token)
+                            yield {
+                                "type": "thinking",
+                                "content": token,
+                                "model_used": self.model_name,
+                            }
+                        else:
+                            yield {
+                                "type": "content",
+                                "content": token,
+                                "model_used": self.model_name,
+                            }
+
+                yield {
+                    "type": "done",
+                    "model_used": self.model_name,
+                    "usage": usage_meta,
+                }
+            else:
+                logger.error(
+                    f"{get_request_id()}第三方模型调用失败 [stream_chat] | model={self.model_name}, model_type={self.model_type}, "
+                    f"base_url={self.base_url} | 原因: {type(e).__name__}: {e}"
+                )
+                yield {
+                    "type": "error",
+                    "content": friendly_llm_error(e, self.model_name),
+                }
 
 
 DEFAULT_SYSTEM_PROMPT = """你是一个智能助手，专注于帮助用户解决问题。

@@ -257,12 +257,8 @@ export function ChatMessage({
         >
           <div className="relative group w-full">
             <div
+              className="bubble-ai"
               style={{
-                borderRadius: "16px",
-                background: isDark ? "#1c1c1e" : "#ffffff",
-                boxShadow: isDark
-                  ? "none"
-                  : "0 4px 48px rgba(0,0,0,0.08)",
                 minWidth: "512px",
                 paddingBottom:
                   message.pendingSql && message.sqlApprovalStatus === "pending"
@@ -273,25 +269,30 @@ export function ChatMessage({
               {/* Header: dot + time */}
               <div
                 className="flex items-center gap-2.5"
-                style={{ padding: "10px 14px 0 14px" }}
+                style={{ padding: "12px 16px 0 16px" }}
               >
                 <motion.div
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    transition={{ type: "spring", stiffness: 500, damping: 30 }}
                 >
                   <div
-                    className="w-3.25 h-3.25 rounded-full"
-                    style={{ background: isDark ? "#ffffff" : "#1d1d1f" }}
+                    className="rounded-full"
+                    style={{
+                      width: "8px",
+                      height: "8px",
+                      background: "var(--accent)",
+                      boxShadow: "var(--shadow-xs)",
+                    }}
                   />
                 </motion.div>
                 <span
                   className="font-text"
                   style={{
-                    fontSize: "12px",
-                    color: isDark
-                      ? "rgba(255,255,255,0.45)"
-                      : "rgba(0,0,0,0.45)",
+                    fontSize: "11px",
+                    fontWeight: 500,
+                    letterSpacing: "0.02em",
+                    color: "var(--fg3)",
                   }}
                 >
                   {formatTime(message.timestamp)}
@@ -300,17 +301,14 @@ export function ChatMessage({
 
               {/* Thinking Process */}
               {hasThinking && parsedContent.thinking && (
-                <div style={{ padding: "6px 14px 0 14px" }}>
+                <div style={{ padding: "8px 16px 0 16px" }}>
                   <div
                     style={{
                       borderRadius: "12px",
-                      padding: "8px",
-                      background: isDark
-                        ? "rgba(255,255,255,0.05)"
-                        : "rgba(0,0,0,0.03)",
-                      border: isDark
-                        ? "1px solid rgba(255,255,255,0.08)"
-                        : "1px solid rgba(0,0,0,0.06)",
+                      padding: "10px 12px",
+                      background: "var(--surface-1)",
+                      border: "0.5px solid var(--divider)",
+                      boxShadow: "var(--shadow-xs)",
                     }}
                   >
                     <button
@@ -421,9 +419,11 @@ export function ChatMessage({
               <div
                 className="font-text leading-relaxed whitespace-pre-wrap"
                 style={{
-                  padding: "8px 14px 12px 14px",
-                  fontSize: "16px",
-                  letterSpacing: "-0.20px",
+                  padding: "10px 16px 14px 16px",
+                  fontSize: "15px",
+                  lineHeight: 1.65,
+                  letterSpacing: "-0.15px",
+                  color: "var(--fg1)",
                 }}
               >
                 {!parsedContent.mainContent ? (
@@ -573,6 +573,81 @@ export function ChatMessage({
                 }
                 label="Executing"
               />
+
+              {/* AI 消息操作栏:复制 */}
+              {parsedContent.mainContent && (
+                <div
+                  className="flex items-center gap-1.5"
+                  style={{ padding: "0 16px 12px 16px" }}
+                >
+                  <button
+                    type="button"
+                    onClick={handleCopy}
+                    aria-label={copied ? "Copied" : "Copy"}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all duration-200"
+                    style={{
+                      background: copied ? "var(--surface-1)" : "transparent",
+                      border: "0.5px solid var(--divider-strong)",
+                      color: copied ? "var(--fg1)" : "var(--fg3)",
+                      fontSize: "11px",
+                      fontWeight: 500,
+                      letterSpacing: "0.01em",
+                      boxShadow: copied
+                        ? "var(--shadow-inset), var(--shadow-xs)"
+                        : "none",
+                    }}
+                    onMouseEnter={(e) => {
+                      if (copied) return;
+                      e.currentTarget.style.background = "var(--hover-bg)";
+                      e.currentTarget.style.boxShadow =
+                        "var(--shadow-inset), var(--shadow-xs)";
+                      e.currentTarget.style.color = "var(--fg1)";
+                    }}
+                    onMouseLeave={(e) => {
+                      if (copied) return;
+                      e.currentTarget.style.background = "transparent";
+                      e.currentTarget.style.boxShadow = "none";
+                      e.currentTarget.style.color = "var(--fg3)";
+                    }}
+                    onMouseDown={(e) => {
+                      e.currentTarget.style.transform = "scale(0.96)";
+                    }}
+                    onMouseUp={(e) => {
+                      e.currentTarget.style.transform = "scale(1)";
+                    }}
+                  >
+                    {copied ? (
+                      <svg
+                        className="w-3 h-3"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={2.2}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        viewBox="0 0 24 24"
+                        aria-hidden
+                      >
+                        <path d="M5 13l4 4L19 7" />
+                      </svg>
+                    ) : (
+                      <svg
+                        className="w-3 h-3"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={1.8}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        viewBox="0 0 24 24"
+                        aria-hidden
+                      >
+                        <rect x="9" y="9" width="11" height="11" rx="2" ry="2" />
+                        <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                      </svg>
+                    )}
+                    <span>{copied ? "Copied" : "Copy"}</span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -585,10 +660,9 @@ export function ChatMessage({
           style={{ maxWidth: "50%" }}
         >
           <div
+            className="bubble-user"
             style={{
-              borderRadius: "16px",
-              background: isDark ? "#3a3a3c" : "#1d1d1f",
-              padding: "10px 14px 12px 14px",
+              padding: "12px 16px 14px 16px",
             }}
           >
             <div
@@ -598,26 +672,33 @@ export function ChatMessage({
               <span
                 className="font-text"
                 style={{
-                  fontSize: "12px",
-                  color: isDark
-                    ? "rgba(255,255,255,0.48)"
-                    : "rgba(255,255,255,0.6)",
+                  fontSize: "11px",
+                  fontWeight: 500,
+                  letterSpacing: "0.02em",
+                  color: "var(--accent-fg)",
+                  opacity: 0.7,
                 }}
               >
                 {formatTime(message.timestamp)}
               </span>
               <div
-                className="w-3.25 h-3.25 rounded-full"
-                style={{ background: "#ffffff" }}
+                className="rounded-full"
+                style={{
+                  width: "8px",
+                  height: "8px",
+                  background: "var(--accent-fg)",
+                  opacity: 0.9,
+                }}
               />
             </div>
 
             <div
               className="font-text leading-relaxed whitespace-pre-wrap"
               style={{
-                fontSize: "16px",
-                letterSpacing: "-0.20px",
-                color: "#ffffff",
+                fontSize: "15px",
+                lineHeight: 1.65,
+                letterSpacing: "-0.15px",
+                color: "var(--accent-fg)",
               }}
             >
               {parsedContent.mainContent.split("\n").map((paragraph, index) => {
@@ -653,32 +734,128 @@ export function ChatMessage({
             </div>
           </div>
 
-          {/* Regenerate Button */}
-          {onRegenerate && (
-            <button
-              onClick={onRegenerate}
-              className="mt-1.75 p-0.75 rounded-md transition-all duration-200"
-              style={{
-                background: isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.05)",
-                color: isDark
-                  ? "rgba(255,255,255,0.6)"
-                  : "rgba(0,0,0,0.5)",
-              }}
-            >
-              <svg
-                className="w-3.5 h-3.5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={1.5}
-                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                />
-              </svg>
-            </button>
+          {/* Action Buttons —— 重新生成 + 复制 */}
+          {(onRegenerate || parsedContent.mainContent) && (
+            <div className="flex items-center gap-1.5 mt-2">
+              {onRegenerate && (
+                <button
+                  type="button"
+                  onClick={onRegenerate}
+                  aria-label="Regenerate"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all duration-200"
+                  style={{
+                    background: "transparent",
+                    border: "0.5px solid var(--divider-strong)",
+                    color: "var(--fg2)",
+                    fontSize: "11px",
+                    fontWeight: 500,
+                    letterSpacing: "0.01em",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "var(--hover-bg)";
+                    e.currentTarget.style.boxShadow =
+                      "var(--shadow-inset), var(--shadow-xs)";
+                    e.currentTarget.style.color = "var(--fg1)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "transparent";
+                    e.currentTarget.style.boxShadow = "none";
+                    e.currentTarget.style.color = "var(--fg2)";
+                  }}
+                  onMouseDown={(e) => {
+                    e.currentTarget.style.transform = "scale(0.96)";
+                  }}
+                  onMouseUp={(e) => {
+                    e.currentTarget.style.transform = "scale(1)";
+                  }}
+                >
+                  <svg
+                    className="w-3 h-3"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={1.8}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    viewBox="0 0 24 24"
+                    aria-hidden
+                  >
+                    <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  <span>Regenerate</span>
+                </button>
+              )}
+
+              {parsedContent.mainContent && (
+                <button
+                  type="button"
+                  onClick={handleCopy}
+                  aria-label={copied ? "Copied" : "Copy"}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all duration-200"
+                  style={{
+                    background: copied ? "var(--surface-1)" : "transparent",
+                    border: copied
+                      ? "0.5px solid var(--divider-strong)"
+                      : "0.5px solid var(--divider-strong)",
+                    color: copied ? "var(--fg1)" : "var(--fg2)",
+                    fontSize: "11px",
+                    fontWeight: 500,
+                    letterSpacing: "0.01em",
+                    boxShadow: copied
+                      ? "var(--shadow-inset), var(--shadow-xs)"
+                      : "none",
+                  }}
+                  onMouseEnter={(e) => {
+                    if (copied) return;
+                    e.currentTarget.style.background = "var(--hover-bg)";
+                    e.currentTarget.style.boxShadow =
+                      "var(--shadow-inset), var(--shadow-xs)";
+                    e.currentTarget.style.color = "var(--fg1)";
+                  }}
+                  onMouseLeave={(e) => {
+                    if (copied) return;
+                    e.currentTarget.style.background = "transparent";
+                    e.currentTarget.style.boxShadow = "none";
+                    e.currentTarget.style.color = "var(--fg2)";
+                  }}
+                  onMouseDown={(e) => {
+                    e.currentTarget.style.transform = "scale(0.96)";
+                  }}
+                  onMouseUp={(e) => {
+                    e.currentTarget.style.transform = "scale(1)";
+                  }}
+                >
+                  {copied ? (
+                    <svg
+                      className="w-3 h-3"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={2.2}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      viewBox="0 0 24 24"
+                      aria-hidden
+                    >
+                      <path d="M5 13l4 4L19 7" />
+                    </svg>
+                  ) : (
+                    <svg
+                      className="w-3 h-3"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={1.8}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      viewBox="0 0 24 24"
+                      aria-hidden
+                    >
+                      <rect x="9" y="9" width="11" height="11" rx="2" ry="2" />
+                      <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                    </svg>
+                  )}
+                  <span>{copied ? "Copied" : "Copy"}</span>
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}

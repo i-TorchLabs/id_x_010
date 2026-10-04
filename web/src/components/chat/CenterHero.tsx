@@ -82,8 +82,9 @@ export function CenterHero({
                                 background: isDark
                                     ? "rgba(255,255,255,0.06)"
                                     : "rgba(0,0,0,0.04)",
-                                border: "0.5px solid var(--divider)",
-                                boxShadow: "var(--shadow-sm)",
+                                border: "0.5px solid var(--divider-strong)",
+                                boxShadow:
+                                    "var(--shadow-inset), var(--shadow-md)",
                             }}
                         >
                             <svg

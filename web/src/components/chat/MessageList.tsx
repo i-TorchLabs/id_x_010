@@ -54,7 +54,7 @@ export function MessageList({
       style={{
         scrollbarWidth: "thin",
         scrollbarColor: "var(--divider) transparent",
-        padding: "16px",
+        padding: "20px 24px",
       }}
     >
       <div className="w-full">
@@ -70,8 +70,8 @@ export function MessageList({
               style={{
                 borderRadius: "18px",
                 background: "var(--surface-1)",
-                border: "0.5px solid var(--divider)",
-                boxShadow: "var(--shadow-sm)",
+                border: "0.5px solid var(--divider-strong)",
+                boxShadow: "var(--shadow-inset), var(--shadow-md)",
               }}
             >
               <svg

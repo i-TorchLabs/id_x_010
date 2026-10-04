@@ -196,6 +196,78 @@ class ModelSettingsResponseType:
 
 
 @strawberry.input
+class TestConnectionInput:
+    """连通性测试入参：仅测试不落库。"""
+    base_url: str = strawberry.field(description="OpenAI 兼容接口地址")
+    api_key: str = strawberry.field(description="API-KEY")
+    model_name: str = strawberry.field(description="模型名称")
+
+
+@strawberry.type
+class TestConnectionResponseType:
+    success: bool = strawberry.field(description="连通性是否通过")
+    message: str = strawberry.field(description="人类可读的检测结果")
+
+
+# ---------------------------------------------------------------------------
+# 外部模型管理（external_models 表的 CRUD，支持多模型 + Provider 自定义）
+# ---------------------------------------------------------------------------
+
+
+@strawberry.type
+class ExternalModelType:
+    """external_models 表的完整记录（含 api_key，供弹窗编辑回填）。"""
+    id: int = strawberry.field(description="模型记录ID")
+    name: str = strawberry.field(description="模型名称")
+    provider: str = strawberry.field(description="模型厂商（用户自定义）")
+    base_url: str = strawberry.field(description="访问地址")
+    api_key: str = strawberry.field(description="API-KEY")
+
+
+@strawberry.type
+class ExternalModelListResponseType:
+    success: bool = strawberry.field(description="是否成功")
+    message: str = strawberry.field(description="消息")
+    models: List[ExternalModelType] = strawberry.field(
+        default_factory=list, description="外部模型列表"
+    )
+
+
+@strawberry.input
+class ExternalModelInput:
+    """新增 / 更新外部模型入参。id 为 None 时新增，非 None 时更新对应行。"""
+    id: Optional[int] = strawberry.field(default=None, description="已有记录ID（更新时传）")
+    provider: str = strawberry.field(description="模型厂商（用户自定义）")
+    base_url: str = strawberry.field(description="OpenAI 兼容接口地址")
+    api_key: str = strawberry.field(description="API-KEY")
+    model_name: str = strawberry.field(description="模型名称")
+    test_connection: bool = strawberry.field(
+        default=True, description="保存前是否做连通性检测"
+    )
+
+
+@strawberry.type
+class ExternalModelMutationResponseType:
+    success: bool = strawberry.field(description="是否成功")
+    message: str = strawberry.field(description="消息")
+    model: Optional[ExternalModelType] = strawberry.field(
+        default=None, description="新增/更新后的模型记录"
+    )
+
+
+@strawberry.type
+class DeleteExternalModelResponseType:
+    success: bool = strawberry.field(description="是否成功")
+    message: str = strawberry.field(description="消息")
+
+
+@strawberry.type
+class SetActiveModelResponseType:
+    success: bool = strawberry.field(description="是否成功")
+    message: str = strawberry.field(description="消息")
+
+
+@strawberry.input
 class ChatInput:
     query: str = strawberry.field(description="用户输入的问题")
     model_type: str = strawberry.field(

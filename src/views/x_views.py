@@ -12,6 +12,7 @@ from utils.log_util import get_request_id, logger
 from x_models.id_x_010.src.models.x_models import (
     AgentDBSettings,
     ConversationLog,
+    ExternalModel,
     ExternalProvider,
     LocalProvider,
     UsageLog,
@@ -302,9 +303,144 @@ async def upsert_user_model_settings(
         return settings
 
 
+def _normalize_base_url(url: str) -> str:
+    """归一化 base_url 用于唯一性比对：去首尾空白 + 去尾部斜杠 + 转小写。
+
+    确保 ``https://API.x.com/v1/`` 与 ``https://api.x.com/v1`` 被判定为同一端点。
+    注意：返回值仅用于查询比对，落库时仍保留调用方传入的原始大小写形式。
+    """
+    return (url or "").strip().rstrip("/").lower()
+
+
+async def upsert_external_model(
+    name: str,
+    provider: str,
+    base_url: str,
+    api_key: str,
+) -> Optional[ExternalModel]:
+    """以 base_url 为唯一键新建或更新 external_models 表中的行。
+
+    供 Model Settings 弹窗保存时同步登记：用户配置的模型会出现在
+    get_models() 返回的模型列表里，便于在消息输入框选择切换。
+
+    匹配策略：归一化后的 base_url（去尾部斜杠 + 小写）命中现有行则更新
+    name / provider / api_key（base_url 保持原值不变）；否则插入新行。
+    表层有 unique index 兜底，应用层与 DB 双重保证不重复。
+    """
+    normalized = _normalize_base_url(base_url)
+    if not normalized:
+        return None
+
+    try:
+        async with get_session()() as session:
+            # 查询时对存储值做同样的归一化比对（DB 端无法对表达式建函数索引，
+            # 故先全表读取候选行再做应用层归一化匹配——external_models 行数极少，无性能问题）
+            result = await session.execute(
+                select(ExternalModel).where(
+                    ExternalModel.base_url.ilike(f"{normalized}%")
+                )
+            )
+            candidates = result.scalars().all()
+            model = next(
+                (m for m in candidates if _normalize_base_url(m.base_url) == normalized),
+                None,
+            )
+
+            if model is None:
+                model = ExternalModel(
+                    name=name,
+                    provider=provider,
+                    base_url=base_url,
+                    api_key=api_key,
+                )
+                session.add(model)
+                action = "新增"
+            else:
+                # base_url 是唯一键，保持原值；其余字段按用户最新输入更新
+                model.name = name
+                model.provider = provider
+                model.api_key = api_key
+                action = "更新"
+
+            await session.commit()
+            await session.refresh(model)
+            logger.info(
+                f"{get_request_id()}external_models 已{action}: "
+                f"provider={provider}, name={name}, id={model.id}, base_url={base_url}"
+            )
+            return model
+    except Exception as e:
+        logger.error(
+            f"{get_request_id()}登记 external_models 失败: {e}", exc_info=True
+        )
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Markdown 提示词库
 # ---------------------------------------------------------------------------
+
+
+async def list_external_models() -> List[ExternalModel]:
+    """列出 external_models 表全部行（按 id 升序）。"""
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(ExternalModel).order_by(ExternalModel.id)
+            )
+            return list(result.scalars().all())
+    except Exception as e:
+        logger.error(f"{get_request_id()}列出外部模型失败: {e}", exc_info=True)
+        return []
+
+
+async def get_external_model_by_id(model_id: int) -> Optional[ExternalModel]:
+    """按 id 读取单行 external_models。"""
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(ExternalModel).where(ExternalModel.id == model_id)
+            )
+            return result.scalar_one_or_none()
+    except Exception as e:
+        logger.error(f"{get_request_id()}读取外部模型失败: {e}", exc_info=True)
+        return None
+
+
+async def get_external_model_by_name(name: str) -> Optional[ExternalModel]:
+    """按模型名称读取单行 external_models。供 stream_chat 据前端选中的
+    model_name 解析对应的 base_url / api_key，无需 user_model_settings 中转。
+    """
+    if not name:
+        return None
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(ExternalModel).where(ExternalModel.name == name)
+            )
+            return result.scalar_one_or_none()
+    except Exception as e:
+        logger.error(f"{get_request_id()}按名称读取外部模型失败: {e}", exc_info=True)
+        return None
+
+
+async def delete_external_model(model_id: int) -> bool:
+    """按 id 删除 external_models 行。返回是否删除成功（行不存在时返回 False）。"""
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(ExternalModel).where(ExternalModel.id == model_id)
+            )
+            model = result.scalar_one_or_none()
+            if model is None:
+                return False
+            await session.delete(model)
+            await session.commit()
+            logger.info(f"{get_request_id()}外部模型已删除: id={model_id}")
+            return True
+    except Exception as e:
+        logger.error(f"{get_request_id()}删除外部模型失败: {e}", exc_info=True)
+        return False
 
 
 async def list_user_markdown_prompts(user_id: int) -> List[UserMarkdownPrompt]:
@@ -557,41 +693,80 @@ async def test_model_connectivity(
     """以最小开销调用一次模型，验证 (base_url, api_key, model_name) 可用性。
 
     面向 OpenAI 兼容接口（ChatOpenAI 约定），返回 (是否成功, 人类可读消息)。
+
+    采用自适应温度策略：先用 ``temperature=0`` 探测；若返回
+    ``invalid temperature`` 类错误（reasoning 模型如 DeepSeek-R1 / o1 系列只
+    允许 temperature=1），自动回退到 ``temperature=1`` 重试一次。
     """
     from langchain_core.messages import HumanMessage
     from langchain_openai import ChatOpenAI
     from pydantic import SecretStr
 
-    llm = ChatOpenAI(
-        model=model_name,
-        api_key=SecretStr(api_key),
-        base_url=base_url,
-        temperature=0,
-        max_retries=1,
-        timeout=15,
-        streaming=False,
-    )
-
-    try:
-        await asyncio.wait_for(
-            llm.ainvoke([HumanMessage(content="ping")]), timeout=timeout
+    def _build_llm(temp: float) -> ChatOpenAI:
+        return ChatOpenAI(
+            model=model_name,
+            api_key=SecretStr(api_key),
+            base_url=base_url,
+            temperature=temp,
+            max_retries=1,
+            timeout=15,
+            streaming=False,
         )
+
+    async def _try_once(temp: float) -> Tuple[bool, str, bool]:
+        """单次探测。返回 (是否成功, 错误原文, 是否超时)。"""
+        llm = _build_llm(temp)
+        try:
+            await asyncio.wait_for(
+                llm.ainvoke([HumanMessage(content="ping")]), timeout=timeout
+            )
+            return True, "", False
+        except asyncio.TimeoutError:
+            return False, "", True
+        except Exception as e:
+            return False, str(e), False
+
+    # 第一轮：temperature=0（绝大多数模型适用）
+    ok, err, is_timeout = await _try_once(0.0)
+    if ok:
         logger.info(
             f"{get_request_id()}模型连通性检测通过: model={model_name}, base_url={base_url}"
         )
         return True, "连通性检测通过，模型响应正常"
-    except asyncio.TimeoutError:
+
+    # 超时单独处理，不重试（重试也是超时）
+    if is_timeout:
         logger.warning(
             f"{get_request_id()}模型连通性检测超时: model={model_name}, base_url={base_url}"
         )
         return False, f"连接超时（>{timeout} 秒无响应），请检查访问地址是否可达"
-    except Exception as e:
-        detail = str(e).replace("\n", " ")[:200]
-        logger.warning(
-            f"{get_request_id()}模型连通性检测失败: model={model_name}, "
-            f"base_url={base_url} | 原因: {type(e).__name__}: {detail}"
+
+    # 若是 temperature 限制错误，回退到 temperature=1 重试
+    err_lower = (err or "").lower()
+    if "temperature" in err_lower and (
+        "only 1 is allowed" in err_lower or "invalid" in err_lower
+    ):
+        logger.info(
+            f"{get_request_id()}模型限制 temperature=1，自动回退重试: model={model_name}"
         )
-        return False, f"连接失败: {type(e).__name__}: {detail}"
+        ok2, err2, is_timeout2 = await _try_once(1.0)
+        if ok2:
+            logger.info(
+                f"{get_request_id()}模型连通性检测通过(temperature=1): "
+                f"model={model_name}, base_url={base_url}"
+            )
+            return True, "连通性检测通过，模型响应正常"
+        if is_timeout2:
+            return False, f"连接超时（>{timeout} 秒无响应），请检查访问地址是否可达"
+        err = err2
+
+    # 真正失败
+    detail = (err or "").replace("\n", " ")[:200]
+    logger.warning(
+        f"{get_request_id()}模型连通性检测失败: model={model_name}, "
+        f"base_url={base_url} | 原因: {detail}"
+    )
+    return False, f"连接失败: {detail}"
 
 
 # ==========================================

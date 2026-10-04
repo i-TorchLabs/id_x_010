@@ -108,15 +108,17 @@ export function ChatSidebar({
                 <Separator />
 
                 {/* ── New Chat ── */}
-                <div className="px-4 py-3 shrink-0">
+                <div className="px-4 pt-3 pb-2 shrink-0">
                     <Button
                         fullWidth
                         variant="primary"
                         onPress={onNewChat}
                         className="rounded-full font-semibold"
                         style={{
-                            boxShadow: "var(--shadow-sm)",
+                            boxShadow: "var(--shadow-inset), var(--shadow-sm)",
                             letterSpacing: "-0.01em",
+                            transition:
+                                "box-shadow 180ms ease, transform 180ms ease",
                         }}
                     >
                         <svg

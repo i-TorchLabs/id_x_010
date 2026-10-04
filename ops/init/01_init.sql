@@ -137,12 +137,19 @@ CREATE TABLE IF NOT EXISTS external_models (
 CREATE INDEX IF NOT EXISTS ix_external_models_name ON external_models(name);
 CREATE INDEX IF NOT EXISTS ix_external_models_provider ON external_models(provider);
 
+-- base_url 唯一索引（应用层以 base_url 为唯一键 upsert）。
+-- 老库可能存在重复 base_url 行：先按 (base_url, id) 保留 id 最小的一行，
+-- 删除其余重复行，再建唯一索引。已存在唯一索引时本块幂等无副作用。
+DELETE FROM external_models a USING external_models b
+WHERE a.base_url = b.base_url AND a.id > b.id;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_external_models_base_url ON external_models(base_url);
+
 -- 添加表注释
 COMMENT ON TABLE external_models IS '外部模型表';
 COMMENT ON COLUMN external_models.id IS 'ID';
 COMMENT ON COLUMN external_models.name IS '模型名称';
 COMMENT ON COLUMN external_models.provider IS '模型商';
-COMMENT ON COLUMN external_models.base_url IS '访问地址';
+COMMENT ON COLUMN external_models.base_url IS '访问地址（唯一键，应用层据此 upsert）';
 COMMENT ON COLUMN external_models.api_key IS 'API-KEY';
 
 -- ============================================

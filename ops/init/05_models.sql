@@ -3,5 +3,5 @@
 -- getModels 接口返回本表全部行；WHERE NOT EXISTS 保证重复执行不产生重复记录。
 
 INSERT INTO external_models (name, provider, base_url, api_key)
-SELECT 'zai-org/GLM-5.2', '硅基流动', 'https://api.siliconflow.cn/v1', 'sk-wdqcchmtuorxjjdftgrdmzjxqjgzolsegqmlqgaxsuuhwlxk'
+SELECT 'zai-org/GLM-5.2', 'Default', 'https://api.siliconflow.cn/v1', 'sk-wdqcchmtuorxjjdftgrdmzjxqjgzolsegqmlqgaxsuuhwlxk'
 WHERE NOT EXISTS (SELECT 1 FROM external_models WHERE name = 'zai-org/GLM-5.2');

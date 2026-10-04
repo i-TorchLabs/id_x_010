@@ -75,7 +75,7 @@ export function AgentSelector({
                 className="w-auto"
             >
                 <Select.Trigger
-                    className={`${isSmall ? "h-9 px-1.5" : "h-11 px-2"} min-w-[120px] max-w-[200px] whitespace-nowrap overflow-hidden flex items-center`}
+                    className={`pill-trigger ${isSmall ? "h-9 px-1.5" : "h-11 px-2"} min-w-[120px] max-w-[200px] whitespace-nowrap overflow-hidden flex items-center rounded-lg`}
                 >
                     <Select.Value
                         className={`!flex !flex-1 !min-w-0 h-auto ${isSmall ? "h-7 text-xs" : "h-9 text-sm"} px-2.5 !items-center !justify-center !text-center rounded-md font-medium truncate bg-default/60 text-foreground`}

@@ -279,7 +279,8 @@ function StatCard({
       className="rounded-xl px-3.5 py-3"
       style={{
         background: "var(--card)",
-        border: "0.5px solid var(--divider)",
+        border: "0.5px solid var(--divider-strong)",
+        boxShadow: "var(--shadow-inset), var(--shadow-xs)",
       }}
     >
       <div
@@ -471,7 +472,8 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
                   className="rounded-xl px-3 pt-3 pb-1"
                   style={{
                     background: "var(--card)",
-                    border: "0.5px solid var(--divider)",
+                    border: "0.5px solid var(--divider-strong)",
+                    boxShadow: "var(--shadow-inset), var(--shadow-xs)",
                   }}
                 >
                   <div
@@ -513,7 +515,10 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
                   ) : (
                     <div
                       className="rounded-xl overflow-hidden"
-                      style={{ border: "0.5px solid var(--divider)" }}
+                      style={{
+                        border: "0.5px solid var(--divider-strong)",
+                        boxShadow: "var(--shadow-inset), var(--shadow-xs)",
+                      }}
                     >
                       {data.byModel.map((m, i) => {
                         const ratio =

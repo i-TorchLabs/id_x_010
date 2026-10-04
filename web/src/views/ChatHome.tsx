@@ -39,38 +39,42 @@ type ChatMessage = {
 function SidebarToggle({
   open,
   onToggle,
-  isDark,
 }: {
   open: boolean;
   onToggle: () => void;
-  isDark: boolean;
 }) {
   return (
     <motion.button
       type="button"
       onClick={onToggle}
       aria-label={open ? "Collapse sidebar" : "Expand sidebar"}
-      whileTap={{ x: open ? -2 : 2 }}
-      className={`absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 z-50 w-6 h-12 rounded-full flex items-center justify-center shadow-md transition-colors ${
-        isDark
-          ? "bg-[#1c1c1e] text-[rgba(255,255,255,0.7)] hover:bg-[#2c2c2e] border border-[#3a3a3c]"
-          : "bg-white text-[rgba(0,0,0,0.55)] hover:bg-gray-50 border border-black/5"
-      }`}
+      whileHover={{ scale: 1.06 }}
+      whileTap={{ scale: 0.92 }}
+      transition={{ type: "spring", stiffness: 500, damping: 30 }}
+      className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 z-50 flex items-center justify-center"
+      style={{
+        width: "22px",
+        height: "22px",
+        borderRadius: "8px",
+        background: "var(--surface-2)",
+        border: "0.5px solid var(--divider-strong)",
+        color: "var(--fg2)",
+        boxShadow: "var(--shadow-inset), var(--shadow-md)",
+      }}
     >
-      <svg
-        className="w-3.5 h-3.5"
+      <motion.svg
+        className="w-3 h-3"
         fill="none"
         stroke="currentColor"
+        strokeWidth={2.2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
         viewBox="0 0 24 24"
+        animate={{ rotate: open ? 0 : 180 }}
+        transition={{ duration: 0.22, ease: "easeOut" }}
       >
-        <motion.path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2.5}
-          animate={{ d: open ? "M15 19l-7-7 7-7" : "M9 5l7 7-7 7" }}
-          transition={{ duration: 0.18 }}
-        />
-      </svg>
+        <path d="M15 18l-6-6 6-6" />
+      </motion.svg>
     </motion.button>
   );
 }
@@ -712,7 +716,6 @@ export default function ChatHome() {
         <SidebarToggle
           open={isSidebarOpen}
           onToggle={() => setIsSidebarOpen(!isSidebarOpen)}
-          isDark={isDark}
         />
 
         {/* Chat Content */}

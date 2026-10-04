@@ -441,6 +441,21 @@ export interface ModelSettingsInput {
   modelName: string;
 }
 
+// 连通性测试输入类型
+export interface TestConnectionInput {
+  baseUrl: string;
+  apiKey: string;
+  modelName: string;
+}
+
+// 连通性测试响应类型
+export interface TestConnectionPayload {
+  testConnection: {
+    success: boolean;
+    message: string;
+  };
+}
+
 /**
  * 模型设置 GraphQL API
  */
@@ -493,6 +508,158 @@ export const settingsGraphqlApi = {
     return graphqlClient.request<SaveModelSettingsPayload>({
       query: mutation,
       variables: { input },
+    });
+  },
+
+  /**
+   * 测试模型连通性（不落库），用于保存前的独立检测
+   */
+  testConnection: async (
+    input: TestConnectionInput,
+  ): Promise<TestConnectionPayload> => {
+    const mutation = `
+      mutation TestConnection($input: TestConnectionInput!) {
+        testConnection(input: $input) {
+          success
+          message
+        }
+      }
+    `;
+    return graphqlClient.request<TestConnectionPayload>({
+      query: mutation,
+      variables: { input },
+    });
+  },
+};
+
+// ── 外部模型管理（多模型 + Provider 自定义）──
+
+export interface ExternalModelItem {
+  id: number;
+  name: string;
+  provider: string;
+  baseUrl: string;
+  apiKey: string;
+}
+
+export interface ExternalModelListPayload {
+  externalModels: {
+    success: boolean;
+    message: string;
+    models: ExternalModelItem[];
+  };
+}
+
+export interface ExternalModelSaveInput {
+  id?: number | null;
+  provider: string;
+  baseUrl: string;
+  apiKey: string;
+  modelName: string;
+  testConnection?: boolean;
+}
+
+export interface ExternalModelMutationPayload {
+  saveExternalModel: {
+    success: boolean;
+    message: string;
+    model: ExternalModelItem | null;
+  };
+}
+
+export interface DeleteExternalModelPayload {
+  deleteExternalModel: {
+    success: boolean;
+    message: string;
+  };
+}
+
+export interface SetActiveModelPayload {
+  setActiveModel: {
+    success: boolean;
+    message: string;
+  };
+}
+
+export const externalModelGraphqlApi = {
+  /** 列出 external_models 全部记录 */
+  listExternalModels: async (): Promise<ExternalModelListPayload> => {
+    const query = `
+      query ExternalModels {
+        externalModels {
+          success
+          message
+          models {
+            id
+            name
+            provider
+            baseUrl
+            apiKey
+          }
+        }
+      }
+    `;
+    return graphqlClient.request<ExternalModelListPayload>({ query });
+  },
+
+  /** 新增/更新外部模型（可选连通性检测） */
+  saveExternalModel: async (
+    input: ExternalModelSaveInput,
+  ): Promise<ExternalModelMutationPayload> => {
+    const mutation = `
+      mutation SaveExternalModel($input: ExternalModelInput!) {
+        saveExternalModel(input: $input) {
+          success
+          message
+          model {
+            id
+            name
+            provider
+            baseUrl
+            apiKey
+          }
+        }
+      }
+    `;
+    return graphqlClient.request<ExternalModelMutationPayload>({
+      query: mutation,
+      variables: { input },
+    });
+  },
+
+  /** 删除外部模型 */
+  deleteExternalModel: async (
+    modelId: number,
+  ): Promise<DeleteExternalModelPayload> => {
+    const mutation = `
+      mutation DeleteExternalModel($modelId: Int!) {
+        deleteExternalModel(modelId: $modelId) {
+          success
+          message
+        }
+      }
+    `;
+    return graphqlClient.request<DeleteExternalModelPayload>({
+      query: mutation,
+      variables: { modelId },
+    });
+  },
+
+  /** 设为活跃模型（写入 user_model_settings，orchestrator 据此建连） */
+  setActiveModel: async (
+    modelId: number,
+  ): Promise<SetActiveModelPayload> => {
+    const mutation = `
+      mutation SetActiveModel($modelId: Int!) {
+        setActiveModel(modelId: $modelId) {
+          success
+          message
+        }
+      }
+    `;
+    return graphqlClient.request<SetActiveModelPayload>({
+      query: mutation,
+      variables: { modelId },
     });
   },
 };

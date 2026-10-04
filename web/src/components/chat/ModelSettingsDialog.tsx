@@ -1,51 +1,32 @@
 /**
- * 模型设置弹窗
- * 支持选择模型厂商、自定义 base_url / API-Key / 模型名称；
- * 点击保存后由后端进行连通性检测，通过才落库，结果在弹窗内即时反馈。
+ * Model Settings dialog
+ *
+ * Multi-model management:
+ *  - Top: list of external_models rows, each editable/deletable
+ *  - Bottom: add/edit form with free-text provider (datalist suggestions)
+ *  - Optional connectivity test before save
+ *  - "Active model" concept removed — the model used for Q&A is determined
+ *    by whichever model the user selects in the message input's model dropdown.
  */
 
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Button, Input, Label, Modal, TextField } from "@heroui/react";
 import {
-  Button,
-  Input,
-  Label,
-  ListBox,
-  Modal,
-  Select,
-  TextField,
-} from "@heroui/react";
-import { settingsGraphqlApi } from "@/api/graphql";
+  settingsGraphqlApi,
+  externalModelGraphqlApi,
+  type ExternalModelItem,
+} from "@/api/graphql";
 
-// 厂商预设（OpenAI 兼容接口）；选择后自动带出默认 base_url，仍可手动修改
-const PROVIDER_PRESETS: { value: string; label: string; baseUrl: string }[] = [
-  {
-    value: "siliconflow",
-    label: "SiliconFlow",
-    baseUrl: "https://api.siliconflow.cn/v1",
-  },
-  { value: "openai", label: "OpenAI", baseUrl: "https://api.openai.com/v1" },
-  { value: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1" },
-  {
-    value: "openrouter",
-    label: "OpenRouter",
-    baseUrl: "https://openrouter.ai/api/v1",
-  },
-  {
-    value: "dashscope",
-    label: "Alibaba DashScope",
-    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-  },
-  {
-    value: "zhipu",
-    label: "Zhipu AI",
-    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-  },
-  { value: "custom", label: "Custom", baseUrl: "" },
+const PROVIDER_SUGGESTIONS: { name: string; baseUrl: string }[] = [
+  { name: "SiliconFlow", baseUrl: "https://api.siliconflow.cn/v1" },
+  { name: "OpenAI", baseUrl: "https://api.openai.com/v1" },
+  { name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1" },
+  { name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1" },
+  { name: "Alibaba DashScope", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" },
+  { name: "Zhipu AI", baseUrl: "https://open.bigmodel.cn/api/paas/v4" },
 ];
-
-const DEFAULT_PROVIDER = PROVIDER_PRESETS[0];
 
 interface ModelSettingsDialogProps {
   isOpen: boolean;
@@ -60,91 +41,193 @@ export function ModelSettingsDialog({
   onOpenChange,
   onSaved,
 }: ModelSettingsDialogProps) {
-  const [provider, setProvider] = useState<string>(DEFAULT_PROVIDER.value);
-  const [baseUrl, setBaseUrl] = useState<string>(DEFAULT_PROVIDER.baseUrl);
+  const [models, setModels] = useState<ExternalModelItem[]>([]);
+
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [provider, setProvider] = useState<string>("");
+  const [baseUrl, setBaseUrl] = useState<string>("");
   const [apiKey, setApiKey] = useState<string>("");
   const [modelName, setModelName] = useState<string>("");
+
   const [isLoading, setIsLoading] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState<number | null>(null);
   const [feedback, setFeedback] = useState<Feedback>(null);
 
-  // 打开弹窗时加载已保存的设置
-  useEffect(() => {
-    if (!isOpen) return;
-
-    setFeedback(null);
+  const loadAll = useCallback(async () => {
     setIsLoading(true);
-
-    settingsGraphqlApi
-      .getModelSettings()
-      .then((res) => {
-        const settings = res.getModelSettings.settings;
-        if (settings) {
-          setProvider(
-            PROVIDER_PRESETS.some((p) => p.value === settings.provider)
-              ? settings.provider
-              : "custom",
-          );
-          setBaseUrl(settings.baseUrl);
-          setApiKey(settings.apiKey);
-          setModelName(settings.modelName);
-        }
-      })
-      .catch((err) => {
-        console.error("Failed to load model settings:", err);
-      })
-      .finally(() => setIsLoading(false));
-  }, [isOpen]);
-
-  const handleProviderChange = useCallback((key: string) => {
-    setProvider(key);
-    const preset = PROVIDER_PRESETS.find((p) => p.value === key);
-    if (preset && preset.baseUrl) {
-      setBaseUrl(preset.baseUrl);
+    setFeedback(null);
+    try {
+      const listRes = await externalModelGraphqlApi.listExternalModels();
+      if (listRes.externalModels.success) {
+        setModels(listRes.externalModels.models);
+      }
+    } catch (err) {
+      console.error("Failed to load model data:", err);
+    } finally {
+      setIsLoading(false);
     }
   }, []);
 
-  const handleSave = useCallback(async () => {
-    if (isSaving) return;
+  useEffect(() => {
+    if (isOpen) {
+      void loadAll();
+      setEditingId(null);
+      setProvider("");
+      setBaseUrl("");
+      setApiKey("");
+      setModelName("");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
-    if (!provider || !baseUrl.trim() || !apiKey.trim() || !modelName.trim()) {
-      setFeedback({ type: "error", text: "Please complete provider, endpoint, API key and model name" });
+  const handleProviderInput = useCallback(
+    (value: string) => {
+      setProvider(value);
+      const suggestion = PROVIDER_SUGGESTIONS.find(
+        (s) => s.name.toLowerCase() === value.trim().toLowerCase(),
+      );
+      if (suggestion) {
+        const isPresetUrl = PROVIDER_SUGGESTIONS.some(
+          (s) => s.baseUrl === baseUrl,
+        );
+        if (!baseUrl || isPresetUrl) {
+          setBaseUrl(suggestion.baseUrl);
+        }
+      }
+    },
+    [baseUrl],
+  );
+
+  const resetForm = useCallback(() => {
+    setEditingId(null);
+    setProvider("");
+    setBaseUrl("");
+    setApiKey("");
+    setModelName("");
+    setFeedback(null);
+  }, []);
+
+  const handleEdit = useCallback((m: ExternalModelItem) => {
+    setEditingId(m.id);
+    setProvider(m.provider);
+    setBaseUrl(m.baseUrl);
+    setApiKey(m.apiKey);
+    setModelName(m.name);
+    setFeedback(null);
+  }, []);
+
+  const handleTest = useCallback(async () => {
+    if (isTesting || isSaving) return;
+    if (!baseUrl.trim() || !apiKey.trim() || !modelName.trim()) {
+      setFeedback({
+        type: "error",
+        text: "Please complete endpoint, API key and model name before testing",
+      });
       return;
     }
-
-    setIsSaving(true);
+    setIsTesting(true);
     setFeedback(null);
-
     try {
-      const res = await settingsGraphqlApi.saveModelSettings({
-        provider,
+      const res = await settingsGraphqlApi.testConnection({
         baseUrl: baseUrl.trim(),
         apiKey: apiKey.trim(),
         modelName: modelName.trim(),
       });
+      const { success, message } = res.testConnection;
+      setFeedback({
+        type: success ? "success" : "error",
+        text: success ? `Connection OK — ${message}` : message,
+      });
+    } catch (err) {
+      setFeedback({
+        type: "error",
+        text:
+          err instanceof Error
+            ? err.message
+            : "Test failed, please try again later",
+      });
+    } finally {
+      setIsTesting(false);
+    }
+  }, [apiKey, baseUrl, isSaving, isTesting, modelName]);
 
-      const { success, message } = res.saveModelSettings;
+  const handleSave = useCallback(async () => {
+    if (isSaving) return;
+    if (!provider.trim() || !baseUrl.trim() || !apiKey.trim() || !modelName.trim()) {
+      setFeedback({
+        type: "error",
+        text: "Please complete provider, endpoint, API key and model name",
+      });
+      return;
+    }
+    setIsSaving(true);
+    setFeedback(null);
+    try {
+      const res = await externalModelGraphqlApi.saveExternalModel({
+        id: editingId,
+        provider: provider.trim(),
+        baseUrl: baseUrl.trim(),
+        apiKey: apiKey.trim(),
+        modelName: modelName.trim(),
+        testConnection: true,
+      });
+      const { success, message } = res.saveExternalModel;
       setFeedback({ type: success ? "success" : "error", text: message });
-
       if (success) {
         onSaved?.();
-        // 成功后稍作停留让用户看到检测结果，再自动关闭
-        setTimeout(() => onOpenChange(false), 1200);
+        await loadAll();
+        resetForm();
       }
     } catch (err) {
       setFeedback({
         type: "error",
-        text: err instanceof Error ? err.message : "Save failed, please try again later",
+        text:
+          err instanceof Error ? err.message : "Save failed, please try again",
       });
     } finally {
       setIsSaving(false);
     }
-  }, [apiKey, baseUrl, isSaving, modelName, onOpenChange, onSaved, provider]);
+  }, [apiKey, baseUrl, editingId, isSaving, loadAll, modelName, onSaved, provider, resetForm]);
+
+  const handleDelete = useCallback(
+    async (m: ExternalModelItem) => {
+      if (isDeleting !== null) return;
+      setIsDeleting(m.id);
+      setFeedback(null);
+      try {
+        const res = await externalModelGraphqlApi.deleteExternalModel(m.id);
+        const { success, message } = res.deleteExternalModel;
+        if (success) {
+          setFeedback({ type: "success", text: message });
+          if (editingId === m.id) resetForm();
+          await loadAll();
+          onSaved?.();
+        } else {
+          setFeedback({ type: "error", text: message });
+        }
+      } catch (err) {
+        setFeedback({
+          type: "error",
+          text:
+            err instanceof Error
+              ? err.message
+              : "Delete failed, please try again",
+        });
+      } finally {
+        setIsDeleting(null);
+      }
+    },
+    [editingId, isDeleting, loadAll, onSaved, resetForm],
+  );
+
+  const formIsEditing = editingId !== null;
 
   return (
     <Modal.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>
       <Modal.Container>
-        <Modal.Dialog className="sm:max-w-[640px]">
+        <Modal.Dialog className="sm:max-w-[720px]">
           <Modal.CloseTrigger />
           <Modal.Header>
             <Modal.Heading>Model Settings</Modal.Heading>
@@ -152,90 +235,209 @@ export function ModelSettingsDialog({
           <Modal.Body>
             {isLoading ? (
               <p className="text-sm" style={{ color: "var(--fg3)" }}>
-                Loading saved settings...
+                Loading...
               </p>
             ) : (
-              <div className="flex flex-col gap-4">
-                {/* 模型厂商 */}
-                <div className="flex flex-col gap-1.5">
-                  <Label className="text-sm font-medium">Model Provider</Label>
-                  <Select
-                    aria-label="Model provider"
-                    value={provider}
-                    onChange={(key) =>
-                      handleProviderChange(key ? String(key) : "custom")
-                    }
-                    variant="secondary"
-                    className="w-full"
-                  >
-                    <Select.Trigger className="h-11 px-2 w-full flex items-center">
-                      <Select.Value className="!flex !flex-1 !min-w-0 h-9 text-sm px-2.5 !items-center rounded-md font-medium truncate bg-default/60 text-foreground">
-                        {({ selectedText }) => (
-                          <span className="block w-full truncate">
-                            {selectedText}
-                          </span>
-                        )}
-                      </Select.Value>
-                    </Select.Trigger>
-                    <Select.Popover>
-                      <ListBox>
-                        {PROVIDER_PRESETS.map((p) => (
-                          <ListBox.Item
-                            key={p.value}
-                            id={p.value}
-                            textValue={p.label}
+              <div className="flex flex-col gap-5">
+                {/* ── Model List ── */}
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <p className="label-section">My Models</p>
+                    {models.length > 0 && (
+                      <span
+                        className="font-text"
+                        style={{ fontSize: "11px", color: "var(--fg4)" }}
+                      >
+                        {models.length} model{models.length !== 1 ? "s" : ""}
+                      </span>
+                    )}
+                  </div>
+
+                  {models.length === 0 ? (
+                    <div
+                      className="rounded-xl px-4 py-6 text-center"
+                      style={{
+                        background: "var(--surface-1)",
+                        border: "0.5px solid var(--divider)",
+                      }}
+                    >
+                      <p
+                        className="font-text"
+                        style={{ fontSize: "13px", color: "var(--fg3)" }}
+                      >
+                        No models yet — add one below
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-1.5">
+                      {models.map((m) => {
+                        const isThisDeleting = isDeleting === m.id;
+                        return (
+                          <div
+                            key={m.id}
+                            className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl"
+                            style={{
+                              background: "var(--surface-2)",
+                              border: "0.5px solid var(--divider)",
+                            }}
                           >
-                            {({ isSelected }) => (
-                              <span className="flex items-center gap-2 w-full">
-                                <span
-                                  className={`inline-block w-2 h-2 rounded-full shrink-0 transition-opacity ${
-                                    isSelected
-                                      ? "bg-green-500 opacity-100"
-                                      : "opacity-0"
-                                  }`}
-                                />
-                                <span className="flex-1">{p.label}</span>
+                            <div className="flex-1 min-w-0">
+                              <span
+                                className="font-text truncate block"
+                                style={{
+                                  fontSize: "13px",
+                                  fontWeight: 600,
+                                  color: "var(--fg1)",
+                                }}
+                              >
+                                {m.name}
                               </span>
-                            )}
-                          </ListBox.Item>
-                        ))}
-                      </ListBox>
-                    </Select.Popover>
-                  </Select>
+                              <span
+                                className="font-text truncate block"
+                                style={{
+                                  fontSize: "11px",
+                                  color: "var(--fg3)",
+                                }}
+                              >
+                                {m.provider} · {m.baseUrl}
+                              </span>
+                            </div>
+
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onPress={() => handleEdit(m)}
+                              isDisabled={isThisDeleting}
+                              className="text-xs shrink-0"
+                            >
+                              Edit
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onPress={() => handleDelete(m)}
+                              isDisabled={isThisDeleting}
+                              className="text-xs shrink-0"
+                              aria-label="Delete model"
+                            >
+                              {isThisDeleting ? "..." : "Delete"}
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <p
+                    className="font-text"
+                    style={{
+                      fontSize: "11px",
+                      color: "var(--fg4)",
+                      marginTop: "4px",
+                    }}
+                  >
+                    Select a model in the chat input dropdown to use it for Q&A
+                  </p>
                 </div>
 
-                {/* 访问地址 */}
-                <TextField fullWidth className="flex flex-col gap-1.5">
-                  <Label className="text-sm font-medium">Endpoint (base_url)</Label>
-                  <Input
-                    placeholder="https://api.example.com/v1"
-                    value={baseUrl}
-                    onChange={(e) => setBaseUrl(e.target.value)}
-                  />
-                </TextField>
+                {/* ── Add / Edit Form ── */}
+                <div
+                  className="flex flex-col gap-3 rounded-xl px-4 py-4"
+                  style={{
+                    background: "var(--surface-1)",
+                    border: "0.5px solid var(--divider)",
+                  }}
+                >
+                  <div className="flex items-center justify-between">
+                    <p className="label-section">
+                      {formIsEditing ? "Edit Model" : "Add New Model"}
+                    </p>
+                    {formIsEditing && (
+                      <button
+                        type="button"
+                        onClick={resetForm}
+                        className="font-text"
+                        style={{
+                          fontSize: "11px",
+                          color: "var(--fg3)",
+                          textDecoration: "underline",
+                        }}
+                      >
+                        Cancel edit
+                      </button>
+                    )}
+                  </div>
 
-                {/* API-KEY */}
-                <TextField fullWidth className="flex flex-col gap-1.5">
-                  <Label className="text-sm font-medium">API-KEY</Label>
-                  <Input
-                    type="text"
-                    placeholder="sk-..."
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                  />
-                </TextField>
+                  <TextField fullWidth className="flex flex-col gap-1.5">
+                    <Label className="text-sm font-medium">Model Provider</Label>
+                    <Input
+                      list="model-provider-suggestions"
+                      placeholder="e.g. SiliconFlow, OpenAI, or any custom name"
+                      value={provider}
+                      onChange={(e) => handleProviderInput(e.target.value)}
+                    />
+                    <datalist id="model-provider-suggestions">
+                      {PROVIDER_SUGGESTIONS.map((s) => (
+                        <option key={s.name} value={s.name}>
+                          {s.baseUrl}
+                        </option>
+                      ))}
+                    </datalist>
+                  </TextField>
 
-                {/* 模型名称 */}
-                <TextField fullWidth className="flex flex-col gap-1.5">
-                  <Label className="text-sm font-medium">Model Name</Label>
-                  <Input
-                    placeholder="e.g. zai-org/GLM-5.2"
-                    value={modelName}
-                    onChange={(e) => setModelName(e.target.value)}
-                  />
-                </TextField>
+                  <TextField fullWidth className="flex flex-col gap-1.5">
+                    <Label className="text-sm font-medium">
+                      Endpoint (base_url)
+                    </Label>
+                    <Input
+                      placeholder="https://api.example.com/v1"
+                      value={baseUrl}
+                      onChange={(e) => setBaseUrl(e.target.value)}
+                    />
+                  </TextField>
 
-                {/* 连通性检测 / 保存结果反馈 */}
+                  <TextField fullWidth className="flex flex-col gap-1.5">
+                    <Label className="text-sm font-medium">API-KEY</Label>
+                    <Input
+                      type="text"
+                      placeholder="sk-..."
+                      value={apiKey}
+                      onChange={(e) => setApiKey(e.target.value)}
+                    />
+                  </TextField>
+
+                  <TextField fullWidth className="flex flex-col gap-1.5">
+                    <Label className="text-sm font-medium">Model Name</Label>
+                    <Input
+                      placeholder="e.g. zai-org/GLM-5.2"
+                      value={modelName}
+                      onChange={(e) => setModelName(e.target.value)}
+                    />
+                  </TextField>
+
+                  <div className="flex items-center gap-2 mt-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onPress={handleTest}
+                      isDisabled={isSaving || isTesting}
+                    >
+                      {isTesting ? "Testing..." : "Test Connection"}
+                    </Button>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onPress={handleSave}
+                      isDisabled={isSaving || isTesting}
+                    >
+                      {isSaving
+                        ? "Testing & Saving..."
+                        : formIsEditing
+                          ? "Update Model"
+                          : "Save Model"}
+                    </Button>
+                  </div>
+                </div>
+
                 {feedback && (
                   <div
                     className="text-sm rounded-lg px-3 py-2 leading-relaxed"
@@ -258,15 +460,12 @@ export function ModelSettingsDialog({
             )}
           </Modal.Body>
           <Modal.Footer>
-            <Button slot="close" variant="tertiary" isDisabled={isSaving}>
-              Cancel
-            </Button>
             <Button
-              variant="primary"
-              onPress={handleSave}
-              isDisabled={isSaving || isLoading}
+              slot="close"
+              variant="tertiary"
+              isDisabled={isSaving || isTesting}
             >
-              {isSaving ? "Testing connection..." : "Save"}
+              Close
             </Button>
           </Modal.Footer>
         </Modal.Dialog>

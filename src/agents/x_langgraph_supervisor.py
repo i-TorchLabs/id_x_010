@@ -395,13 +395,13 @@ class LLMRouter:
             f"{get_request_id()}LLMRouter 初始化完成: model={self.model_name}, structured_output={self.use_structured_output}"
         )
 
-    def _create_llm(self) -> ChatOpenAI:
+    def _create_llm(self, temp: float = 0.0) -> ChatOpenAI:
         if self.model_type == "external":
             return ChatOpenAI(
                 model=self.model_name,
                 api_key=SecretStr(self.api_key) if self.api_key else None,
                 base_url=self.base_url,
-                temperature=0,
+                temperature=temp,
                 streaming=False,
             )
         else:
@@ -412,7 +412,7 @@ class LLMRouter:
                 model=self.model_name,
                 api_key=SecretStr(local_api_key),
                 base_url=local_base_url,
-                temperature=0,
+                temperature=temp,
                 streaming=False,
             )
 
@@ -477,13 +477,31 @@ class LLMRouter:
             )
             return "general", 0.0
 
+    @staticmethod
+    def _is_temp_error(err: Exception) -> bool:
+        lower = str(err).lower()
+        return "temperature" in lower and (
+            "only 1 is allowed" in lower or "invalid" in lower
+        )
+
     async def _route_structured(self, query: str) -> Tuple[str, float]:
         assert self.structured_llm is not None, "structured_llm must not be None"
         prompt = self._build_classification_prompt().format(query=query)
 
-        result: IntentResult = cast(
-            IntentResult, await self.structured_llm.ainvoke(prompt)
-        )
+        try:
+            result: IntentResult = cast(
+                IntentResult, await self.structured_llm.ainvoke(prompt)
+            )
+        except Exception as e:
+            if self._is_temp_error(e):
+                logger.info(
+                    f"{get_request_id()}LLM Router 限制 temperature=1，回退重试"
+                )
+                self.llm = self._create_llm(temp=1.0)
+                self.structured_llm = self.llm.with_structured_output(IntentResult)
+                result = cast(IntentResult, await self.structured_llm.ainvoke(prompt))
+            else:
+                raise
 
         intent_name = result.intent.value
         confidence = result.confidence
@@ -499,7 +517,17 @@ class LLMRouter:
     async def _route_normal(self, query: str) -> Tuple[str, float]:
         prompt = self._build_classification_prompt().format(query=query)
 
-        response = await self.llm.ainvoke([HumanMessage(content=prompt)])
+        try:
+            response = await self.llm.ainvoke([HumanMessage(content=prompt)])
+        except Exception as e:
+            if self._is_temp_error(e):
+                logger.info(
+                    f"{get_request_id()}LLM Router 限制 temperature=1，回退重试"
+                )
+                self.llm = self._create_llm(temp=1.0)
+                response = await self.llm.ainvoke([HumanMessage(content=prompt)])
+            else:
+                raise
         content = response.content
 
         content_str: str

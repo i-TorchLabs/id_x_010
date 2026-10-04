@@ -49,22 +49,34 @@ from x_models.id_x_010.src.schemas.x_schemas import (
     OauthInput,
     RegisterInput,
     StreamChunkType,
+    TestConnectionInput,
+    TestConnectionResponseType,
     UsageDailyType,
     UsageModelBreakdownType,
     UsageStatsResponseType,
     UserInfoType,
     UpdateProfileInput,
     UpdateProfileResponseType,
+    ExternalModelInput,
+    ExternalModelType,
+    ExternalModelListResponseType,
+    ExternalModelMutationResponseType,
+    DeleteExternalModelResponseType,
+    SetActiveModelResponseType,
 )
 from x_models.id_x_010.src.views.x_views import (
     build_user_info,
     create_user_markdown_prompt,
+    delete_external_model,
     delete_markdown_prompt,
     get_active_markdown_prompt,
     get_conversation_history,
+    get_external_model_by_id,
+    get_external_model_by_name,
     get_user_avatar,
     get_user_model_settings,
     list_agent_db_settings,
+    list_external_models,
     list_user_markdown_prompts,
     load_llm_provider_config,
     merge_context,
@@ -76,6 +88,7 @@ from x_models.id_x_010.src.views.x_views import (
     test_model_connectivity,
     update_markdown_content,
     update_user_profile,
+    upsert_external_model,
     upsert_user_model_settings,
     view_sso_login,
 )
@@ -437,6 +450,31 @@ class Query:
                 total_requests=0,
                 total_tokens=0,
                 total_cost_usd=0.0,
+            )
+
+    @strawberry.field(description="获取 external_models 表全部记录（含 api_key，供弹窗编辑）")
+    async def external_models(self) -> ExternalModelListResponseType:
+        try:
+            rows = await list_external_models()
+            models = [
+                ExternalModelType(
+                    id=r.id,
+                    name=r.name,
+                    provider=r.provider,
+                    base_url=r.base_url,
+                    api_key=r.api_key,
+                )
+                for r in rows
+            ]
+            return ExternalModelListResponseType(
+                success=True,
+                message=f"成功获取 {len(models)} 个外部模型",
+                models=models,
+            )
+        except Exception as e:
+            logger.error(f"{get_request_id()}获取外部模型列表失败: {e}", exc_info=True)
+            return ExternalModelListResponseType(
+                success=False, message=f"获取失败: {str(e)}", models=[]
             )
 
 
@@ -881,6 +919,21 @@ class Mutation:
                 model_name=model_name,
             )
 
+            # 同步登记到 external_models 表，使该模型出现在 get_models()
+            # 返回的模型列表中（消息输入框的模型选择器可选用）。
+            # 失败不影响用户设置已保存的事实，仅记日志。
+            try:
+                await upsert_external_model(
+                    name=model_name,
+                    provider=provider,
+                    base_url=base_url,
+                    api_key=api_key,
+                )
+            except Exception as sync_err:
+                logger.warning(
+                    f"{get_request_id()}同步登记 external_models 失败（用户设置已保存）: {sync_err}"
+                )
+
             return ModelSettingsResponseType(
                 success=True,
                 message=f"{message}，设置已保存",
@@ -893,7 +946,184 @@ class Mutation:
                 success=False, message=f"保存模型设置失败: {str(e)}", settings=None
             )
 
-    @strawberry.mutation(description="用户登出")
+    @strawberry.mutation(description="测试模型连通性（不落库），用于保存前的独立检测")
+    async def test_connection(
+        self, info: strawberry.Info, input: TestConnectionInput
+    ) -> TestConnectionResponseType:
+        try:
+            request = _get_info_request(info)
+            user = await _get_bearer_user(request)
+            if user is None:
+                return TestConnectionResponseType(
+                    success=False, message="未登录或登录已过期"
+                )
+
+            base_url = input.base_url.strip().rstrip("/")
+            api_key = input.api_key.strip()
+            model_name = input.model_name.strip()
+
+            if not all([base_url, api_key, model_name]):
+                return TestConnectionResponseType(
+                    success=False,
+                    message="访问地址、API-KEY、模型名称均为必填项",
+                )
+
+            logger.info(
+                f"{get_request_id()}收到连通性测试请求: user_id={user.id}, "
+                f"model={model_name}, base_url={base_url}"
+            )
+
+            ok, message = await test_model_connectivity(
+                base_url=base_url, api_key=api_key, model_name=model_name
+            )
+            return TestConnectionResponseType(success=ok, message=message)
+        except Exception as e:
+            logger.error(f"{get_request_id()}连通性测试失败: {e}", exc_info=True)
+            return TestConnectionResponseType(
+                success=False, message=f"连通性测试失败: {str(e)}"
+            )
+
+    @strawberry.mutation(description="新增/更新外部模型到 external_models 表（支持多模型 + Provider 自定义）")
+    async def save_external_model(
+        self, info: strawberry.Info, input: ExternalModelInput
+    ) -> ExternalModelMutationResponseType:
+        try:
+            request = _get_info_request(info)
+            user = await _get_bearer_user(request)
+            if user is None:
+                return ExternalModelMutationResponseType(
+                    success=False, message="未登录或登录已过期", model=None
+                )
+
+            provider = input.provider.strip()
+            base_url = input.base_url.strip().rstrip("/")
+            api_key = input.api_key.strip()
+            model_name = input.model_name.strip()
+
+            if not all([provider, base_url, api_key, model_name]):
+                return ExternalModelMutationResponseType(
+                    success=False,
+                    message="厂商、访问地址、API-KEY、模型名称均为必填项",
+                    model=None,
+                )
+
+            # 可选连通性检测（默认开启）
+            if input.test_connection:
+                logger.info(
+                    f"{get_request_id()}保存外部模型前连通性检测: "
+                    f"provider={provider}, model={model_name}"
+                )
+                ok, msg = await test_model_connectivity(
+                    base_url=base_url, api_key=api_key, model_name=model_name
+                )
+                if not ok:
+                    return ExternalModelMutationResponseType(
+                        success=False,
+                        message=f"连通性检测未通过，模型未保存: {msg}",
+                        model=None,
+                    )
+
+            saved = await upsert_external_model(
+                name=model_name,
+                provider=provider,
+                base_url=base_url,
+                api_key=api_key,
+            )
+            if saved is None:
+                return ExternalModelMutationResponseType(
+                    success=False, message="保存到数据库失败", model=None
+                )
+
+            result_model = ExternalModelType(
+                id=saved.id,
+                name=saved.name,
+                provider=saved.provider,
+                base_url=saved.base_url,
+                api_key=saved.api_key,
+            )
+            msg = (
+                "连通性检测通过，模型已保存"
+                if input.test_connection
+                else "模型已保存"
+            )
+            return ExternalModelMutationResponseType(
+                success=True, message=msg, model=result_model
+            )
+        except Exception as e:
+            logger.error(f"{get_request_id()}保存外部模型失败: {e}", exc_info=True)
+            return ExternalModelMutationResponseType(
+                success=False, message=f"保存失败: {str(e)}", model=None
+            )
+
+    @strawberry.mutation(description="删除 external_models 表中的指定模型")
+    async def delete_external_model(
+        self, info: strawberry.Info, model_id: int
+    ) -> DeleteExternalModelResponseType:
+        try:
+            request = _get_info_request(info)
+            user = await _get_bearer_user(request)
+            if user is None:
+                return DeleteExternalModelResponseType(
+                    success=False, message="未登录或登录已过期"
+                )
+
+            ok = await delete_external_model(model_id)
+            if not ok:
+                return DeleteExternalModelResponseType(
+                    success=False, message="模型不存在或已被删除"
+                )
+            return DeleteExternalModelResponseType(
+                success=True, message="模型已删除"
+            )
+        except Exception as e:
+            logger.error(f"{get_request_id()}删除外部模型失败: {e}", exc_info=True)
+            return DeleteExternalModelResponseType(
+                success=False, message=f"删除失败: {str(e)}"
+            )
+
+    @strawberry.mutation(description="将指定外部模型设为当前用户的活跃模型（写入 user_model_settings）")
+    async def set_active_model(
+        self, info: strawberry.Info, model_id: int
+    ) -> SetActiveModelResponseType:
+        try:
+            request = _get_info_request(info)
+            user = await _get_bearer_user(request)
+            if user is None:
+                return SetActiveModelResponseType(
+                    success=False, message="未登录或登录已过期"
+                )
+
+            model = await get_external_model_by_id(model_id)
+            if model is None:
+                return SetActiveModelResponseType(
+                    success=False, message="模型不存在"
+                )
+
+            settings = await upsert_user_model_settings(
+                user_id=user.id,
+                provider=model.provider,
+                base_url=model.base_url,
+                api_key=model.api_key,
+                model_name=model.name,
+            )
+            if settings is None:
+                return SetActiveModelResponseType(
+                    success=False, message="设置活跃模型失败"
+                )
+
+            logger.info(
+                f"{get_request_id()}活跃模型已切换: user_id={user.id}, "
+                f"model={model.name}, id={model.id}"
+            )
+            return SetActiveModelResponseType(
+                success=True,
+                message=f"活跃模型已切换为 {model.name}",
+            )
+        except Exception as e:
+            logger.error(f"{get_request_id()}设置活跃模型失败: {e}", exc_info=True)
+            return SetActiveModelResponseType(
+                success=False, message=f"设置失败: {str(e)}"
+            )
     async def logout(self) -> AuthResponseType:
         try:
             return AuthResponseType(
@@ -1097,17 +1327,16 @@ class Subscription:
             # 按 LLM_PROVIDER 加载提供商表配置（external_provider / local_provider）
             await load_llm_provider_config()
 
-            # 用户已保存自定义模型设置时，以其覆盖默认链路配置。
-            # 注意不能复用 get_orchestrator() 的缓存实例：环境变量缺 key 时
-            # 默认 supervisor 的 agent 构造会直接抛错，且配置与用户设置不符。
+            # 模型解析优先级：前端选中的 model_name → external_models 表查
+            # base_url/api_key → 据此建连。无需 user_model_settings 中转，
+            # 用户在消息输入框选哪个模型就用哪个。
             request = _get_info_request(info)
-            user_settings = await _get_bearer_settings(request)
-            if user_settings is not None:
-                model_name = user_settings.model_name
-                override_api_key = user_settings.api_key
-                override_base_url = user_settings.base_url
+            ext_model = await get_external_model_by_name(model_name or "")
+            if ext_model is not None:
+                override_api_key = ext_model.api_key
+                override_base_url = ext_model.base_url
                 logger.info(
-                    f"{get_request_id()}使用用户自定义模型配置: "
+                    f"{get_request_id()}使用 external_models 配置: "
                     f"model={model_name}, base_url={override_base_url}"
                 )
                 orchestrator = LangGraphSupervisor(
@@ -1117,6 +1346,8 @@ class Subscription:
                     base_url=override_base_url,
                 )
             else:
+                # 回退：未在前端选择模型或名称不在 external_models 表中，
+                # 使用全局 provider 配置（external_provider 表 / 环境变量）
                 override_api_key = None
                 override_base_url = None
                 orchestrator = get_orchestrator()

@@ -68,7 +68,7 @@ function ModelSelector({
       style={{ width: triggerWidth }}
     >
       <Select.Trigger
-        className={`${isSmall ? "h-9 px-1.5" : "h-11 px-2"} whitespace-nowrap overflow-hidden flex items-center`}
+        className={`pill-trigger ${isSmall ? "h-9 px-1.5" : "h-11 px-2"} whitespace-nowrap overflow-hidden flex items-center rounded-lg`}
       >
         <Select.Value
           className={`flex! flex-1! min-w-0! h-auto ${isSmall ? "h-7 text-xs" : "h-9 text-sm"} px-2.5 items-center! justify-center! text-center! rounded-md font-medium truncate bg-default/60 text-foreground`}
@@ -324,9 +324,11 @@ export function MessageInput({
       className="rounded-full"
       style={{
         boxShadow:
-          !input.trim() || isStreaming ? "none" : "var(--shadow-sm)",
-        opacity: !input.trim() || isStreaming ? 0.5 : 1,
-        transition: "opacity 180ms ease, box-shadow 180ms ease",
+          !input.trim() || isStreaming
+            ? "var(--shadow-xs)"
+            : "var(--shadow-inset), var(--shadow-md)",
+        opacity: !input.trim() || isStreaming ? 0.45 : 1,
+        transition: "opacity 180ms ease, box-shadow 180ms ease, transform 180ms ease",
       }}
     >
       <svg
@@ -354,7 +356,7 @@ export function MessageInput({
               background: "var(--surface-2)",
               borderRadius: "20px",
               border: "0.5px solid var(--divider-strong)",
-              boxShadow: "var(--shadow-card)",
+              boxShadow: "var(--shadow-inset), var(--shadow-card)",
               minHeight: "210px",
             }}
           >
@@ -437,8 +439,7 @@ export function MessageInput({
                 borderRadius: "16px",
                 border: "0.5px solid var(--divider-strong)",
                 minHeight: "120px",
-                margin: "8px",
-                boxShadow: "var(--shadow-card)",
+                boxShadow: "var(--shadow-inset), var(--shadow-card)",
               }}
             >
               <textarea
