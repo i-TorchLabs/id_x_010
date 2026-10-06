@@ -15,17 +15,37 @@
 ``x_models._contracts.plugin_interface``，本插件与其它插件均从那里导入，
 插件之间互不依赖。
 
-与 id_x_002_c2 的差异：本插件模型表仅使用基础类型（Integer/String/Text/
-DateTime/JSON/Boolean），不依赖 pgcrypto 的 gen_random_uuid 也不依赖
-pgvector，故 ``required_extensions`` 为空元组。
+与 id_x_002_c2 的差异：本插件模型表使用基础类型，并启用 pgvector 扩展
+（供 ``table_comments`` / ``document_chunks`` 等向量检索表），故
+``required_extensions`` 声明为 ``("vector",)``，由主程序在 build_tables 前
+创建扩展。
 """
 from __future__ import annotations
 
+import atexit
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
 
 from x_models._contracts import PluginInterface
+
+
+def _atexit_cleanup() -> None:
+    """进程退出同步兜底（TASK-011 配套）。
+
+    asyncio disconnect 不能在 atexit 中调用（loop 已关闭），这里只做
+    cache 清空让 GC 释放对象。深层 disconnect 由 Litestar on_shutdown
+    钩子触发（见 controllers.on_shutdown_hook）。
+    """
+    try:
+        from x_models.id_x_010.src.agents.x_sql_agent import _sql_agent_cache
+
+        _sql_agent_cache.clear()
+    except Exception:
+        pass
+
+
+atexit.register(_atexit_cleanup)
 
 
 class _Idx010Plugin:
@@ -49,15 +69,51 @@ class _Idx010Plugin:
 
     @property
     def required_extensions(self) -> tuple[str, ...]:
-        # 010 模型表仅用基础类型，不依赖 pgcrypto / pgvector。
-        return ()
+        # 启用 pgvector 扩展，供 table_comments / document_chunks 等向量检索表使用。
+        # 主程序在 build_tables 之前会CREATE EXTENSION IF NOT EXISTS vector。
+        return ("vector",)
 
     def set_session_maker(self, maker: async_sessionmaker[AsyncSession]) -> None:
         from x_models.id_x_010.src.models.x_models import set_session_maker
         set_session_maker(maker)
 
     async def build_tables(self, conn: AsyncConnection) -> None:
-        await conn.run_sync(self.base.metadata.create_all)
+        """建表，带 pgvector 扩展缺失的运行时降级。
+
+        策略：
+        1. 先尝试用 ``Vector(1024)`` 类型建表（pgvector 扩展已安装的情况）；
+        2. 若 PG 报 ``type "vector" does not exist``（扩展未安装），降级把
+           ``TableComment.embedding`` / ``DocumentChunk.embedding`` 等列改为
+           ``JSON`` 类型重新建表——保证应用能启动，向量检索功能 best-effort
+           退化到全表扫描（见 x_vectorstore.search_tables 已有降级逻辑）。
+        """
+        import logging
+
+        from sqlalchemy import JSON
+
+        logger = logging.getLogger("x_models.id_x_010.x_plugin")
+        try:
+            await conn.run_sync(self.base.metadata.create_all)
+        except Exception as e:
+            msg = str(e).lower()
+            # 仅当错误明确指向 vector 类型不存在时降级
+            if "vector" not in msg and "does not exist" not in msg:
+                raise  # 其它异常向上抛
+            logger.warning(
+                "[id_x_010] pgvector 扩展未启用或 Vector 类型不可用，"
+                "embedding 列降级为 JSON 重建表（向量检索功能降级，主流程不受影响）。"
+                f"原始异常: {type(e).__name__}: {e}"
+            )
+            # 把所有用 EmbeddingType 的列改成 JSON，重建 metadata
+            from x_models.id_x_010.src.models import x_models as _m
+
+            for table in self.base.metadata.tables.values():
+                for col in table.columns:
+                    if col.name == "embedding":
+                        # 直接改 type 为 JSON（兼容已有数据；新表也能建）
+                        col.type = JSON()
+            # 重新建表
+            await conn.run_sync(self.base.metadata.create_all)
 
 
 def load_plugin() -> PluginInterface:

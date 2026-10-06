@@ -14,16 +14,46 @@ export interface StreamChunk {
     | "info"
     | "content"
     | "sql_generated"
+    | "sql_explanation" // TASK-015：SQL 自然语言阐述气泡（独立于审核状态）
     | "sql_approval"
     | "sql_rejected"
     | "sql_cancelled"
+    | "security_block" // 安全机制拦截（受保护表/列、危险 SQL）
+    | "tool_call" // General Agent 工具调用通知（TASK-004）
+    | "result"
+    | "chart"
     | "done"
     | "error";
   content?: string | null;
   modelUsed?: string | null;
   conversationId?: string | null;
   sql?: string | null;
+  sqlMeaning?: string | null;
+  columns?: string[] | null;
+  data?: Record<string, unknown>[] | null;
+  rowCount?: number | null;
+  chartConfig?: ChartConfig | null;
+  /** 安全拦截标记：true 表示此 chunk 为安全机制拒绝执行后的告警 */
+  securityBlock?: boolean | null;
+  /** 工具名称：tool_call chunk 携带，标识当前调用的工具 */
+  toolName?: string | null;
+  /** 工具输出摘要：tool_call end chunk 携带，便于前端展示简短结果 */
+  toolOutput?: string | null;
 }
+
+export interface ChartConfig {
+  type: "bar" | "line" | "pie" | "area" | "scatter";
+  x_column: string;
+  y_columns: string[];
+  title?: string;
+  /** 后端意图分析：用户分析目的（trend/comparison/distribution/...） */
+  intent?: string;
+  /** 后端意图分析：为何选此图表的一句话理由 */
+  reason?: string;
+}
+
+/** 数据视图模式：表格 / 图表。ResultView 用于切换。 */
+export type ResultViewMode = "auto" | "table" | "chart";
 
 // 流式聊天请求参数
 export interface StreamChatParams {
@@ -97,6 +127,9 @@ class StreamChatClient {
     const { signal } = this.abortController;
 
     // 构建 GraphQL Subscription 查询
+    // TASK-015：补齐 sql/sqlMeaning/columns/data/rowCount/chartConfig/securityBlock/
+    // toolName/toolOutput 字段——之前只查 4 个字段，导致审核气泡的 sql、SQL 阐述气泡的
+    // sqlMeaning、result chunk 的数据、chart 配置等全部丢失。
     const graphqlQuery = `
       subscription StreamChat($query: String!, $modelType: String, $modelName: String, $agentType: String, $dbName: String, $conversationId: String, $context: [String!]) {
         streamChat(query: $query, modelType: $modelType, modelName: $modelName, agentType: $agentType, dbName: $dbName, conversationId: $conversationId, context: $context) {
@@ -104,6 +137,15 @@ class StreamChatClient {
           content
           modelUsed
           conversationId
+          sql
+          sqlMeaning
+          columns
+          data
+          rowCount
+          chartConfig
+          securityBlock
+          toolName
+          toolOutput
         }
       }
     `;
@@ -191,12 +233,52 @@ class StreamChatClient {
               // 解析 GraphQL 响应数据
               const streamChat = data.data?.streamChat;
               if (streamChat) {
-                onChunk({
-                  type: streamChat.type,
-                  content: streamChat.content,
-                  modelUsed: streamChat.modelUsed,
-                  conversationId: streamChat.conversationId,
-                });
+                // TASK-015：转发后端 StreamChunkType 全部字段，
+                // 特别是 sqlMeaning（sql_explanation/sql_approval/sql_generated 携带）、
+                // sql（审核气泡需要）、columns/data/rowCount/chartConfig（result/chart chunk）。
+                let parsedData: Record<string, unknown>[] | null = null;
+                if (streamChat.data) {
+                  try {
+                    parsedData =
+                      typeof streamChat.data === "string"
+                        ? JSON.parse(streamChat.data)
+                        : streamChat.data;
+                  } catch {
+                    parsedData = null;
+                  }
+                }
+                let parsedChartConfig: ChartConfig | null = null;
+                if (streamChat.chartConfig) {
+                  try {
+                    parsedChartConfig =
+                      typeof streamChat.chartConfig === "string"
+                        ? JSON.parse(streamChat.chartConfig)
+                        : streamChat.chartConfig;
+                  } catch {
+                    parsedChartConfig = null;
+                  }
+                }
+                // TASK-015: onChunk 单独 try/catch，防止回调异常吞掉 done/error
+                // 终止信号——之前整个块被外层 catch 静默吞掉，导致 isTyping 永远 true。
+                try {
+                  onChunk({
+                    type: streamChat.type,
+                    content: streamChat.content,
+                    modelUsed: streamChat.modelUsed,
+                    conversationId: streamChat.conversationId,
+                    sql: streamChat.sql ?? null,
+                    sqlMeaning: streamChat.sqlMeaning ?? null,
+                    columns: streamChat.columns ?? null,
+                    data: parsedData,
+                    rowCount: streamChat.rowCount ?? null,
+                    chartConfig: parsedChartConfig,
+                    securityBlock: streamChat.securityBlock ?? null,
+                    toolName: streamChat.toolName ?? null,
+                    toolOutput: streamChat.toolOutput ?? null,
+                  });
+                } catch (e) {
+                  console.error("onChunk callback threw:", e);
+                }
 
                 // 如果是完成或错误事件，结束处理
                 if (streamChat.type === "done" || streamChat.type === "error") {
@@ -310,6 +392,20 @@ class StreamChatClient {
                 modelUsed: data.model_used,
                 conversationId: data.conversation_id,
                 sql: data.sql,
+                sqlMeaning: data.sql_meaning,
+                columns: data.columns,
+                data: data.data
+                  ? typeof data.data === "string"
+                    ? JSON.parse(data.data)
+                    : data.data
+                  : null,
+                rowCount: data.row_count,
+                chartConfig: data.chart_config
+                  ? typeof data.chart_config === "string"
+                    ? JSON.parse(data.chart_config)
+                    : data.chart_config
+                  : null,
+                securityBlock: data.security_block ?? null,
               });
 
               if (

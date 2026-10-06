@@ -13,6 +13,12 @@ langchain_openai
 langchain_community
 pydantic
 langgraph
+# LangGraph Checkpoint PG 持久化（TASK-006）：供 AsyncPostgresSaver 跨进程恢复
+# SQL Agent 审批挂起状态。未配置 DATABASE_URL 时降级 langgraph.checkpoint.memory
+# 的 MemorySaver（进程内），不影响主功能。
+# 注意：1.x 与 3.x 的 from_conn_string 形态不同——_ensure_pg_checkpointer 已做
+# 多形态兼容(实例 / async context manager),3.x 形态下未保活时降级 MemorySaver。
+langgraph-checkpoint-postgres>=1.0.0,<4.0
 semantic_router
 # litellm>=1.98.0 在 Python 3.10 下崩溃（其 compact.py/compression.py 从 typing 导入
 # NotRequired，该符号 3.11 才加入 typing）；1.97.0 是最后一个可导入版本。
@@ -21,6 +27,27 @@ litellm==1.97.0
 strawberry-graphql
 matplotlib
 psycopg2
+# pgvector：供 table_comments / document_chunks 等表向量列使用，
+# 配合 ops/compose.yaml 的 pgvector/pgvector:pg18 镜像。
+pgvector>=0.3.0
+# General Agent 工具链（TASK-004）：numexpr 用于安全求值数学表达式；
+# tavily-python 提供联网搜索（缺 API key 时工具降级返回提示）。
+# 注意：numexpr 3.x 要求 Python ≥ 3.11；当前 Dockerfile 用 python:3.10-slim，
+# 故锁 2.8.x（API 兼容，evaluate 函数签名一致）。
+numexpr>=2.8.5,<3.0
+# tavily-python 0.6+ 修改了 AsyncTavilyClient 接口（位置参数、search 签名变化）；
+# 锁 0.5.x 以匹配代码中的 api_key= 关键字 + max_results 用法。
+tavily-python>=0.4.0,<0.6.0
+# 数据导出（TASK-014）：openpyxl 提供 xlsx 导出能力；CSV 走标准库 csv
+openpyxl>=3.1.0
+# 密码哈希加固（TASK-019）：bcrypt 替换 sha256，rounds=12
+# 锁 4.x 避免 5.0 主版本的 API 兼容风险（hashpw/checkpw/gensalt 4.x 已稳定）
+bcrypt>=4.2.0,<5.0
 # ADFS OAuth2 SSO id_token JWKS 验签（RS256/384/512）所需。
 # litestar[all] 间接带入 cryptography，但显式声明便于独立部署与工具识别。
 cryptography
+# 可观测性（TASK-007）：prometheus-client 暴露 /metrics；opentelemetry-sdk
+# 与 OTLP HTTP exporter 用于 LangSmith / OTLP 兼容后端接收 LangGraph trace。
+prometheus-client>=0.20.0
+opentelemetry-sdk>=1.25.0
+opentelemetry-exporter-otlp-proto-http>=1.25.0

@@ -1,0 +1,10 @@
+# id_x_010 报告订阅 cron 示例（TASK-014）
+#
+# 安装方式（service 容器内或宿主机）：
+#   crontab ops/crontab.example
+# 或追加到 /etc/cron.d/id_x_010_reports 后 systemctl reload cron
+#
+# 路径需替换为实际部署路径；容器场景下 ID_X_010_ROOT 指向 /app/i-Core/x_models/id_x_010
+
+# 每天 9:00 执行所有到期订阅
+0 9 * * * ID_X_010_ROOT=/app/i-Core/x_models/id_x_010 /app/i-Core/x_models/id_x_010/ops/scripts/run_reports.sh >> /var/log/id_x_010_reports.log 2>&1

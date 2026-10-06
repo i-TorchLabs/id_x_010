@@ -1,0 +1,16 @@
+# Prometheus 抓取配置（TASK-007）
+# 由 ops/compose.yaml 的 prometheus 服务挂载到 /etc/prometheus/prometheus.yml。
+# 通过 docker compose 默认 bridge 网络，DNS 名 service 解析到后端容器。
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "id_x_010"
+    metrics_path: /b/id_x_010/metrics
+    static_configs:
+      - targets: ["service:8000"]
+    # 容器内 service:8000 为后端 Litestar；route_prefix 由 ops/compose.yaml 注入
+    # 业务路径 /b/id_x_010/ 由 haproxy.compose.cfg 配置，prometheus 直连不走 haproxy。
+    # 若 service 路径前缀不同，调整 metrics_path 即可。

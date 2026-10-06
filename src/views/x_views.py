@@ -27,7 +27,10 @@ from x_models.id_x_010.src.schemas.x_schemas import AuthResponseType, UserInfoTy
 from x_models.id_x_010.src.utils import x_oauth
 from x_models.id_x_010.src.utils.x_pricing import compute_cost
 
-DEFAULT_MAX_ROUNDS = 5
+# Q&A 上下文保留的最大对话轮数：1 轮 = 1 条对话记录（1 user + 1 assistant = 2 messages）。
+# 该常量同时约束 DB 历史拉取条数（get_conversation_history）与合并后消息截断
+# （merge_context 中 max_messages = max_rounds * 2），保持两处窗口一致。
+DEFAULT_MAX_ROUNDS = 3
 
 
 async def save_conversation_log(

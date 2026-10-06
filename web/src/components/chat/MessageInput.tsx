@@ -383,7 +383,7 @@ export function MessageInput({
                     minHeight: "80px",
                     minWidth: "312px",
                     boxSizing: "border-box",
-                    padding: "16px",
+                    padding: "16px 16px 16px 48px",
                     margin: "8px",
                   }}
                 />
@@ -405,6 +405,18 @@ export function MessageInput({
                   {renderModelSelector(false)}
 
                   {renderSendButton(false)}
+                </div>
+
+                {/* TASK-015：图片上传按钮（移至左下角），上传成功后插入 [image:ID] 占位 */}
+                <div className="absolute left-3 bottom-3 flex items-center">
+                  <ImageButton
+                    onUploaded={(imageId, filename) => {
+                      const placeholder = `[image:${imageId}]`;
+                      setInput((prev) =>
+                        prev ? `${prev} ${placeholder}` : placeholder,
+                      );
+                    }}
+                  />
                 </div>
               </div>
             </div>
@@ -458,7 +470,7 @@ export function MessageInput({
                   maxHeight: "600px",
                   minHeight: "80px",
                   minWidth: "312px",
-                  padding: "16px",
+                  padding: "16px 16px 16px 48px",
                   margin: "8px",
                 }}
               />
@@ -483,6 +495,16 @@ export function MessageInput({
 
                 {renderSendButton(true)}
               </div>
+
+              {/* TASK-015：图片上传按钮（移至左下角），上传成功后插入 [image:ID] 占位 */}
+              <div className="absolute left-3 bottom-3 flex items-center">
+                <ImageButton
+                  onUploaded={(imageId, filename) => {
+                    const placeholder = `[image:${imageId}]`;
+                    setInput((prev) => (prev ? `${prev} ${placeholder}` : placeholder));
+                  }}
+                />
+              </div>
             </div>
           </div>
 
@@ -503,5 +525,71 @@ export function MessageInput({
         </div>
       </div>
     </motion.div>
+  );
+}
+
+// TASK-015：图片上传按钮。点击触发隐藏 file input，上传完成后通知父组件
+// 在 input 文本后追加 [image:ID] 占位，supervisor 检测占位即路由到 VL Agent。
+function ImageButton({
+  onUploaded,
+}: {
+  onUploaded: (imageId: number, filename: string) => void;
+}) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const handleClick = () => fileInputRef.current?.click();
+
+  const handleChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const { uploadImage } = await import("@/api/upload");
+      const res = await uploadImage(file);
+      if (res.success && res.image_id) {
+        onUploaded(res.image_id, res.filename || file.name);
+      } else {
+        alert(res.error || "Image upload failed");
+      }
+    } catch (e) {
+      alert(`Image upload error: ${(e as Error).message}`);
+    } finally {
+      setUploading(false);
+      // 清空 input，允许重复上传同一文件
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={uploading}
+        title="Upload image for VL Agent analysis (auto-inserts [image:ID] placeholder after upload)"
+        style={{
+          width: 28,
+          height: 28,
+          borderRadius: 8,
+          background: "var(--surface-2)",
+          border: "0.5px solid var(--divider-strong)",
+          color: "var(--fg2)",
+          cursor: uploading ? "wait" : "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        {uploading ? "…" : "🖼"}
+      </button>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        style={{ display: "none" }}
+        onChange={handleChange}
+      />
+    </>
   );
 }

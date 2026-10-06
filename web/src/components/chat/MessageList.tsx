@@ -14,8 +14,29 @@ type Message = {
   thinkingTime?: number;
   modelUsed?: string;
   pendingSql?: string;
+  // TASK-015：sqlMeaning 由 sql_explanation / sql_approval / sql_generated chunk 携带，
+  // 独立 SqlExplanationBubble 据此渲染。审核状态变化时不应被清除。
+  sqlMeaning?: string;
   sqlApprovalStatus?: "pending" | "approved" | "rejected" | "cancelled";
   contentType?: "sql"; // when set to "sql", content is SQL code
+  // 安全拦截告警：从 ChatHome 透传到 ChatMessage 渲染红色告警卡
+  securityBlock?: {
+    reason: string;
+    sql?: string;
+  };
+  // TASK-015：SQL 查询结果字段——审核通过后 continue_with_approval 产出 result chunk，
+  // ChatHome 写入这些字段，ChatMessage 据此渲染 ResultView 表格/图表。
+  resultColumns?: string[];
+  resultData?: Record<string, unknown>[];
+  resultRowCount?: number;
+  chartConfig?: {
+    type: "bar" | "line" | "pie" | "area" | "scatter";
+    x_column: string;
+    y_columns: string[];
+    title?: string;
+    intent?: string;
+    reason?: string;
+  };
 };
 
 interface MessageListProps {
@@ -24,7 +45,8 @@ interface MessageListProps {
   onRegenerate?: (messageId: string, messageContent: string) => void;
   onSqlApprove?: (messageId: string, sql: string, question: string) => void;
   onSqlReject?: (messageId: string, sql: string, question: string) => void;
-  onSqlCancel?: (messageId: string) => void;
+  // TASK-015：cancel 也需要 sql + question 调后端，让 ApprovalTask 标记 cancelled
+  onSqlCancel?: (messageId: string, sql: string, question: string) => void;
   isSqlProcessing?: boolean;
 }
 
@@ -159,7 +181,14 @@ export function MessageList({
                     : undefined
                 }
                 onSqlCancel={
-                  onSqlCancel ? () => onSqlCancel(message.id) : undefined
+                  onSqlCancel && message.pendingSql
+                    ? () =>
+                        onSqlCancel(
+                          message.id,
+                          message.pendingSql || "",
+                          message.content,
+                        )
+                    : undefined
                 }
                 isSqlProcessing={isSqlProcessing}
               />

@@ -56,6 +56,11 @@ export function CenterHero({
             />
 
             <div className="w-full max-w-270 relative z-10 flex-1 flex flex-col min-h-0">
+                {/*整组内容（图标 + 标题 + Input）水平 + 垂直双居中：
+                  - flex-1 + justify-center：占满外层高度并垂直居中
+                  - items-center：水平居中（图标/Badge/标题/Input 整体居中）
+                  - 移除原 paddingTop 84px，让 justify-center 自然处理垂直位置
+                  - Input 紧贴副标题下方（marginTop: 32px）保持视觉连贯 */}
                 <motion.div
                     initial={{ opacity: 0, y: 24 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -162,52 +167,53 @@ export function CenterHero({
                             Natural language Q&A, database retrieval, executable code generation
                         </motion.p>
                     </motion.div>
+
+                    {/* Input Area —— 紧贴副标题下方（marginTop 32px，
+                        与原 mb-7 / margin 20px 等节奏一致），不再贴底 */}
+                    <div className="w-full" style={{ marginTop: "32px" }}>
+                        <motion.div
+                            initial={{ opacity: 0, y: 24 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{
+                                delay: 0.8,
+                                duration: 0.6,
+                                ease: [0.25, 0.4, 0.25, 1],
+                            }}
+                            className="w-full"
+                        >
+                            <MessageInput
+                                variant="hero"
+                                onSendMessage={onSubmit}
+                                selectedDb={selectedDb}
+                                onDbChange={onDbChange}
+                                selectedModel={selectedModel}
+                                onModelChange={onModelChange}
+                                selectedAgent={selectedAgent}
+                                onAgentChange={onAgentChange}
+                                models={models}
+                                isLoadingModels={isLoadingModels}
+                                activePrompt={activePrompt}
+                            />
+                        </motion.div>
+
+                        <motion.p
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            transition={{ delay: 1.2 }}
+                            className="text-center font-text"
+                            style={{
+                                fontSize: "11px",
+                                fontWeight: 500,
+                                letterSpacing: "0.04em",
+                                marginTop: "10px",
+                                color: "var(--fg4)",
+                            }}
+                        >
+                            Local / external model switching · Built on LangGraph +
+                            Semantic Router
+                        </motion.p>
+                    </div>
                 </motion.div>
-
-                {/* Input Area */}
-                <div className="w-full pb-3 shrink-0">
-                    <motion.div
-                        initial={{ opacity: 0, y: 24 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{
-                            delay: 0.8,
-                            duration: 0.6,
-                            ease: [0.25, 0.4, 0.25, 1],
-                        }}
-                        className="w-full"
-                    >
-                        <MessageInput
-                            variant="hero"
-                            onSendMessage={onSubmit}
-                            selectedDb={selectedDb}
-                            onDbChange={onDbChange}
-                            selectedModel={selectedModel}
-                            onModelChange={onModelChange}
-                            selectedAgent={selectedAgent}
-                            onAgentChange={onAgentChange}
-                            models={models}
-                            isLoadingModels={isLoadingModels}
-                            activePrompt={activePrompt}
-                        />
-                    </motion.div>
-
-                    <motion.p
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ delay: 1.2 }}
-                        className="text-center font-text"
-                        style={{
-                            fontSize: "11px",
-                            fontWeight: 500,
-                            letterSpacing: "0.04em",
-                            marginTop: "10px",
-                            color: "var(--fg4)",
-                        }}
-                    >
-                        Local / external model switching · Built on LangGraph + Semantic
-                        Router
-                    </motion.p>
-                </div>
             </div>
         </div>
     );

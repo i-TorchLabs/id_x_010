@@ -23,7 +23,7 @@ const genState = (): string => {
 export const redirectToAdfsAuthorize = (): void => {
     if (!ADFS_CLIENT_ID) {
         // 构建期未注入 client_id 时提前报错，避免跳到 ADFS 后才失败（MSIS9220）
-        console.error("ADFS_CLIENT_ID 未配置，无法发起 SSO");
+        console.error("ADFS_CLIENT_ID not configured, cannot initiate SSO");
         return;
     }
     const state = genState();

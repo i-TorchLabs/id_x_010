@@ -269,6 +269,27 @@ bash ops/down.sh
 
 ---
 
+## 附:依赖兼容性说明（Python 3.10 环境）
+
+`ops/Dockerfile.service` 当前基于 `python:3.10-slim`,与文档 0.2 节"Python ≥ 3.11"
+的描述存在差异。本期新增的以下依赖均已锁到 Python 3.10 兼容版本：
+
+| 依赖 | 约束 | 实际安装版本 | 说明 |
+|------|------|-------------|------|
+| `numexpr` | `>=2.8.5,<3.0` | 2.14.1 | numexpr 3.x 要求 py3.11+；锁 2.x |
+| `tavily-python` | `>=0.4.0,<0.6.0` | 0.5.4 | 0.6+ 修改了 AsyncTavilyClient 接口 |
+| `bcrypt` | `>=4.2.0,<5.0` | 4.3.0 | 5.0 主版本的 API 兼容风险 |
+| `pgvector` | `>=0.3.0` | 0.5.0 | 要求 py3.10+,直接装 latest |
+| `langgraph-checkpoint-postgres` | `>=1.0.0,<4.0` | 3.1.2 | 1.x/3.x from_conn_string 形态不同,`_ensure_pg_checkpointer` 已做兼容 |
+| `opentelemetry-sdk` | `>=1.25.0` | 1.45.0 | 要求 py3.10+ |
+| `prometheus-client` | `>=0.20.0` | 0.26.0 | 要求 py3.9+ |
+| `openpyxl` | `>=3.1.0` | 3.1.5 | 要求 py3.8+ |
+
+> 升级 `Dockerfile.service` 到 `python:3.11-slim` 后,可解除 numexpr / tavily-python
+> 的上界限制。其余依赖在两个 Python 版本下都兼容。
+
+---
+
 <div align="center">
 
 Copyright © TorchLabs · Ray · Licensed under AGPL-3.0

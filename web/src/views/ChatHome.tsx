@@ -32,8 +32,34 @@ type ChatMessage = {
   thinkingTime?: number; // 思考时间（秒）
   modelUsed?: string; // 使用的模型
   pendingSql?: string; // SQL waiting for approval
+  sqlMeaning?: string; // SQL 的一句话自然语言含义
   sqlApprovalStatus?: "pending" | "approved" | "rejected" | "cancelled"; // approval status
   contentType?: "sql"; // when set to "sql", content is SQL code
+  resultColumns?: string[]; // SQL 查询结果列
+  resultData?: Record<string, unknown>[]; // SQL 查询结果行（≤512）
+  resultRowCount?: number; // 总行数（可能 > resultData.length）
+  chartConfig?: {
+    type: "bar" | "line" | "pie" | "area" | "scatter";
+    x_column: string;
+    y_columns: string[];
+    title?: string;
+    intent?: string;
+    reason?: string;
+  }; // 图表配置（后端深度意图识别后主动推荐）
+  /** 安全拦截告警：保护机制触发后由后端 security_block chunk 注入 */
+  securityBlock?: {
+    reason: string; // 拒绝原因
+    sql?: string;   // 被拒绝的 SQL（若有）
+  };
+  /** General Agent 工具调用记录（TASK-004）：按顺序展示每个工具的执行状态 */
+  toolCalls?: {
+    name: string;       // 工具名
+    status: "running" | "done"; // 状态
+    output?: string;    // 工具输出摘要（done 时填充）
+  }[];
+  /** TASK-017：反馈按钮定位所需——会话 ID 与消息序号 */
+  conversationId?: string;
+  index?: number;
 };
 
 function SidebarToggle({
@@ -193,6 +219,7 @@ export default function ChatHome() {
 
       // 创建 AI 回复消息的占位符
       const assistantMessageId = String(Date.now() + 1);
+      const assistantMessageIndex = messages.length + 1; // 占位 user 消息已经 push 进去后的下一条
       const assistantMessage: ChatMessage = {
         id: assistantMessageId,
         type: "assistant",
@@ -200,6 +227,9 @@ export default function ChatHome() {
         timestamp: new Date(),
         thinking: "",
         modelUsed: "",
+        // TASK-017：反馈按钮定位所需——conversation_id 后续 chunk 回填时同步更新
+        conversationId: currentConversationId || undefined,
+        index: assistantMessageIndex,
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
@@ -227,6 +257,34 @@ export default function ChatHome() {
             case "intent":
               // 意图识别，可以显示或隐藏
               break;
+
+            case "tool_call": {
+              // General Agent 工具调用通知（TASK-004）
+              // 仅展示用：把状态卡追加到当前 assistant 消息
+              const toolName = chunk.toolName || "";
+              const toolOutput = chunk.toolOutput || "";
+              setMessages((prev) =>
+                prev.map((msg) => {
+                  if (msg.id !== assistantMessageId) return msg;
+                  const list = msg.toolCalls ? [...msg.toolCalls] : [];
+                  if (toolOutput) {
+                    // tool_end：把同名 running 项改为 done 并附 output
+                    const idx = list.findIndex(
+                      (t) => t.name === toolName && t.status === "running",
+                    );
+                    if (idx >= 0) {
+                      list[idx] = { ...list[idx], status: "done", output: toolOutput };
+                    } else {
+                      list.push({ name: toolName, status: "done", output: toolOutput });
+                    }
+                  } else {
+                    list.push({ name: toolName, status: "running" });
+                  }
+                  return { ...msg, toolCalls: list };
+                }),
+              );
+              break;
+            }
 
             case "thinking":
               // 思考过程
@@ -258,6 +316,17 @@ export default function ChatHome() {
                 }
                 if (chunk.conversationId) {
                   setCurrentConversationId(chunk.conversationId);
+                  // TASK-017：同步给消息本身，供 FeedbackBar 用。
+                  // chunk.conversationId 类型为 string | null，这里 if 已保证非空，
+                  // 但 TS 推断不到，显式 String() 转一次保证类型稳定
+                  const cid = String(chunk.conversationId);
+                  setMessages((prev) =>
+                    prev.map((msg) =>
+                      msg.id === assistantMessageId
+                        ? { ...msg, conversationId: cid }
+                        : msg,
+                    ),
+                  );
                 }
                 setMessages((prev) =>
                   prev.map((msg) =>
@@ -267,6 +336,7 @@ export default function ChatHome() {
                           content: sqlBuffer,
                           contentType: "sql" as const,
                           modelUsed: modelUsed,
+                          sqlMeaning: chunk.sqlMeaning || undefined,
                         }
                       : msg,
                   ),
@@ -330,6 +400,7 @@ export default function ChatHome() {
                     ? {
                         ...msg,
                         pendingSql: chunk.sql || chunk.content || "",
+                        sqlMeaning: chunk.sqlMeaning || undefined,
                         sqlApprovalStatus: "pending" as const,
                       }
                     : msg,
@@ -338,9 +409,103 @@ export default function ChatHome() {
               setIsTyping(false);
               break;
 
+            case "sql_explanation":
+              // TASK-015：SQL 自然语言"阐述气泡"——独立于审核状态。
+              // 后端在 sql_approval / sql_generated 之后立即发送，
+              // 以及 continue_with_approval approved=True 开头重发。
+              // 这里只更新 sqlMeaning，不动 pendingSql/sqlApprovalStatus，
+              // 让阐述气泡在审核通过/拒绝/取消后仍能保留显示。
+              if (chunk.sqlMeaning) {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMessageId
+                      ? { ...msg, sqlMeaning: chunk.sqlMeaning || undefined }
+                      : msg,
+                  ),
+                );
+              }
+              break;
+
+            case "sql_rejected":
+              // 后端 continue_with_approval(approved=False) 开头发出，
+              // 表示用户拒绝了 SQL，正在重新生成。当前 content 已带提示文案，
+              // 这里仅做状态信号——真正的 pendingSql 在随后的 sql_approval 来时刷新。
+              setIsSqlProcessing(true);
+              break;
+
+            case "sql_cancelled":
+              // 后端 sql_approval(action=cancel) 终止 chunk。
+              setIsTyping(false);
+              setIsSqlProcessing(false);
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === assistantMessageId
+                    ? {
+                        ...msg,
+                        sqlApprovalStatus: "cancelled" as const,
+                        pendingSql: undefined,
+                        content: chunk.content || "Query cancelled",
+                      }
+                    : msg,
+                ),
+              );
+              break;
+
+            case "result":
+              // SQL 查询结果（表格数据）
+              // TASK-015：用 ?? 替代 ||，避免空数组 [] / 行数 0 被吞为 undefined，
+              // 导致 ResultView 不渲染。空结果也应展示"查询结果为空"。
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === assistantMessageId
+                    ? {
+                        ...msg,
+                        resultColumns: chunk.columns ?? undefined,
+                        resultData: chunk.data ?? undefined,
+                        resultRowCount: chunk.rowCount ?? undefined,
+                      }
+                    : msg,
+                ),
+              );
+              break;
+
+            case "chart":
+              // 图表配置（用户要求可视化时由后端 LLM 生成）
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === assistantMessageId
+                    ? {
+                        ...msg,
+                        chartConfig: chunk.chartConfig || undefined,
+                      }
+                    : msg,
+                ),
+              );
+              break;
+
             case "done":
               // 完成
               setIsTyping(false);
+              break;
+
+            case "security_block":
+              // 安全机制拦截：保护表/列、危险 SQL 等被拒——以独立红色告警呈现
+              // 区别于 "error"（LLM 调用失败等系统错误），此 chunk 由后端在
+              // SQL 被拒绝执行后显式发送，附 securityBlock=true 标记
+              setIsTyping(false);
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === assistantMessageId
+                    ? {
+                        ...msg,
+                        securityBlock: {
+                          reason: chunk.content || "SQL blocked by security mechanism",
+                          sql: chunk.sql || undefined,
+                        },
+                      }
+                    : msg,
+                ),
+              );
               break;
 
             case "error":
@@ -502,8 +667,65 @@ export default function ChatHome() {
                 );
               }
               break;
+            // TASK-015：审核通过后 continue_with_approval 产出的 result/chart chunk
+            // 必须在此处理——之前缺这两个 case，导致审核通过的查询结果永远不渲染。
+            case "result":
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === messageId
+                    ? {
+                        ...msg,
+                        resultColumns: chunk.columns ?? undefined,
+                        resultData: chunk.data ?? undefined,
+                        resultRowCount: chunk.rowCount ?? undefined,
+                      }
+                    : msg,
+                ),
+              );
+              break;
+            case "chart":
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === messageId
+                    ? {
+                        ...msg,
+                        chartConfig: chunk.chartConfig || undefined,
+                      }
+                    : msg,
+                ),
+              );
+              break;
+            case "sql_explanation":
+              // 审核通过时后端重发 sql_explanation chunk 刷新阐述气泡
+              if (chunk.sqlMeaning) {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === messageId
+                      ? { ...msg, sqlMeaning: chunk.sqlMeaning || undefined }
+                      : msg,
+                  ),
+                );
+              }
+              break;
             case "done":
               setIsSqlProcessing(false);
+              break;
+            case "security_block":
+              // 审批后执行仍可能被安全机制拦截（如重新生成的 SQL 触及受保护表）
+              setIsSqlProcessing(false);
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === messageId
+                    ? {
+                        ...msg,
+                        securityBlock: {
+                          reason: chunk.content || "SQL blocked by security mechanism",
+                          sql: chunk.sql || undefined,
+                        },
+                      }
+                    : msg,
+                ),
+              );
               break;
             case "error":
               setIsSqlProcessing(false);
@@ -594,6 +816,7 @@ export default function ChatHome() {
                     ? {
                         ...msg,
                         pendingSql: chunk.sql || chunk.content || "",
+                        sqlMeaning: chunk.sqlMeaning || undefined,
                         sqlApprovalStatus: "pending" as const,
                         content: "",
                       }
@@ -619,8 +842,60 @@ export default function ChatHome() {
                 );
               }
               break;
+            // TASK-015：reject 后重新生成的 SQL 经二次审核通过，会产出 result/chart。
+            case "result":
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === messageId
+                    ? {
+                        ...msg,
+                        resultColumns: chunk.columns ?? undefined,
+                        resultData: chunk.data ?? undefined,
+                        resultRowCount: chunk.rowCount ?? undefined,
+                      }
+                    : msg,
+                ),
+              );
+              break;
+            case "chart":
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === messageId
+                    ? { ...msg, chartConfig: chunk.chartConfig || undefined }
+                    : msg,
+                ),
+              );
+              break;
+            case "sql_explanation":
+              if (chunk.sqlMeaning) {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === messageId
+                      ? { ...msg, sqlMeaning: chunk.sqlMeaning || undefined }
+                      : msg,
+                  ),
+                );
+              }
+              break;
             case "done":
               setIsSqlProcessing(false);
+              break;
+            case "security_block":
+              // 重新生成 SQL 后被安全机制拦截
+              setIsSqlProcessing(false);
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === messageId
+                    ? {
+                        ...msg,
+                        securityBlock: {
+                          reason: chunk.content || "SQL blocked by security mechanism",
+                          sql: chunk.sql || undefined,
+                        },
+                      }
+                    : msg,
+                ),
+              );
               break;
             case "error":
               setIsSqlProcessing(false);
@@ -650,20 +925,60 @@ export default function ChatHome() {
     [currentConversationId, messages],
   );
 
-  const handleSqlCancel = useCallback((messageId: string) => {
-    setMessages((prev) =>
-      prev.map((msg) =>
-        msg.id === messageId
-          ? {
-              ...msg,
-              sqlApprovalStatus: "cancelled" as const,
-              content: msg.content || "Query cancelled",
-              pendingSql: undefined,
-            }
-          : msg,
-      ),
-    );
-  }, []);
+  const handleSqlCancel = useCallback(
+    (messageId: string, sql: string, _question: string) => {
+      // TASK-015：cancel 之前是纯前端 state，ApprovalTask 一直挂为 pending，
+      // 后端 stream 流也持续等待——这是个 bug。这里改为调用后端 cancel API，
+      // 让 ApprovalTask 同步标记 cancelled，并把前端状态切到 cancelled 关闭 loading。
+      const msgIndex = messages.findIndex((m) => m.id === messageId);
+      let question = _question || "";
+      if (msgIndex > 0) {
+        for (let i = msgIndex - 1; i >= 0; i--) {
+          if (messages[i].type === "user") {
+            question = messages[i].content;
+            break;
+          }
+        }
+      }
+      const pendingSql = sql || "";
+
+      // 乐观更新：立即关闭审核 UI，避免用户点了 Cancel 后还要等网络回包才消失
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === messageId
+            ? {
+                ...msg,
+                sqlApprovalStatus: "cancelled" as const,
+                content: msg.content || "Query cancelled",
+                pendingSql: undefined,
+              }
+            : msg,
+        ),
+      );
+      setIsSqlProcessing(false);
+
+      // 异步通知后端：让 ApprovalTask 标记 cancelled（DB 一致性 + WS 推送给 ApprovalCenter）
+      if (pendingSql) {
+        streamChatClient.sqlApproval({
+          conversationId: currentConversationId || "",
+          sql: pendingSql,
+          action: "cancel",
+          question,
+          dbName: selectedDb,
+          onChunk: () => {
+            /* cancel 流以 sql_cancelled chunk 终止，无需额外处理 */
+          },
+          onError: (error) => {
+            console.warn("SQL cancel API call failed:", error);
+          },
+          onComplete: () => {
+            /* 后端已确认 cancel，无额外动作 */
+          },
+        });
+      }
+    },
+    [currentConversationId, messages, selectedDb],
+  );
 
   const handleRegenerate = useCallback(
     (messageId: string, messageContent: string) => {

@@ -414,7 +414,7 @@ export function ModelSettingsDialog({
                     />
                   </TextField>
 
-                  <div className="flex items-center gap-2 mt-1">
+                  <div className="flex items-center justify-between mt-1">
                     <Button
                       variant="ghost"
                       size="sm"

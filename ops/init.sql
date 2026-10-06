@@ -2,6 +2,10 @@
 -- 创建数据库表
 -- psql -h 127.0.0.1 -p 15432 -U postgres -d id_x_010 -f init.sql
 
+-- 启用 pgvector 扩展：供 table_comments / document_chunks / sql_examples 等
+-- 向量检索表的 embedding 列使用。镜像需为 pgvector/pgvector:pg<版本>。
+CREATE EXTENSION IF NOT EXISTS vector;
+
 -- ============================================
 -- 1. 用户表 (users)
 -- 优先创建，因为其他表依赖此表
@@ -21,6 +25,12 @@ CREATE TABLE IF NOT EXISTS users (
 -- 兼容已有库：仅当列缺失时追加（幂等）
 ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name VARCHAR(64);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar BYTEA;
+-- TASK-013：管理员标志位；旧库通过 ALTER 兼容，新库由 create_all 自动建
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE;
+COMMENT ON COLUMN users.is_admin IS '是否管理员（控制 /admin 路由与 admin mutation 访问）';
+-- TASK-019：密码哈希算法；老数据 null 视为 sha256，登录时自动升级为 bcrypt
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_algo VARCHAR(16) DEFAULT 'bcrypt';
+COMMENT ON COLUMN users.password_algo IS '密码哈希算法：bcrypt / sha256（老数据）';
 
 -- 用户表索引
 CREATE INDEX IF NOT EXISTS ix_users_email ON users(email);
@@ -332,3 +342,16 @@ CREATE TRIGGER update_users_updated_at
 -- 完成
 -- ============================================
 -- 执行完成后，数据库表已创建成功
+--
+-- 注意：以下 TASK-001 ~ TASK-018 新增的表（table_comments / document_chunks /
+-- conversation_summaries / sql_examples / approval_tasks / report_subscriptions /
+-- uploaded_images / prompt_templates）不在本 init.sql 中显式 CREATE TABLE，
+-- 而是由 SQLAlchemy ``Base.metadata.create_all`` 在应用启动期统一自动建表。
+-- 因此：
+--   - 全新部署：init.sql 跑完后再启动应用，create_all 会补建这几张新表
+--   - 已有库升级：直接重启应用即可，create_all 会按 IF NOT EXISTS 语义补建
+-- 新字段（如 users.is_admin / users.password_algo）已通过 ALTER TABLE ADD COLUMN
+-- IF NOT EXISTS 在本文件第 26 行附近兼容老库。
+--
+-- 如需手动建表（不依赖 create_all），可在 psql 中按 src/models/x_models.py
+-- 中的 ORM 模型手工 CREATE TABLE。

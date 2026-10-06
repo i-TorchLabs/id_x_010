@@ -250,3 +250,71 @@ export async function uploadAvatar(
     };
   }
 }
+
+
+// TASK-015：通用图片上传，供 VL Agent 使用
+export interface UploadImageResult {
+  success: boolean;
+  image_id?: number;
+  filename?: string;
+  error?: string;
+}
+
+export async function uploadImage(
+  file: File,
+  signal?: AbortSignal,
+): Promise<UploadImageResult> {
+  // 仅允许 image/*；≤8MB
+  if (!file.type.startsWith("image/")) {
+    return { success: false, error: "Only image uploads are allowed" };
+  }
+  if (file.size > 8 * 1024 * 1024) {
+    return { success: false, error: "Image too large (>8MB)" };
+  }
+
+  const url = `${BASE_URL}/b/id_x_010/upload-image`;
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const headers: Record<string, string> = {};
+  const token = getToken();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: formData,
+      signal,
+    });
+
+    if (response.status === 401) {
+      handleUnauthorized();
+      return { success: false, error: "Unauthorized. Please sign in again." };
+    }
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success) {
+      return {
+        success: false,
+        error: data?.error || `Upload failed (HTTP ${response.status})`,
+      };
+    }
+
+    return {
+      success: true,
+      image_id: data.image_id,
+      filename: data.filename,
+    };
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      return { success: false, error: "Upload cancelled" };
+    }
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error",
+    };
+  }
+}

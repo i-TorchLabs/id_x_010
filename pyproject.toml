@@ -1,0 +1,44 @@
+# ====================================================================
+# id_x_010 项目配置（ruff + 工具元数据）
+#
+# 本期不引入 CI/CD（详见 docs/缺失功能补完与代码审查计划.md 0.1 节），
+# ruff 仅作本地 pre-commit 与手动检查使用。
+# ====================================================================
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# 仅扫描 src/ 与 x_plugin.py；tests / migrations 本期不做
+extend-exclude = [
+    "web",
+    "ops",
+    "docs",
+    "__pycache__",
+]
+
+[tool.ruff.lint]
+# select 含义：
+#   E/W = pycodestyle 错误/警告
+#   F   = pyflakes（未用导入/变量等）
+#   I   = isort（import 顺序）
+#   UP  = pyupgrade（升级到 3.11 新写法）
+#   B   = flake8-bugbear（常见陷阱）
+#   S   = flake8-bandit（安全检查）
+select = ["E", "F", "W", "I", "UP", "B", "S"]
+# 项目历史代码已有：
+# - S101: assert 语句（在 guard / type narrow 大量使用）
+# - S104: 网络绑定 0.0.0.0
+# - E501: 万里行长行（logger 长字符串常见）
+ignore = ["S101", "S104", "E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# SQL Agent 内有大量动态 SQL 构造，S608（SQL 注入风险）误报严重；
+# 真正的 SQL 安全由 SQLSecurityChecker + PROTECTED_TABLES 在运行时守护
+"src/agents/*" = ["S608"]
+# tools/* 是 ReAct 子目录，S101 子项放行
+"src/agents/tools/*" = ["S101"]
+
+[tool.ruff.format]
+# 与项目既有风格对齐：双引号、4 空格缩进
+quote-style = "double"
+indent-style = "space"

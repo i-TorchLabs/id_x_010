@@ -1,0 +1,13 @@
+# 本地 pre-commit 钩子（TASK-010）
+# 启用方式：pip install pre-commit && pre-commit install
+# 本期不上 CI，仅作提交前本地检查。如需跳过：git commit --no-verify
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.0
+    hooks:
+      - id: ruff
+        # 不自动修复（避免修改老代码引发风险），仅检查
+        args: ["--fixable-only"]
+      - id: ruff-format
+        # 仅格式化，不修改逻辑

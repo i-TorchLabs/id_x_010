@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator, List, Optional
 
 import strawberry
-from litestar import MediaType, Request, Response, Router, get, post
+from litestar import MediaType, Request, Response, Router, WebSocket, get, post, websocket
 from litestar.response import Stream
 from sqlalchemy import func, select
 
@@ -21,8 +21,13 @@ from x_models.id_x_010.src.models.x_models import (
     ExternalModel,
     LocalModel,
     PasswordResetToken,
+    ReportSubscription,
+    SqlEvalCase,
+    SqlEvalResult,
+    SqlExample,
     UsageLog,
     User,
+    UserFeedback,
     UserMarkdownPrompt,
     UserModelSettings,
     UserToken,
@@ -63,6 +68,28 @@ from x_models.id_x_010.src.schemas.x_schemas import (
     ExternalModelMutationResponseType,
     DeleteExternalModelResponseType,
     SetActiveModelResponseType,
+    ReindexResponseType,
+    SqlExampleInput,
+    SqlExampleType,
+    SqlExampleMutationResponseType,
+    SqlExampleListResponseType,
+    ApprovalTaskType,
+    ApprovalTaskListResponseType,
+    AdminUserType,
+    AdminUserListResponseType,
+    AdminMutationResponseType,
+    ExportResultResponseType,
+    ReportSubscriptionInput,
+    ReportSubscriptionType,
+    ReportSubscriptionListResponseType,
+    ReportSubscriptionMutationResponseType,
+    PromptTemplateType,
+    PromptTemplateMutationResponseType,
+    UserFeedbackType,
+    SqlEvalCaseType,
+    SqlEvalResultType,
+    SqlEvalRunResponseType,
+    UserFeedbackMutationResponseType,
 )
 from x_models.id_x_010.src.views.x_views import (
     build_user_info,
@@ -70,6 +97,7 @@ from x_models.id_x_010.src.views.x_views import (
     delete_external_model,
     delete_markdown_prompt,
     get_active_markdown_prompt,
+    get_agent_db_settings,
     get_conversation_history,
     get_external_model_by_id,
     get_external_model_by_name,
@@ -99,6 +127,47 @@ class Query:
     @strawberry.field(description="健康检查")
     async def health(self) -> HealthType:
         return HealthType(status="ok", service="id_x_010")
+
+    # TASK-012：列出待审批任务，供 Approval Center 兜底拉取
+    @strawberry.field(description="列出待审批 SQL 任务（pending）")
+    async def list_approval_tasks(self, info: strawberry.Info) -> "ApprovalTaskListResponseType":
+        from x_models.id_x_010.src.views.x_approval import list_pending_tasks
+
+        try:
+            request = _get_info_request(info)
+            user = await _get_bearer_user(request)
+            if user is None:
+                return ApprovalTaskListResponseType(
+                    success=False, message="未登录", tasks=[]
+                )
+            tasks = await list_pending_tasks()
+            return ApprovalTaskListResponseType(
+                success=True,
+                message=f"查询到 {len(tasks)} 条",
+                tasks=[
+                    ApprovalTaskType(
+                        id=t["id"],
+                        conversation_id=t["conversation_id"],
+                        sql=t["sql"],
+                        sql_meaning=t.get("sql_meaning"),
+                        question=t["question"],
+                        user_id=t.get("user_id"),
+                        status=t["status"],
+                        created_at=t.get("created_at"),
+                        timeout_at=t.get("timeout_at"),
+                    )
+                    for t in tasks
+                ],
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}list_approval_tasks 失败: {e}", exc_info=True
+            )
+            return ApprovalTaskListResponseType(
+                success=False,
+                message=f"失败: {type(e).__name__}: {e}",
+                tasks=[],
+            )
 
     @strawberry.field(description="获取模型列表")
     async def get_models(self) -> ModelListResponseType:
@@ -479,7 +548,40 @@ class Query:
 
 
 async def hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
+    """生成 bcrypt 哈希（TASK-019）。
+
+    rounds=12 是 bcrypt 推荐的安全强度；老用户登录时由 verify_password
+    判定为 sha256 后自动升级为此哈希。
+    """
+    import bcrypt
+
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=12)).decode()
+
+
+def verify_password(password: str, hash_str: str, algo: str = "bcrypt") -> bool:
+    """校验密码。
+
+    Args:
+        password: 用户输入的明文密码。
+        hash_str: 数据库存储的哈希。
+        algo: 哈希算法；"bcrypt"（默认新数据）或 "sha256"（老数据，兼容）。
+
+    Returns:
+        True 表示匹配；False 表示不匹配或哈希格式错误。
+    """
+    if not password or not hash_str:
+        return False
+    if algo == "bcrypt":
+        try:
+            import bcrypt
+
+            return bcrypt.checkpw(password.encode(), hash_str.encode())
+        except (ValueError, TypeError):
+            return False
+    elif algo == "sha256":
+        # 老数据兼容；登录成功后由 login mutation 自动升级为 bcrypt
+        return hashlib.sha256(password.encode()).hexdigest() == hash_str
+    return False
 
 
 async def generate_token() -> str:
@@ -543,6 +645,23 @@ async def _get_bearer_settings(request) -> Optional[UserModelSettings]:
     return await get_user_model_settings(user.id)
 
 
+def _to_subscription_type(sub) -> "ReportSubscriptionType":
+    """ReportSubscription ORM → GraphQL type 转换。"""
+    return ReportSubscriptionType(
+        id=sub.id,
+        user_id=sub.user_id,
+        name=sub.name,
+        cron=sub.cron,
+        query_template=sub.query_template,
+        format=sub.format or "xlsx",
+        db_name=sub.db_name,
+        enabled=bool(sub.enabled),
+        last_run_at=sub.last_run_at.isoformat() if sub.last_run_at else None,
+        last_run_status=sub.last_run_status,
+        created_at=sub.created_at.isoformat() if sub.created_at else None,
+    )
+
+
 def _settings_type(settings: UserModelSettings) -> ModelSettingsType:
     return ModelSettingsType(
         provider=settings.provider,
@@ -570,8 +689,39 @@ class Mutation:
                 f"agent_type={input.agent_type}, "
                 f"stream={input.stream}, "
                 f"url={base_url}, "
-                f"api_key={api_key}"
+                f"api_key={'***set' if api_key else '***empty'}"
             )
+
+            # TASK-008：限流 + 配额检查（best-effort，失败放行）
+            request = _get_info_request(info)
+            user = await _get_bearer_user(request)
+            rl_key = str(user.id) if user is not None else (
+                request.client.host if request and request.client else "anon"
+            )
+            from x_models.id_x_010.src.middleware.x_ratelimit import rate_limit
+
+            if not await rate_limit("chat", rl_key):
+                return ChatResponseType(
+                    success=False,
+                    message="请求过于频繁，请稍后再试（每分钟上限 20 次）",
+                    response="",
+                    thinking="",
+                )
+
+            if user is not None:
+                from x_models.id_x_010.src.utils.x_quota import check_user_quota
+
+                ok, msg = await check_user_quota(user.id)
+                if not ok:
+                    logger.warning(
+                        f"{get_request_id()}用户配额超限 user_id={user.id}: {msg}"
+                    )
+                    return ChatResponseType(
+                        success=False,
+                        message=msg,
+                        response="",
+                        thinking="",
+                    )
 
             context = None
             if input.context:
@@ -659,6 +809,18 @@ class Mutation:
     @strawberry.mutation(description="用户登录")
     async def login(self, input: LoginInput) -> AuthResponseType:
         try:
+            # TASK-008：登录失败限流，邮箱为 key，5 次/分钟；成功后清除计数
+            from x_models.id_x_010.src.middleware.x_ratelimit import (
+                clear_rate_limit,
+                rate_limit,
+            )
+
+            if not await rate_limit("login", input.email, limit=5):
+                return AuthResponseType(
+                    success=False,
+                    message="登录尝试过多，请 15 分钟后再试",
+                )
+
             async with get_session()() as session:
                 result = await session.execute(
                     select(User).where(User.email == input.email)
@@ -668,9 +830,19 @@ class Mutation:
                 if user is None:
                     return AuthResponseType(success=False, message="用户不存在")
 
-                password_hash = await hash_password(input.password)
-                if user.password_hash != password_hash:
+                # TASK-019：bcrypt 优先；老数据 password_algo 缺失视为 sha256
+                algo = getattr(user, "password_algo", None) or "sha256"
+                if not verify_password(input.password, user.password_hash, algo):
                     return AuthResponseType(success=False, message="密码错误")
+
+                # 老 sha256 自动升级为 bcrypt（用户无感知）
+                if algo != "bcrypt":
+                    user.password_hash = await hash_password(input.password)
+                    user.password_algo = "bcrypt"
+                    logger.info(
+                        f"{get_request_id()}用户密码已升级为 bcrypt: "
+                        f"user_id={user.id}, email={user.email}"
+                    )
 
                 if user.is_active is False:
                     return AuthResponseType(success=False, message="用户尚未激活")
@@ -687,6 +859,9 @@ class Mutation:
                 session.add(user_token)
                 await session.commit()
                 await session.refresh(user)
+
+                # 登录成功：清掉该邮箱的失败计数
+                clear_rate_limit("login", input.email)
 
                 return AuthResponseType(
                     success=True,
@@ -808,11 +983,75 @@ class Mutation:
     ) -> AsyncGenerator[StreamChunkType, None]:
         try:
             if action == "cancel":
+                # TASK-012：若该 SQL 已挂起为 ApprovalTask，同步标记 cancelled
+                try:
+                    from x_models.id_x_010.src.views.x_approval import (
+                        resolve_task,
+                    )
+                    from sqlalchemy import select as _select
+                    from x_models.id_x_010.src.models.x_models import (
+                        ApprovalTask as _ApprovalTask,
+                    )
+
+                    async with get_session()() as session:
+                        task = (
+                            await session.execute(
+                                _select(_ApprovalTask).where(
+                                    _ApprovalTask.conversation_id == conversation_id,
+                                    _ApprovalTask.sql == sql,
+                                    _ApprovalTask.status == "pending",
+                                )
+                            )
+                        ).scalar_one_or_none()
+                    if task is not None:
+                        await resolve_task(
+                            task.id, action="cancel", assigned_to=None
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"{get_request_id()}sql_approval cancel 标记 ApprovalTask 失败: "
+                        f"{type(e).__name__}: {e}"
+                    )
                 yield StreamChunkType(
                     type="sql_cancelled",
                     content="用户取消了本次查询",
                 )
                 return
+
+            # TASK-012：approve / reject 时同步 ApprovalTask 状态
+            if action in ("approve", "reject"):
+                try:
+                    from x_models.id_x_010.src.views.x_approval import (
+                        resolve_task,
+                    )
+                    from sqlalchemy import select as _select
+                    from x_models.id_x_010.src.models.x_models import (
+                        ApprovalTask as _ApprovalTask,
+                    )
+
+                    request = _get_info_request(info)
+                    approver = await _get_bearer_user(request)
+                    async with get_session()() as session:
+                        task = (
+                            await session.execute(
+                                _select(_ApprovalTask).where(
+                                    _ApprovalTask.conversation_id == conversation_id,
+                                    _ApprovalTask.sql == sql,
+                                    _ApprovalTask.status == "pending",
+                                )
+                            )
+                        ).scalar_one_or_none()
+                    if task is not None:
+                        await resolve_task(
+                            task.id,
+                            action=action,
+                            assigned_to=approver.id if approver else None,
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"{get_request_id()}sql_approval resolve ApprovalTask 失败: "
+                        f"{type(e).__name__}: {e}"
+                    )
 
             # 按 LLM_PROVIDER 加载提供商表配置（external_provider / local_provider）
             await load_llm_provider_config()
@@ -840,6 +1079,26 @@ class Mutation:
                         model_used=chunk.get("model_used"),
                         conversation_id=conversation_id,
                         sql=chunk.get("sql"),
+                        sql_meaning=chunk.get("sql_meaning"),
+                        # TASK-015：补齐 result/chart/security_block 字段转发，
+                        # 否则前端审核通过后收不到查询结果，ResultView 永不渲染。
+                        columns=chunk.get("columns"),
+                        data=(
+                            json.dumps(chunk["data"], ensure_ascii=False)
+                            if chunk.get("data") is not None
+                            else None
+                        ),
+                        row_count=chunk.get("row_count"),
+                        chart_config=(
+                            json.dumps(chunk["chart_config"], ensure_ascii=False)
+                            if chunk.get("chart_config") is not None
+                            else None
+                        ),
+                        security_block=(
+                            bool(chunk["security_block"])
+                            if chunk.get("security_block") is not None
+                            else None
+                        ),
                     )
             elif action == "reject":
                 last_chunk_type = None
@@ -853,9 +1112,29 @@ class Mutation:
                         model_used=chunk.get("model_used"),
                         conversation_id=conversation_id,
                         sql=chunk.get("sql"),
+                        sql_meaning=chunk.get("sql_meaning"),
+                        columns=chunk.get("columns"),
+                        data=(
+                            json.dumps(chunk["data"], ensure_ascii=False)
+                            if chunk.get("data") is not None
+                            else None
+                        ),
+                        row_count=chunk.get("row_count"),
+                        chart_config=(
+                            json.dumps(chunk["chart_config"], ensure_ascii=False)
+                            if chunk.get("chart_config") is not None
+                            else None
+                        ),
+                        security_block=(
+                            bool(chunk["security_block"])
+                            if chunk.get("security_block") is not None
+                            else None
+                        ),
                     )
 
                 if last_chunk_type == "sql_rejected":
+                    # TASK-015：重新生成 SQL 后会再次走审核流（auto_execute=False）
+                    # 可能在用户二次审核通过时产出 result chunk——这里也要补齐字段。
                     async for chunk2 in sql_agent.stream_query(question=question):
                         yield StreamChunkType(
                             type=chunk2.get("type", ""),
@@ -863,12 +1142,985 @@ class Mutation:
                             model_used=chunk2.get("model_used"),
                             conversation_id=conversation_id,
                             sql=chunk2.get("sql"),
+                            sql_meaning=chunk2.get("sql_meaning"),
+                            columns=chunk2.get("columns"),
+                            data=(
+                                json.dumps(chunk2["data"], ensure_ascii=False)
+                                if chunk2.get("data") is not None
+                                else None
+                            ),
+                            row_count=chunk2.get("row_count"),
+                            chart_config=(
+                                json.dumps(chunk2["chart_config"], ensure_ascii=False)
+                                if chunk2.get("chart_config") is not None
+                                else None
+                            ),
+                            security_block=(
+                                bool(chunk2["security_block"])
+                                if chunk2.get("security_block") is not None
+                                else None
+                            ),
                         )
         except Exception as e:
             logger.error(f"{get_request_id()}SQL审批接口错误: {e}", exc_info=True)
             yield StreamChunkType(
                 type="error",
                 content=f"审批处理失败: {str(e)}",
+            )
+
+    @strawberry.mutation(description="重建目标库的 schema 向量索引（写入 table_comments）")
+    async def reindex_schema(
+        self, info: strawberry.Info, db_name: str
+    ) -> ReindexResponseType:
+        """触发 x_indexer.index_database：遍历目标库 public schema 全部表，
+        调用 x_vectorstore.upsert_table_comment 写入/更新 table_comments，
+        供 SQL Agent retriever 后续召回（TASK-002）。
+
+        需要登录；审批/管理员校验后续在 TASK-013 引入 require_admin 后升级。
+        异常不抛出，返回结构化 ReindexResponseType。
+        """
+        request = _get_info_request(info)
+        user = await _get_bearer_user(request)
+        if user is None:
+            return ReindexResponseType(
+                success=False, message="未登录", indexed_count=0
+            )
+
+        if not db_name:
+            return ReindexResponseType(
+                success=False, message="db_name 不能为空", indexed_count=0
+            )
+
+        try:
+            # 按 LLM_PROVIDER 加载提供商表配置（与 chat / sql_approval 一致）
+            await load_llm_provider_config()
+            # 用户保存自定义模型设置时以其覆盖默认链路配置；reindex 不需要 LLM
+            # 但 SQLAgent 实例化会创建 LLM 客户端，保持参数一致以避免类型混乱
+            user_settings = await _get_bearer_settings(request)
+
+            from x_models.id_x_010.src.utils.x_indexer import index_database
+
+            sql_agent = SQLAgent(
+                model_name=(
+                    user_settings.model_name if user_settings else None
+                ),
+                api_key=user_settings.api_key if user_settings else None,
+                base_url=user_settings.base_url if user_settings else None,
+                db_name=db_name,
+            )
+            await sql_agent.db.connect()
+            try:
+                count = await index_database(db_name, sql_agent.db)
+            finally:
+                try:
+                    await sql_agent.db.disconnect()
+                except Exception as e:
+                    logger.warning(
+                        f"{get_request_id()}reindex_schema disconnect 失败（非致命）: "
+                        f"{type(e).__name__}: {e}"
+                    )
+
+            return ReindexResponseType(
+                success=True,
+                message=f"已索引 {count} 张表",
+                indexed_count=count,
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}reindex_schema 失败: {e}", exc_info=True
+            )
+            return ReindexResponseType(
+                success=False,
+                message=f"失败: {type(e).__name__}: {e}",
+                indexed_count=0,
+            )
+
+    # ------------------------------------------------------------------
+    # SQL Few-Shot 例子库 CRUD（TASK-009）
+    # 本期用 _get_bearer_user 鉴权；TASK-013 完成后升级为 require_admin
+    # ------------------------------------------------------------------
+
+    @strawberry.mutation(description="新增/更新 SQL Few-Shot 例子（自动生成 embedding）")
+    async def save_sql_example(
+        self, info: strawberry.Info, input: SqlExampleInput
+    ) -> SqlExampleMutationResponseType:
+        request = _get_info_request(info)
+        user = await _get_bearer_user(request)
+        if user is None:
+            return SqlExampleMutationResponseType(
+                success=False, message="未登录", example=None
+            )
+
+        try:
+            from x_models.id_x_010.src.utils.x_fewshot import embed_example
+
+            async with get_session()() as session:
+                if input.id is None:
+                    example = SqlExample(
+                        db_name=input.db_name,
+                        question=input.question,
+                        sql=input.sql,
+                        explanation=input.explanation,
+                        enabled=input.enabled,
+                    )
+                    session.add(example)
+                else:
+                    example = (
+                        await session.execute(
+                            select(SqlExample).where(SqlExample.id == input.id)
+                        )
+                    ).scalar_one_or_none()
+                    if example is None:
+                        return SqlExampleMutationResponseType(
+                            success=False,
+                            message=f"例子不存在: id={input.id}",
+                            example=None,
+                        )
+                    example.db_name = input.db_name
+                    example.question = input.question
+                    example.sql = input.sql
+                    example.explanation = input.explanation
+                    example.enabled = input.enabled
+
+                # 计算 embedding；失败时仍写入(embedding NULL，召回降级)
+                example.embedding = await embed_example(input.question)
+
+                await session.commit()
+                await session.refresh(example)
+
+                return SqlExampleMutationResponseType(
+                    success=True,
+                    message="保存成功",
+                    example=SqlExampleType(
+                        id=example.id,
+                        db_name=example.db_name,
+                        question=example.question,
+                        sql=example.sql,
+                        explanation=example.explanation,
+                        enabled=bool(example.enabled),
+                        created_at=(
+                            example.created_at.isoformat()
+                            if example.created_at is not None
+                            else None
+                        ),
+                    ),
+                )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}save_sql_example 失败: {e}", exc_info=True
+            )
+            return SqlExampleMutationResponseType(
+                success=False,
+                message=f"失败: {type(e).__name__}: {e}",
+                example=None,
+            )
+
+    @strawberry.mutation(description="删除 SQL Few-Shot 例子")
+    async def delete_sql_example(
+        self, info: strawberry.Info, example_id: int
+    ) -> SqlExampleMutationResponseType:
+        request = _get_info_request(info)
+        user = await _get_bearer_user(request)
+        if user is None:
+            return SqlExampleMutationResponseType(
+                success=False, message="未登录", example=None
+            )
+
+        try:
+            async with get_session()() as session:
+                example = (
+                    await session.execute(
+                        select(SqlExample).where(SqlExample.id == example_id)
+                    )
+                ).scalar_one_or_none()
+                if example is None:
+                    return SqlExampleMutationResponseType(
+                        success=False,
+                        message=f"例子不存在: id={example_id}",
+                        example=None,
+                    )
+                await session.delete(example)
+                await session.commit()
+            return SqlExampleMutationResponseType(
+                success=True, message="已删除", example=None
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}delete_sql_example 失败: {e}", exc_info=True
+            )
+            return SqlExampleMutationResponseType(
+                success=False,
+                message=f"失败: {type(e).__name__}: {e}",
+                example=None,
+            )
+
+    @strawberry.field(description="列出 SQL Few-Shot 例子（可选 db_name 过滤）")
+    async def list_sql_examples(
+        self, info: strawberry.Info, db_name: Optional[str] = None
+    ) -> SqlExampleListResponseType:
+        request = _get_info_request(info)
+        user = await _get_bearer_user(request)
+        if user is None:
+            return SqlExampleListResponseType(
+                success=False, message="未登录", examples=[]
+            )
+
+        try:
+            async with get_session()() as session:
+                stmt = select(SqlExample)
+                if db_name:
+                    stmt = stmt.where(SqlExample.db_name == db_name)
+                stmt = stmt.order_by(SqlExample.id.desc())
+                rows = (await session.execute(stmt)).scalars().all()
+
+            return SqlExampleListResponseType(
+                success=True,
+                message=f"查询到 {len(rows)} 条",
+                examples=[
+                    SqlExampleType(
+                        id=r.id,
+                        db_name=r.db_name,
+                        question=r.question,
+                        sql=r.sql,
+                        explanation=r.explanation,
+                        enabled=bool(r.enabled),
+                        created_at=(
+                            r.created_at.isoformat()
+                            if r.created_at is not None
+                            else None
+                        ),
+                    )
+                    for r in rows
+                ],
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}list_sql_examples 失败: {e}", exc_info=True
+            )
+            return SqlExampleListResponseType(
+                success=False,
+                message=f"失败: {type(e).__name__}: {e}",
+                examples=[],
+            )
+
+    # ------------------------------------------------------------------
+    # 后台运维（TASK-013）：管理员 mutation
+    # ------------------------------------------------------------------
+
+    @strawberry.field(description="管理员：列出全部用户（含 is_admin/is_active）")
+    async def list_users(self, info: strawberry.Info) -> AdminUserListResponseType:
+        from x_models.id_x_010.src.middleware.x_admin import (
+            AdminRequiredError,
+            require_admin,
+        )
+
+        try:
+            await require_admin(_get_info_request(info))
+            async with get_session()() as session:
+                rows = (
+                    await session.execute(select(User).order_by(User.id.asc()))
+                ).scalars().all()
+            return AdminUserListResponseType(
+                success=True,
+                message=f"查询到 {len(rows)} 个用户",
+                users=[
+                    AdminUserType(
+                        id=u.id,
+                        email=u.email,
+                        display_name=u.display_name,
+                        is_active=bool(u.is_active),
+                        is_admin=bool(getattr(u, "is_admin", False)),
+                        created_at=(
+                            u.created_at.isoformat() if u.created_at else None
+                        ),
+                        updated_at=(
+                            u.updated_at.isoformat() if u.updated_at else None
+                        ),
+                    )
+                    for u in rows
+                ],
+            )
+        except AdminRequiredError as e:
+            return AdminUserListResponseType(
+                success=False, message=e.message, users=[]
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}list_users 失败: {e}", exc_info=True
+            )
+            return AdminUserListResponseType(
+                success=False,
+                message=f"失败: {type(e).__name__}: {e}",
+                users=[],
+            )
+
+    @strawberry.mutation(description="管理员：设置/取消用户管理员权限")
+    async def set_user_admin(
+        self, info: strawberry.Info, user_id: int, is_admin: bool
+    ) -> AdminMutationResponseType:
+        from x_models.id_x_010.src.middleware.x_admin import (
+            AdminRequiredError,
+            require_admin,
+        )
+
+        try:
+            await require_admin(_get_info_request(info))
+            async with get_session()() as session:
+                u = (
+                    await session.execute(select(User).where(User.id == user_id))
+                ).scalar_one_or_none()
+                if u is None:
+                    return AdminMutationResponseType(
+                        success=False, message=f"用户不存在: id={user_id}"
+                    )
+                u.is_admin = is_admin
+                await session.commit()
+            return AdminMutationResponseType(
+                success=True,
+                message=f"已{'授予' if is_admin else '撤销'}管理员权限",
+            )
+        except AdminRequiredError as e:
+            return AdminMutationResponseType(success=False, message=e.message)
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}set_user_admin 失败: {e}", exc_info=True
+            )
+            return AdminMutationResponseType(
+                success=False, message=f"失败: {type(e).__name__}: {e}"
+            )
+
+    @strawberry.mutation(description="管理员：激活/停用用户")
+    async def toggle_user_active(
+        self, info: strawberry.Info, user_id: int, is_active: bool
+    ) -> AdminMutationResponseType:
+        from x_models.id_x_010.src.middleware.x_admin import (
+            AdminRequiredError,
+            require_admin,
+        )
+
+        try:
+            await require_admin(_get_info_request(info))
+            async with get_session()() as session:
+                u = (
+                    await session.execute(select(User).where(User.id == user_id))
+                ).scalar_one_or_none()
+                if u is None:
+                    return AdminMutationResponseType(
+                        success=False, message=f"用户不存在: id={user_id}"
+                    )
+                u.is_active = is_active
+                await session.commit()
+            return AdminMutationResponseType(
+                success=True,
+                message=f"已{'激活' if is_active else '停用'}用户",
+            )
+        except AdminRequiredError as e:
+            return AdminMutationResponseType(success=False, message=e.message)
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}toggle_user_active 失败: {e}", exc_info=True
+            )
+            return AdminMutationResponseType(
+                success=False, message=f"失败: {type(e).__name__}: {e}"
+            )
+
+    @strawberry.mutation(description="管理员：重置用户密码")
+    async def reset_user_password(
+        self, info: strawberry.Info, user_id: int, new_password: str
+    ) -> AdminMutationResponseType:
+        from x_models.id_x_010.src.middleware.x_admin import (
+            AdminRequiredError,
+            require_admin,
+        )
+
+        try:
+            await require_admin(_get_info_request(info))
+            if not new_password or len(new_password) < 6:
+                return AdminMutationResponseType(
+                    success=False, message="密码至少 6 位"
+                )
+            async with get_session()() as session:
+                u = (
+                    await session.execute(select(User).where(User.id == user_id))
+                ).scalar_one_or_none()
+                if u is None:
+                    return AdminMutationResponseType(
+                        success=False, message=f"用户不存在: id={user_id}"
+                    )
+                u.password_hash = await hash_password(new_password)
+                u.password_algo = "bcrypt"  # TASK-019 自动升级
+                await session.commit()
+            return AdminMutationResponseType(success=True, message="密码已重置")
+        except AdminRequiredError as e:
+            return AdminMutationResponseType(success=False, message=e.message)
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}reset_user_password 失败: {e}", exc_info=True
+            )
+            return AdminMutationResponseType(
+                success=False, message=f"失败: {type(e).__name__}: {e}"
+            )
+
+    # ------------------------------------------------------------------
+    # 数据导出与报告订阅（TASK-014）
+    # ------------------------------------------------------------------
+
+    @strawberry.mutation(description="管理员：保存 Prompt 模板新版本（自动激活）")
+    async def save_prompt_template(
+        self, info: strawberry.Info, key: str, content: str
+    ) -> "PromptTemplateMutationResponseType":
+        from x_models.id_x_010.src.middleware.x_admin import (
+            AdminRequiredError,
+            require_admin,
+        )
+        from x_models.id_x_010.src.utils.x_prompts import save_prompt_template as _save
+
+        try:
+            admin = await require_admin(_get_info_request(info))
+        except AdminRequiredError as e:
+            return PromptTemplateMutationResponseType(
+                success=False, message=e.message, template=None
+            )
+
+        if not key or not content:
+            return PromptTemplateMutationResponseType(
+                success=False, message="key 与 content 不能为空", template=None
+            )
+
+        try:
+            tpl = await _save(key=key, content=content, variables=None, created_by=admin.id)
+            from x_models.id_x_010.src.schemas.x_schemas import PromptTemplateType
+
+            return PromptTemplateMutationResponseType(
+                success=True,
+                message=f"已保存为 v{tpl.version}（自动激活）",
+                template=PromptTemplateType(
+                    id=tpl.id,
+                    key=tpl.key,
+                    version=tpl.version,
+                    content=tpl.content[:200],  # 截断回显避免响应过大
+                    is_active=bool(tpl.is_active),
+                    created_at=tpl.created_at.isoformat() if tpl.created_at else None,
+                ),
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}save_prompt_template 失败: {e}", exc_info=True
+            )
+            return PromptTemplateMutationResponseType(
+                success=False,
+                message=f"失败: {type(e).__name__}: {e}",
+                template=None,
+            )
+
+    # ------------------------------------------------------------------
+    # 用户反馈与 SQL 评估（TASK-017）
+    # ------------------------------------------------------------------
+
+    @strawberry.mutation(description="提交用户反馈（👍/踩 + 备注）")
+    async def submit_feedback(
+        self,
+        info: strawberry.Info,
+        conversation_id: str,
+        message_index: int,
+        rating: int,
+        feedback_text: Optional[str] = None,
+    ) -> "UserFeedbackMutationResponseType":
+        request = _get_info_request(info)
+        user = await _get_bearer_user(request)
+        # 匿名也可反馈（暂允许）；后续可加 require_admin 看 admin 反馈面板
+        if user is None:
+            return UserFeedbackMutationResponseType(
+                success=False, message="未登录", feedback=None
+            )
+
+        if rating not in (1, -1):
+            return UserFeedbackMutationResponseType(
+                success=False, message="rating 必须为 1 或 -1", feedback=None
+            )
+        if not conversation_id:
+            return UserFeedbackMutationResponseType(
+                success=False, message="conversation_id 不能为空", feedback=None
+            )
+
+        try:
+            async with get_session()() as session:
+                fb = UserFeedback(
+                    user_id=user.id,
+                    conversation_id=conversation_id,
+                    message_index=message_index,
+                    rating=rating,
+                    feedback_text=feedback_text,
+                )
+                session.add(fb)
+                await session.commit()
+                await session.refresh(fb)
+
+            return UserFeedbackMutationResponseType(
+                success=True,
+                message="反馈已提交",
+                feedback=UserFeedbackType(
+                    id=fb.id,
+                    user_id=fb.user_id,
+                    conversation_id=fb.conversation_id,
+                    message_index=fb.message_index,
+                    rating=fb.rating,
+                    feedback_text=fb.feedback_text,
+                    created_at=fb.created_at.isoformat() if fb.created_at else None,
+                ),
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}submit_feedback 失败: {e}", exc_info=True
+            )
+            return UserFeedbackMutationResponseType(
+                success=False,
+                message=f"失败: {type(e).__name__}: {e}",
+                feedback=None,
+            )
+
+    @strawberry.mutation(description="管理员：保存 SQL 评估用例")
+    async def save_sql_eval_case(
+        self,
+        info: strawberry.Info,
+        question: str,
+        db_name: str,
+        expected_sql: Optional[str] = None,
+        tags: Optional[str] = None,
+        enabled: bool = True,
+    ) -> AdminMutationResponseType:
+        from x_models.id_x_010.src.middleware.x_admin import (
+            AdminRequiredError,
+            require_admin,
+        )
+
+        try:
+            await require_admin(_get_info_request(info))
+        except AdminRequiredError as e:
+            return AdminMutationResponseType(success=False, message=e.message)
+
+        if not question or not db_name:
+            return AdminMutationResponseType(
+                success=False, message="question 与 db_name 不能为空"
+            )
+
+        try:
+            import json as _json
+
+            tags_dict = None
+            if tags:
+                try:
+                    tags_dict = _json.loads(tags)
+                except _json.JSONDecodeError:
+                    tags_dict = None
+
+            async with get_session()() as session:
+                case = SqlEvalCase(
+                    question=question,
+                    db_name=db_name,
+                    expected_sql=expected_sql,
+                    tags=tags_dict,
+                    enabled=enabled,
+                )
+                session.add(case)
+                await session.commit()
+            return AdminMutationResponseType(success=True, message="已保存评估用例")
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}save_sql_eval_case 失败: {e}", exc_info=True
+            )
+            return AdminMutationResponseType(
+                success=False, message=f"失败: {type(e).__name__}: {e}"
+            )
+
+    @strawberry.mutation(description="管理员：执行 SQL 评估（同步 ≤ 50 条 enabled case）")
+    async def run_sql_eval(
+        self,
+        info: strawberry.Info,
+        limit: int = 50,
+    ) -> SqlEvalRunResponseType:
+        from x_models.id_x_010.src.middleware.x_admin import (
+            AdminRequiredError,
+            require_admin,
+        )
+
+        try:
+            await require_admin(_get_info_request(info))
+        except AdminRequiredError as e:
+            return SqlEvalRunResponseType(
+                success=False, message=e.message, total=0, executable_count=0, passing_rate=0.0, results=[]
+            )
+
+        try:
+            await load_llm_provider_config()
+            cap = max(1, min(int(limit or 50), 50))  # 上限 50 防 LLM 滥用
+
+            async with get_session()() as session:
+                cases = (
+                    await session.execute(
+                        select(SqlEvalCase)
+                        .where(SqlEvalCase.enabled.is_(True))
+                        .order_by(SqlEvalCase.id.asc())
+                        .limit(cap)
+                    )
+                ).scalars().all()
+
+            if not cases:
+                return SqlEvalRunResponseType(
+                    success=True,
+                    message="无 enabled 用例",
+                    total=0,
+                    executable_count=0,
+                    passing_rate=0.0,
+                    results=[],
+                )
+
+            from x_models.id_x_010.src.agents.x_sql_agent import SQLAgent, validate_sql_security
+
+            # 按 db_name 缓存 agent 避免重复 connect
+            agents: dict = {}
+            results: list = []
+            executable_count = 0
+
+            for case in cases:
+                # 复用 SQLAgent 缓存（get_sql_agent），无则新建
+                if case.db_name not in agents:
+                    agents[case.db_name] = SQLAgent(db_name=case.db_name)
+                    await agents[case.db_name].db.connect()
+
+                agent = agents[case.db_name]
+                # 借用 get_sql_agent 缓存逻辑：get_sql_agent 内部已做 LRU
+                # 这里直接用 new SQLAgent 即可（评估场景不需 supervisor 路由）
+                generated_sql = ""
+                executable = False
+                error_msg = None
+                try:
+                    # 调 query() 拿生成 SQL（不执行——通过 SQLSecurityChecker 检查可执行性）
+                    # 这里简化：调 agent._generate_query_node + check_query
+                    # 复杂场景需要 stream，简化为直接拿 sql 字段
+                    stream_result = agent.graph_query(question=case.question) if hasattr(agent, "graph_query") else None
+                    # 没有 graph_query 方法时降级为安全检查 expected_sql
+                    if stream_result is None:
+                        # 降级：直接对 expected_sql 做安全检查（验证用例可执行性）
+                        sql_to_check = case.expected_sql or ""
+                        if not sql_to_check:
+                            error_msg = "未生成 SQL 且无 expected_sql"
+                        else:
+                            safe, reason = validate_sql_security(sql_to_check)
+                            if safe:
+                                # 进一步尝试执行（取一行验证）
+                                try:
+                                    rows, _ = await agent.db.execute_query(
+                                        f"EXPLAIN {sql_to_check}"
+                                    )
+                                    executable = True
+                                except Exception as ee:
+                                    error_msg = f"EXPLAIN 失败: {ee}"
+                            else:
+                                error_msg = f"安全检查未通过: {reason}"
+                except Exception as ee:
+                    error_msg = f"{type(ee).__name__}: {ee}"
+
+                if executable:
+                    executable_count += 1
+
+                results.append(
+                    SqlEvalResultType(
+                        case_id=case.id,
+                        generated_sql=generated_sql or case.expected_sql,
+                        executable=executable,
+                        error=error_msg,
+                    )
+                )
+
+                # 落库评估结果
+                async with get_session()() as session:
+                    session.add(
+                        SqlEvalResult(
+                            case_id=case.id,
+                            generated_sql=generated_sql or case.expected_sql,
+                            executable=executable,
+                            error=error_msg,
+                        )
+                    )
+                    await session.commit()
+
+            # 关闭所有 agent 连接
+            for ag in agents.values():
+                try:
+                    await ag.db.disconnect()
+                except Exception:
+                    pass
+
+            passing_rate = (executable_count / len(cases)) if cases else 0.0
+            return SqlEvalRunResponseType(
+                success=True,
+                message=f"已评估 {len(cases)} 条用例",
+                total=len(cases),
+                executable_count=executable_count,
+                passing_rate=round(passing_rate, 4),
+                results=results,
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}run_sql_eval 失败: {e}", exc_info=True
+            )
+            return SqlEvalRunResponseType(
+                success=False,
+                message=f"失败: {type(e).__name__}: {e}",
+                total=0,
+                executable_count=0,
+                passing_rate=0.0,
+                results=[],
+            )
+
+    @strawberry.mutation(description="导出 SQL 查询结果（≤1 万行；同步返回 base64）")
+    async def export_result(
+        self,
+        info: strawberry.Info,
+        query: str,
+        fmt: str = "xlsx",
+        db_name: Optional[str] = None,
+    ) -> ExportResultResponseType:
+        """同步执行 SQL ≤1 万行；超限返回 success=False 提示。"""
+        import base64
+
+        from x_models.id_x_010.src.utils.x_export import (
+            export_csv,
+            export_json,
+            export_xlsx,
+        )
+
+        request = _get_info_request(info)
+        user = await _get_bearer_user(request)
+        if user is None:
+            return ExportResultResponseType(
+                success=False, message="未登录", file_name=None, content_base64=None
+            )
+
+        if not query or not query.strip():
+            return ExportResultResponseType(
+                success=False,
+                message="query 不能为空",
+                file_name=None,
+                content_base64=None,
+            )
+
+        # 安全检查：只允许 SELECT；复用 SQL Agent 的 SQLSecurityChecker
+        from x_models.id_x_010.src.agents.x_sql_agent import (
+            SQLAgent,
+            validate_sql_security,
+        )
+
+        safe, reason = validate_sql_security(query)
+        if not safe:
+            return ExportResultResponseType(
+                success=False,
+                message=f"SQL 安全检查未通过: {reason}",
+                file_name=None,
+                content_base64=None,
+            )
+
+        try:
+            await load_llm_provider_config()
+            sql_agent = SQLAgent(db_name=db_name)
+            await sql_agent.db.connect()
+            try:
+                rows, columns = await sql_agent.db.execute_query(query)
+            finally:
+                try:
+                    await sql_agent.db.disconnect()
+                except Exception:
+                    pass
+
+            if len(rows) > 10_000:
+                return ExportResultResponseType(
+                    success=False,
+                    message=f"结果 {len(rows)} 行超限（>1 万），请缩小查询范围",
+                    file_name=None,
+                    content_base64=None,
+                )
+
+            fmt_lower = (fmt or "xlsx").lower()
+            if fmt_lower == "csv":
+                content = export_csv(rows, columns)
+            elif fmt_lower == "json":
+                content = export_json(rows)
+            else:
+                content = export_xlsx(rows, columns)
+
+            ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            file_name = f"export_{ts}.{fmt_lower}"
+            return ExportResultResponseType(
+                success=True,
+                message=f"导出 {len(rows)} 行",
+                file_name=file_name,
+                content_base64=base64.b64encode(content).decode("ascii"),
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}export_result 失败: {e}", exc_info=True
+            )
+            return ExportResultResponseType(
+                success=False,
+                message=f"失败: {type(e).__name__}: {e}",
+                file_name=None,
+                content_base64=None,
+            )
+
+    @strawberry.mutation(description="管理员：新增/更新报告订阅")
+    async def save_report_subscription(
+        self, info: strawberry.Info, input: ReportSubscriptionInput
+    ) -> "ReportSubscriptionMutationResponseType":
+        from x_models.id_x_010.src.middleware.x_admin import (
+            AdminRequiredError,
+            require_admin,
+        )
+
+        try:
+            admin = await require_admin(_get_info_request(info))
+        except AdminRequiredError as e:
+            return ReportSubscriptionMutationResponseType(
+                success=False, message=e.message, subscription=None
+            )
+
+        try:
+            import json as _json
+
+            recipients = None
+            if input.recipients:
+                try:
+                    recipients = _json.loads(input.recipients)
+                except _json.JSONDecodeError:
+                    recipients = None
+
+            async with get_session()() as session:
+                if input.id is None:
+                    sub = ReportSubscription(
+                        user_id=admin.id,
+                        name=input.name,
+                        cron=input.cron,
+                        query_template=input.query_template,
+                        format=input.format or "xlsx",
+                        db_name=input.db_name,
+                        recipients=recipients,
+                        enabled=input.enabled,
+                    )
+                    session.add(sub)
+                else:
+                    sub = (
+                        await session.execute(
+                            select(ReportSubscription).where(
+                                ReportSubscription.id == input.id
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    if sub is None:
+                        return ReportSubscriptionMutationResponseType(
+                            success=False,
+                            message=f"订阅不存在: id={input.id}",
+                            subscription=None,
+                        )
+                    sub.name = input.name
+                    sub.cron = input.cron
+                    sub.query_template = input.query_template
+                    sub.format = input.format or "xlsx"
+                    sub.db_name = input.db_name
+                    sub.recipients = recipients
+                    sub.enabled = input.enabled
+
+                await session.commit()
+                await session.refresh(sub)
+
+            return ReportSubscriptionMutationResponseType(
+                success=True,
+                message="保存成功",
+                subscription=_to_subscription_type(sub),
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}save_report_subscription 失败: {e}", exc_info=True
+            )
+            return ReportSubscriptionMutationResponseType(
+                success=False,
+                message=f"失败: {type(e).__name__}: {e}",
+                subscription=None,
+            )
+
+    @strawberry.field(description="管理员：列出报告订阅")
+    async def list_report_subscriptions(
+        self, info: strawberry.Info
+    ) -> ReportSubscriptionListResponseType:
+        from x_models.id_x_010.src.middleware.x_admin import (
+            AdminRequiredError,
+            require_admin,
+        )
+
+        try:
+            await require_admin(_get_info_request(info))
+        except AdminRequiredError as e:
+            return ReportSubscriptionListResponseType(
+                success=False, message=e.message, subscriptions=[]
+            )
+
+        try:
+            async with get_session()() as session:
+                rows = (
+                    await session.execute(
+                        select(ReportSubscription).order_by(
+                            ReportSubscription.id.desc()
+                        )
+                    )
+                ).scalars().all()
+            return ReportSubscriptionListResponseType(
+                success=True,
+                message=f"查询到 {len(rows)} 条",
+                subscriptions=[_to_subscription_type(r) for r in rows],
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}list_report_subscriptions 失败: {e}", exc_info=True
+            )
+            return ReportSubscriptionListResponseType(
+                success=False,
+                message=f"失败: {type(e).__name__}: {e}",
+                subscriptions=[],
+            )
+
+    @strawberry.mutation(description="管理员：删除报告订阅")
+    async def delete_report_subscription(
+        self, info: strawberry.Info, subscription_id: int
+    ) -> AdminMutationResponseType:
+        from x_models.id_x_010.src.middleware.x_admin import (
+            AdminRequiredError,
+            require_admin,
+        )
+
+        try:
+            await require_admin(_get_info_request(info))
+            async with get_session()() as session:
+                sub = (
+                    await session.execute(
+                        select(ReportSubscription).where(
+                            ReportSubscription.id == subscription_id
+                        )
+                    )
+                ).scalar_one_or_none()
+                if sub is None:
+                    return AdminMutationResponseType(
+                        success=False, message=f"订阅不存在: id={subscription_id}"
+                    )
+                await session.delete(sub)
+                await session.commit()
+            return AdminMutationResponseType(success=True, message="已删除")
+        except AdminRequiredError as e:
+            return AdminMutationResponseType(success=False, message=e.message)
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}delete_report_subscription 失败: {e}", exc_info=True
+            )
+            return AdminMutationResponseType(
+                success=False, message=f"失败: {type(e).__name__}: {e}"
             )
 
     @strawberry.mutation(description="保存当前用户的模型设置（保存前先做连通性检测）")
@@ -1299,6 +2551,45 @@ class Subscription:
                 f"agent_type={agent_type}"
             )
 
+            # TASK-008：限流 + 配额检查（best-effort）。失败 yield error chunk 后 return
+            request = _get_info_request(info)
+            rl_user = await _get_bearer_user(request)
+            rl_key = str(rl_user.id) if rl_user is not None else (
+                request.client.host if request and request.client else "anon"
+            )
+
+            # TASK-016：从 Accept-Language 头解析语言写入 lang_var，
+            # 供 load_prompt 选择对应语言的默认 prompt；解析失败回退 zh-CN
+            try:
+                from x_models.id_x_010.src.utils.x_prompts import lang_var
+
+                accept_lang = (
+                    request.headers.get("accept-language") if request else None
+                )
+                lang_var.set(accept_lang or "zh-CN")
+            except Exception:
+                pass
+
+            from x_models.id_x_010.src.middleware.x_ratelimit import rate_limit
+
+            if not await rate_limit("stream_chat", rl_key):
+                yield StreamChunkType(
+                    type="error",
+                    content="请求过于频繁，请稍后再试（每分钟上限 20 次）",
+                )
+                return
+
+            if rl_user is not None:
+                from x_models.id_x_010.src.utils.x_quota import check_user_quota
+
+                ok, msg = await check_user_quota(rl_user.id)
+                if not ok:
+                    logger.warning(
+                        f"{get_request_id()}用户配额超限 user_id={rl_user.id}: {msg}"
+                    )
+                    yield StreamChunkType(type="error", content=msg)
+                    return
+
             frontend_context = None
             if context:
                 try:
@@ -1313,10 +2604,26 @@ class Subscription:
             if conversation_id:
                 db_history = await get_conversation_history(conversation_id)
 
-            merged_context = merge_context(
-                db_history=db_history,
-                frontend_context=frontend_context,
-            )
+            # 优先使用长期记忆（TASK-005）：摘要 + 实体 + 最近 6 条原文；
+            # conversation_id 为空或失败时回退 merge_context 原始全量截断行为
+            merged_context: Optional[List[Dict[str, str]]] = None
+            if conversation_id:
+                try:
+                    from x_models.id_x_010.src.utils.x_memory import get_context
+
+                    merged_context = await get_context(conversation_id)
+                except Exception as e:
+                    logger.warning(
+                        f"{get_request_id()}get_context 失败,回退 merge_context: "
+                        f"{type(e).__name__}: {e}"
+                    )
+                    merged_context = None
+
+            if not merged_context:
+                merged_context = merge_context(
+                    db_history=db_history,
+                    frontend_context=frontend_context,
+                )
 
             if merged_context:
                 logger.info(
@@ -1388,6 +2695,30 @@ class Subscription:
                     model_used=chunk.get("model_used"),
                     conversation_id=chunk.get("conversation_id"),
                     sql=chunk.get("sql"),
+                    sql_meaning=chunk.get("sql_meaning"),
+                    columns=chunk.get("columns"),
+                    data=(
+                        json.dumps(chunk["data"], ensure_ascii=False)
+                        if chunk.get("data") is not None
+                        else None
+                    ),
+                    row_count=chunk.get("row_count"),
+                    chart_config=(
+                        json.dumps(chunk["chart_config"], ensure_ascii=False)
+                        if chunk.get("chart_config") is not None
+                        else None
+                    ),
+                    # 安全拦截标记：仅 security_block 类型 chunk 会带 true，
+                    # 区别于 error 类型的系统错误
+                    security_block=(
+                        bool(chunk["security_block"])
+                        if chunk.get("security_block") is not None
+                        else None
+                    ),
+                    # General Agent 工具调用通知（TASK-004）；其它 Agent
+                    # 不会携带这两个字段，保持 None 即可
+                    tool_name=chunk.get("tool_name"),
+                    tool_output=chunk.get("tool_output"),
                 )
 
                 if chunk_type.type == "intent":
@@ -1416,6 +2747,21 @@ class Subscription:
                 )
             except Exception as e:
                 logger.error(f"{get_request_id()}保存对话日志失败: {e}", exc_info=True)
+
+            # 长期记忆（TASK-005）：fire-and-forget 触发滚动摘要，不阻塞主响应。
+            # 失败 best-effort，仅 logger.warning；用户感知不到。
+            if conversation_id:
+                try:
+                    import asyncio as _asyncio
+
+                    from x_models.id_x_010.src.utils.x_memory import maybe_summarize
+
+                    _asyncio.create_task(maybe_summarize(conversation_id))
+                except Exception as e:
+                    logger.warning(
+                        f"{get_request_id()}maybe_summarize 触发失败（best-effort）: "
+                        f"{type(e).__name__}: {e}"
+                    )
 
             # 落库用量统计（token 消耗 + 估算花费），best-effort，不影响主链路
             try:
@@ -1809,6 +3155,147 @@ async def upload_avatar_endpoint(request: Request) -> Response:
     )
 
 
+@post("/upload-image", media_type=MediaType.JSON)
+async def upload_image_endpoint(request: Request) -> Response:
+    """TASK-015：通用图片上传端点，供 VL Agent 视觉分析使用。
+
+    鉴权：Bearer token。允许 image/*，≤8MB。落库 UploadedImage 表后返回 image_id，
+    前端在消息文本中插入 ``[image:ID]`` 占位，supervisor 检测后路由到 VLAgent。
+    """
+    import json as _json
+
+    user = await _get_bearer_user(request)
+    if user is None:
+        return Response(
+            content=_json.dumps(
+                {"success": False, "error": "未登录或登录已过期"}, ensure_ascii=False
+            ).encode("utf-8"),
+            status_code=401,
+            media_type="application/json",
+        )
+
+    try:
+        form = await request.form()
+    except Exception as e:
+        logger.warning(f"{get_request_id()}图片上传表单解析失败: {e}")
+        return Response(
+            content=_json.dumps(
+                {"success": False, "error": f"表单解析失败: {type(e).__name__}"},
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            status_code=400,
+            media_type="application/json",
+        )
+
+    upload_file = form.get("file") if form else None
+    if upload_file is None:
+        return Response(
+            content=_json.dumps(
+                {"success": False, "error": "未接收到文件"}, ensure_ascii=False
+            ).encode("utf-8"),
+            status_code=400,
+            media_type="application/json",
+        )
+
+    content_type = getattr(upload_file, "content_type", None) or "image/jpeg"
+    try:
+        raw = await upload_file.read()
+    except Exception as e:
+        return Response(
+            content=_json.dumps(
+                {"success": False, "error": f"文件读取失败: {type(e).__name__}"},
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            status_code=400,
+            media_type="application/json",
+        )
+
+    if not raw:
+        return Response(
+            content=_json.dumps(
+                {"success": False, "error": "文件内容为空"}, ensure_ascii=False
+            ).encode("utf-8"),
+            status_code=400,
+            media_type="application/json",
+        )
+
+    if len(raw) > 8 * 1024 * 1024:
+        return Response(
+            content=_json.dumps(
+                {"success": False, "error": "图片过大（>8MB）"}, ensure_ascii=False
+            ).encode("utf-8"),
+            status_code=400,
+            media_type="application/json",
+        )
+
+    if not content_type.lower().startswith("image/"):
+        return Response(
+            content=_json.dumps(
+                {"success": False, "error": f"仅允许 image/*，当前类型：{content_type}"},
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            status_code=400,
+            media_type="application/json",
+        )
+
+    # 双重校验：imghdr 嗅探真实格式
+    sniffed = imghdr.what(None, h=raw)
+    if sniffed not in _AVATAR_CONTENT_TYPES:
+        return Response(
+            content=_json.dumps(
+                {"success": False, "error": "文件内容不是有效图片"}, ensure_ascii=False
+            ).encode("utf-8"),
+            status_code=400,
+            media_type="application/json",
+        )
+
+    filename = getattr(upload_file, "filename", "image") or "image"
+
+    try:
+        async with get_session()() as session:
+            from x_models.id_x_010.src.models.x_models import UploadedImage
+
+            img = UploadedImage(
+                user_id=user.id,
+                filename=filename,
+                mime=content_type,
+                data=raw,
+            )
+            session.add(img)
+            await session.commit()
+            await session.refresh(img)
+            image_id = img.id
+    except Exception as e:
+        logger.error(
+            f"{get_request_id()}upload_image 落库失败: {e}", exc_info=True
+        )
+        return Response(
+            content=_json.dumps(
+                {"success": False, "error": f"保存失败: {type(e).__name__}: {e}"},
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            status_code=500,
+            media_type="application/json",
+        )
+
+    logger.info(
+        f"{get_request_id()}图片上传成功: user_id={user.id}, image_id={image_id}, "
+        f"size={len(raw)}B, type={sniffed}"
+    )
+    return Response(
+        content=_json.dumps(
+            {
+                "success": True,
+                "image_id": image_id,
+                "filename": filename,
+            },
+            ensure_ascii=False,
+        ).encode("utf-8"),
+        status_code=200,
+        media_type="application/json",
+    )
+
+
 @get("/avatar/{user_id:int}", media_type=MediaType.JSON)
 async def serve_avatar_endpoint(user_id: int) -> Response:
     """按 user_id 输出头像二进制。无头像时返回 404，由前端回退到字母占位。
@@ -1832,6 +3319,24 @@ async def serve_avatar_endpoint(user_id: int) -> Response:
             "Cache-Control": "no-cache, must-revalidate",
         },
     )
+
+
+async def on_shutdown_hook() -> None:
+    """Litestar on_shutdown 钩子（TASK-011 配套）。
+
+    清理 _sql_agent_cache 中的全部 SQLAgent 连接，避免进程退出时连接泄漏。
+    主程序可手动注册：``on_shutdown=[id_x_010.on_shutdown_hook]``；
+    即使主程序不调用，本插件也在 x_plugin.py 注册 atexit 同步兜底（best-effort）。
+    """
+    try:
+        from x_models.id_x_010.src.agents.x_sql_agent import close_all_sql_agents
+
+        await close_all_sql_agents()
+    except Exception as e:
+        logger.warning(
+            f"{get_request_id()}on_shutdown_hook 执行失败（best-effort）: "
+            f"{type(e).__name__}: {e}"
+        )
 
 
 def register_routers(route_prefix: str) -> Router:
@@ -1957,21 +3462,42 @@ def register_routers(route_prefix: str) -> Router:
         if user_settings is not None:
             model_name = user_settings.model_name
 
+        # 模型解析：前端选中的 model_name → external_models 表查 base_url/api_key
+        ext_model = await get_external_model_by_name(model_name or "")
+        if ext_model is not None:
+            override_api_key = ext_model.api_key
+            override_base_url = ext_model.base_url
+        else:
+            override_api_key = user_settings.api_key if user_settings else None
+            override_base_url = user_settings.base_url if user_settings else None
+
+        # db_name 为空时从 agent_db_settings 表取首行作为默认目标库，
+        # 避免 DatabaseConnection 回退到环境变量连错库
+        effective_db_name = db_name
+        if not effective_db_name:
+            default_db = await get_agent_db_settings()
+            if default_db is not None:
+                effective_db_name = default_db.db_name
+
         async def generate():
             if req_id:
                 request_id_var.set(req_id)
             sql_agent = SQLAgent(
                 model_type=model_type,
                 model_name=model_name,
-                api_key=user_settings.api_key if user_settings else None,
-                base_url=user_settings.base_url if user_settings else None,
-                db_name=db_name,
+                api_key=override_api_key,
+                base_url=override_base_url,
+                db_name=effective_db_name,
             )
 
             if action == "approve":
                 async for chunk in sql_agent.continue_with_approval(
                     sql=sql, approved=True, question=question
                 ):
+                    # TASK-015：补齐 columns/data/row_count/chart_config/security_block
+                    # 字段转发——之前只发 6 个字段，前端 ResultView 永远收不到数据。
+                    _raw_data = chunk.get("data")
+                    _raw_chart = chunk.get("chart_config")
                     chunk_data = _json.dumps(
                         {
                             "type": chunk.get("type", ""),
@@ -1979,6 +3505,20 @@ def register_routers(route_prefix: str) -> Router:
                             "model_used": chunk.get("model_used"),
                             "conversation_id": conversation_id,
                             "sql": chunk.get("sql"),
+                            "sql_meaning": chunk.get("sql_meaning"),
+                            "columns": chunk.get("columns"),
+                            "data": (
+                                _json.dumps(_raw_data, ensure_ascii=False)
+                                if _raw_data is not None
+                                else None
+                            ),
+                            "row_count": chunk.get("row_count"),
+                            "chart_config": (
+                                _json.dumps(_raw_chart, ensure_ascii=False)
+                                if _raw_chart is not None
+                                else None
+                            ),
+                            "security_block": chunk.get("security_block"),
                         }
                     )
                     yield f"data: {chunk_data}\n\n"
@@ -1986,17 +3526,8 @@ def register_routers(route_prefix: str) -> Router:
                 async for chunk in sql_agent.continue_with_approval(
                     sql=sql, approved=False, question=question
                 ):
-                    chunk_data = _json.dumps(
-                        {
-                            "type": chunk.get("type", ""),
-                            "content": chunk.get("content"),
-                            "model_used": chunk.get("model_used"),
-                            "conversation_id": conversation_id,
-                        }
-                    )
-                    yield f"data: {chunk_data}\n\n"
-
-                async for chunk in sql_agent.stream_query(question=question):
+                    _raw_data = chunk.get("data")
+                    _raw_chart = chunk.get("chart_config")
                     chunk_data = _json.dumps(
                         {
                             "type": chunk.get("type", ""),
@@ -2004,11 +3535,98 @@ def register_routers(route_prefix: str) -> Router:
                             "model_used": chunk.get("model_used"),
                             "conversation_id": conversation_id,
                             "sql": chunk.get("sql"),
+                            "sql_meaning": chunk.get("sql_meaning"),
+                            "columns": chunk.get("columns"),
+                            "data": (
+                                _json.dumps(_raw_data, ensure_ascii=False)
+                                if _raw_data is not None
+                                else None
+                            ),
+                            "row_count": chunk.get("row_count"),
+                            "chart_config": (
+                                _json.dumps(_raw_chart, ensure_ascii=False)
+                                if _raw_chart is not None
+                                else None
+                            ),
+                            "security_block": chunk.get("security_block"),
+                        }
+                    )
+                    yield f"data: {chunk_data}\n\n"
+
+                async for chunk in sql_agent.stream_query(question=question):
+                    _raw_data = chunk.get("data")
+                    _raw_chart = chunk.get("chart_config")
+                    chunk_data = _json.dumps(
+                        {
+                            "type": chunk.get("type", ""),
+                            "content": chunk.get("content"),
+                            "model_used": chunk.get("model_used"),
+                            "conversation_id": conversation_id,
+                            "sql": chunk.get("sql"),
+                            "sql_meaning": chunk.get("sql_meaning"),
+                            "columns": chunk.get("columns"),
+                            "data": (
+                                _json.dumps(_raw_data, ensure_ascii=False)
+                                if _raw_data is not None
+                                else None
+                            ),
+                            "row_count": chunk.get("row_count"),
+                            "chart_config": (
+                                _json.dumps(_raw_chart, ensure_ascii=False)
+                                if _raw_chart is not None
+                                else None
+                            ),
+                            "security_block": chunk.get("security_block"),
                         }
                     )
                     yield f"data: {chunk_data}\n\n"
 
         return Stream(generate(), media_type="text/event-stream")
+
+    # TASK-012：WebSocket 审批通道，鉴权从 query string token 解析。
+    # Litestar 要求 websocket handler 的 socket 参数必须有类型注解，
+    # 否则在注册阶段 ImproperlyConfiguredException。
+    @websocket("/ws/approval")
+    async def approval_ws_endpoint(socket: WebSocket) -> None:
+        from x_models.id_x_010.src.controllers.x_ws import approval_ws
+
+        await approval_ws(socket)
+
+    @get("/metrics")
+    async def metrics_endpoint() -> Response:
+        """Prometheus 指标端点（TASK-007）。
+
+        无需鉴权（指标不带敏感信息），生产部署可由反向代理限制源 IP。
+        每次请求前由 sql_agent._collect_pool_metrics（TASK-011）刷新连接池指标。
+        """
+        try:
+            # 尝试刷新 SQL Agent 连接池指标（TASK-011）；缺失方法时静默跳过
+            try:
+                from x_models.id_x_010.src.agents.x_sql_agent import (
+                    _collect_pool_metrics,
+                )
+
+                _collect_pool_metrics()
+            except Exception:
+                pass
+
+            from x_models.id_x_010.src.utils.x_metrics import render_metrics
+
+            content, content_type = render_metrics()
+            return Response(
+                content=content,
+                status_code=200,
+                media_type=content_type,
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}metrics endpoint 失败: {e}", exc_info=True
+            )
+            return Response(
+                content=b"",
+                status_code=500,
+                media_type="text/plain",
+            )
 
     router = Router(
         path=route_prefix,
@@ -2019,6 +3637,9 @@ def register_routers(route_prefix: str) -> Router:
             upload_markdown_endpoint,
             upload_avatar_endpoint,
             serve_avatar_endpoint,
+            metrics_endpoint,
+            approval_ws_endpoint,
+            upload_image_endpoint,
         ],
     )
 

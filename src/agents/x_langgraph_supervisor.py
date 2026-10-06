@@ -691,16 +691,28 @@ class LangGraphSupervisor:
             api_key=api_key,
             base_url=base_url,
         )
+        # workflow 先用 MemorySaver 编译；首次 process 时尝试切到 AsyncPostgresSaver
+        # 失败则保持 MemorySaver——主流程不阻塞
+        self._checkpointer_ready = False
         self.workflow = self._build_workflow()
         logger.info(f"{get_request_id()}LangGraphSupervisor 初始化完成")
 
-    def _build_workflow(self) -> CompiledStateGraph:
+    def _build_workflow(self, checkpointer=None) -> CompiledStateGraph:
+        """构建 supervisor 状态图。
+
+        Args:
+            checkpointer: 可选 LangGraph checkpointer。None 时用 MemorySaver（进程内），
+                传入 AsyncPostgresSaver 实例后可跨进程恢复（用于 SQL 审批挂起恢复，
+                见 TASK-006）。
+        """
         workflow = StateGraph(SupervisorState)
 
         workflow.add_node("router", self._router_node)
         workflow.add_node("general_agent", self._general_agent_node)
         workflow.add_node("sql_agent", self._sql_agent_node)
         workflow.add_node("code_agent", self._code_agent_node)
+        # TASK-015：VL Agent 作为独立 Agent 节点；不与其它 Agent 联动
+        workflow.add_node("vl_agent", self._vl_agent_node)
 
         workflow.set_entry_point("router")
 
@@ -711,6 +723,7 @@ class LangGraphSupervisor:
                 "general": "general_agent",
                 "sql": "sql_agent",
                 "code": "code_agent",
+                "vl": "vl_agent",
                 "end": END,
             },
         )
@@ -718,8 +731,80 @@ class LangGraphSupervisor:
         workflow.add_edge("general_agent", END)
         workflow.add_edge("sql_agent", END)
         workflow.add_edge("code_agent", END)
+        workflow.add_edge("vl_agent", END)
 
-        return workflow.compile()
+        if checkpointer is not None:
+            return workflow.compile(checkpointer=checkpointer)
+        # 默认 MemorySaver——同进程内可恢复，重启即丢（任务 006 期望跨进程恢复）
+        from langgraph.checkpoint.memory import MemorySaver
+
+        return workflow.compile(checkpointer=MemorySaver())
+
+    async def _ensure_pg_checkpointer(self) -> None:
+        """首次调用前尝试切到 AsyncPostgresSaver；失败保持 MemorySaver。
+
+        幂等：成功或失败后置 _checkpointer_ready=True，不再重试。
+        跨进程恢复需要 thread_id 与 conversation_id 一一对应（见 process/stream_process）。
+
+        兼容性说明：
+        - langgraph-checkpoint-postgres 早期版本 ``from_conn_string`` 返回 saver 实例；
+          0.2.x+ 返回 ``AsyncGenerator[tuple[AsyncConnection, AsyncPostgresSaver]]`` 或
+          需配合 ``async with`` 上下文使用。
+        - 这里尝试两种形态：先按实例调用，失败再按上下文管理器；
+          再失败则降级 MemorySaver。
+        """
+        if self._checkpointer_ready:
+            return
+        self._checkpointer_ready = True  # 先置位防止重复尝试
+        dsn = os.getenv("DATABASE_URL") or os.getenv("LANGGRAPH_CHECKPOINT_DSN")
+        if not dsn:
+            return  # 未配置 DSN，保持 MemorySaver
+        try:
+            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+            # asyncpg DSN 与 SQLAlchemy DSN 兼容性差异：剥 +asyncpg / +psycopg 前缀
+            clean_dsn = dsn
+            if clean_dsn.startswith("postgresql+asyncpg://"):
+                clean_dsn = clean_dsn.replace(
+                    "postgresql+asyncpg://", "postgresql://"
+                )
+            elif clean_dsn.startswith("postgresql+psycopg://"):
+                clean_dsn = clean_dsn.replace(
+                    "postgresql+psycopg://", "postgresql://"
+                )
+
+            # 形态 1：from_conn_string 返回 saver 实例（旧版）
+            try:
+                checkpointer = AsyncPostgresSaver.from_conn_string(clean_dsn)
+                # 若是 tuple/context manager，则TypeError 提示进入形态 2
+                if hasattr(checkpointer, "setup"):
+                    await checkpointer.setup()
+                    self.workflow = self._build_workflow(checkpointer=checkpointer)
+                    logger.info(
+                        f"{get_request_id()}LangGraph PG checkpointer 已启用(saver 形态)，"
+                        "SQL Agent 审批挂起可跨进程恢复"
+                    )
+                    return
+            except (TypeError, AttributeError):
+                pass  # 进入形态 2
+
+            # 形态 2：from_conn_string 是 async context manager 工厂;
+            # 这种形态下需要长期持有 conn，不适合 supervisor 生命周期，
+            # 直接降级 MemorySaver，并在日志中提示升级或改用形态 1
+            logger.warning(
+                f"{get_request_id()}AsyncPostgresSaver.from_conn_string 返回非 saver "
+                "instance（疑似 async context manager 形态），与当前 supervisor "
+                "生命周期不兼容，降级 MemorySaver。建议检查 langgraph-checkpoint-postgres 版本"
+            )
+        except ImportError as e:
+            logger.warning(
+                f"{get_request_id()}langgraph-checkpoint-postgres 未安装,降级 MemorySaver: {e}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"{get_request_id()}PG checkpointer 启用失败，降级 MemorySaver: "
+                f"{type(e).__name__}: {e}"
+            )
 
     async def _router_node(self, state: SupervisorState) -> dict:
         query = state.get("query", "")
@@ -756,7 +841,22 @@ class LangGraphSupervisor:
     async def _general_agent_node(self, state: SupervisorState) -> dict:
         query = state.get("query", "")
         context = state.get("context", [])
-        system_prompt = state.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
+        # system_prompt 优先级：state 中路由注入 > DB PromptTemplate(general.system)
+        # > DEFAULT_SYSTEM_PROMPT 兜底——load_prompt 失败不阻塞主流程
+        system_prompt = state.get("system_prompt")
+        if not system_prompt:
+            try:
+                from x_models.id_x_010.src.utils.x_prompts import load_prompt
+
+                system_prompt = await load_prompt("general.system")
+            except Exception as e:
+                logger.warning(
+                    f"{get_request_id()}load_prompt(general.system) 失败,用 DEFAULT: "
+                    f"{type(e).__name__}: {e}"
+                )
+                system_prompt = DEFAULT_SYSTEM_PROMPT
+        if not system_prompt:
+            system_prompt = DEFAULT_SYSTEM_PROMPT
 
         try:
             response, thinking = await self.general_agent.chat(
@@ -861,6 +961,12 @@ class LangGraphSupervisor:
             }
 
     def _decide_next_agent(self, state: SupervisorState) -> str:
+        # TASK-015：检测 query 含 [image:ID] 占位时优先 VL Agent
+        # （VL Agent 输出直接作为最终响应，不传给其它 Agent）
+        query = state.get("query", "") or ""
+        if "[image:" in query:
+            return "vl"
+
         intent = state.get("intent", "general") or "general"
         error = state.get("error")
 
@@ -868,6 +974,79 @@ class LangGraphSupervisor:
             return "end"
 
         return intent
+
+    async def _vl_agent_node(self, state: SupervisorState) -> dict:
+        """TASK-015：VL Agent 节点。独立 Agent，不与其它 Agent 联动。
+
+        从 query 中解析 ``[image:ID]`` 占位，按 ID 取 uploaded_images.data，
+        base64 后调 VLAgent.stream_analyze 产出最终响应。
+        失败 best-effort 返回错误提示，不抛错。
+        """
+        import base64
+        import re
+
+        from sqlalchemy import select as _select
+
+        from x_models.id_x_010.src.agents.x_vl_agent import VLAgent
+        from x_models.id_x_010.src.models.x_models import UploadedImage, get_session
+
+        query = state.get("query", "")
+        match = re.search(r"\[image:(\d+)\]", query)
+        if not match:
+            return {
+                "error": "未检测到 [image:ID] 占位",
+                "response": "请上传图片后再调用视觉多模态",
+            }
+
+        image_id = int(match.group(1))
+        try:
+            async with get_session()() as session:
+                img = (
+                    await session.execute(
+                        _select(UploadedImage).where(UploadedImage.id == image_id)
+                    )
+                ).scalar_one_or_none()
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}VL Agent 取图失败 image_id={image_id}: {e}",
+                exc_info=True,
+            )
+            return {"error": f"图片读取失败: {e}", "response": ""}
+
+        if img is None:
+            return {"error": f"图片不存在: id={image_id}", "response": ""}
+
+        # 移除占位符后作为问句传给 VL
+        clean_query = re.sub(r"\[image:\d+\]", "", query).strip() or "请描述这张图片"
+        img_b64 = base64.b64encode(img.data).decode("ascii")
+
+        try:
+            agent = VLAgent()
+            chunks: list = []
+            async for chunk in agent.stream_analyze(img_b64, clean_query):
+                t = chunk.get("type")
+                if t == "content":
+                    chunks.append(chunk.get("content", ""))
+                elif t == "error":
+                    return {
+                        "error": chunk.get("content", "VL 调用失败"),
+                        "response": chunk.get("content", ""),
+                    }
+            response_text = "".join(chunks)
+            return {
+                "response": response_text,
+                "thinking": "",
+                "model_name": agent.model_name,
+                "intent": "vl",
+            }
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}VL Agent 调用失败: {e}", exc_info=True
+            )
+            return {
+                "error": f"VL 调用失败: {e}",
+                "response": friendly_llm_error(e, "vl"),
+            }
 
     @staticmethod
     def _build_injected_prompt(prompt_content: Optional[str]) -> Optional[str]:
@@ -899,6 +1078,15 @@ class LangGraphSupervisor:
 
         model_type = model_type or self.model_type
         model_name = model_name or self.model_name
+
+        # TASK-006：首次调用前尝试切到 PG checkpointer；失败降级 MemorySaver
+        try:
+            await self._ensure_pg_checkpointer()
+        except Exception as e:
+            logger.warning(
+                f"{get_request_id()}_ensure_pg_checkpointer 异常（忽略，保持现状）: "
+                f"{type(e).__name__}: {e}"
+            )
 
         injected_system_prompt = self._build_injected_prompt(prompt_content)
 
@@ -1051,7 +1239,10 @@ class LangGraphSupervisor:
         }
 
         try:
-            result = await self.workflow.ainvoke(initial_state)
+            # TASK-006：thread_id 与 conversation_id 一一对应，PG checkpointer
+            # 启用后,SQL Agent 审批挂起可跨进程恢复
+            config = {"configurable": {"thread_id": conversation_id}}
+            result = await self.workflow.ainvoke(initial_state, config=config)
 
             return {
                 "success": result.get("error") is None,
@@ -1094,6 +1285,15 @@ class LangGraphSupervisor:
 
         model_type = model_type or self.model_type
         model_name = model_name or self.model_name
+
+        # TASK-006：首次调用前尝试切到 PG checkpointer；失败降级 MemorySaver
+        try:
+            await self._ensure_pg_checkpointer()
+        except Exception as e:
+            logger.warning(
+                f"{get_request_id()}_ensure_pg_checkpointer 异常（忽略，保持现状）: "
+                f"{type(e).__name__}: {e}"
+            )
 
         # 用户上传的 Markdown 文件作为系统提示词注入；仅文本前缀，不破坏既有路由逻辑
         injected_system_prompt = self._build_injected_prompt(prompt_content)
@@ -1144,7 +1344,12 @@ class LangGraphSupervisor:
                 sql_question = (
                     f"【参考提示词】\n{prompt_content}\n\n【用户问题】\n{query}"
                 )
-            async for chunk in sql_agent.stream_query(question=sql_question):
+            # TASK-015：默认开启人工审核——所有 SQL 在执行前必须经用户确认，
+            # 由后端 _post_check_router 在 auto_execute=False 时路由到 human_approval 节点，
+            # 触发 sql_approval chunk 让前端弹出审核气泡 + 自然语言阐述气泡。
+            async for chunk in sql_agent.stream_query(
+                question=sql_question, auto_execute=False
+            ):
                 chunk["conversation_id"] = conversation_id
                 yield chunk
         elif intent == "code":

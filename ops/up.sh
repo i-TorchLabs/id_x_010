@@ -3,7 +3,9 @@
 # id_x_010 一体化容器部署启动脚本（podman）
 #
 # 拓扑：单 Pod 四容器，共享网络命名空间
-#   db       docker.io/library/postgres:18   :5432 → 宿主机 ${DB_HOST_PORT:-54321}
+#   db       docker.io/pgvector/pgvector:pg18   :5432 → 宿主机 ${DB_HOST_PORT:-54321}
+#   （TASK-001：改用 pgvector 镜像以支持 table_comments / document_chunks 等
+#    向量列；纯 postgres:18 镜像无 vector 扩展可用，会导致 create_all 失败）
 #   service  localhost/id_x_010-service      127.0.0.1:7000（Litestar + GraphQL，仅 Pod 内可达）
 #   web      localhost/id_x_010-web          127.0.0.1:2000（Next.js，仅 Pod 内可达）
 #   haproxy  docker.io/library/haproxy:3.0   :8080 → 宿主机 ${POD_PORT:-8010}
@@ -40,7 +42,7 @@ set +a
 POSTGRES_DB="${POSTGRES_DB:-id_x_010}"
 POSTGRES_USER="${POSTGRES_USER:-postgres}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:?[up] 请在 .env 中设置 POSTGRES_PASSWORD}"
-POSTGRES_IMAGE="${POSTGRES_IMAGE:-docker.io/library/postgres:18}"
+POSTGRES_IMAGE="${POSTGRES_IMAGE:-docker.io/pgvector/pgvector:pg18}"
 HAPROXY_IMAGE="${HAPROXY_IMAGE:-docker.io/library/haproxy:3.0}"
 # 自建镜像同样使用完全限定名（localhost/ 前缀），避免 short-name 解析歧义
 SERVICE_IMAGE="localhost/${PROJECT_NAME}-service"

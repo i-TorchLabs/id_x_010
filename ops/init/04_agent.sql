@@ -4,8 +4,8 @@
 -- AGENT_DB_LIST 中的每个库各写一行，共用 AGENT_DB_HOST/PORT/USERNAME/PASSWORD。
 
 INSERT INTO agent_db_settings (db_name, db_label, db_host, db_port, db_username, db_password)
-SELECT 'i', '样例库', '10.20.217.87', 15432, 'i', 'P@ssmickey233!'
-WHERE NOT EXISTS (SELECT 1 FROM agent_db_settings WHERE db_name = 'i');
+SELECT 'hengsheng_base', '样例库', '47.115.150.95', 15432, 'i', 'P@ssmickey233!'
+WHERE NOT EXISTS (SELECT 1 FROM agent_db_settings WHERE db_name = 'hengsheng_base');
 
 INSERT INTO agent_db_settings (db_name, db_label, db_host, db_port, db_username, db_password)
 SELECT 'ex_biaopu_target', '标普数据库', '10.20.217.87', 15432, 'i', 'P@ssmickey233!'

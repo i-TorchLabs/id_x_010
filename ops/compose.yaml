@@ -24,10 +24,11 @@ name: id_x_010
 # 受此影响：service 的 DB_HOST=db；haproxy 使用 haproxy.compose.cfg。
 
 services:
-  # -- PostgreSQL 18：数据卷 id_x_010_db，首次启动执行 ./init 下脚本；
-  #    5432 发布到宿主机 ${DB_HOST_PORT:-54321}，供宿主机/外部工具直连 --
+  # -- PostgreSQL 18（含 pgvector 扩展）：数据卷 id_x_010_db，首次启动执行 ./init 下脚本；
+  #    5432 发布到宿主机 ${DB_HOST_PORT:-54321}，供宿主机/外部工具直连。
+  #    使用 pgvector/pgvector:pg18 镜像以支持 table_comments 等向量检索表 --
   db:
-    image: docker.io/library/postgres:18
+    image: docker.io/pgvector/pgvector:pg18
     env_file: .env
     restart: unless-stopped
     ports:
@@ -104,6 +105,20 @@ services:
     depends_on:
       - service
       - web
+
+  # -- prometheus：抓取 service:8000/metrics（TASK-007）；不暴露到反向代理，
+  #    仅宿主机 9090 调试，生产可关闭端口映射改由内网访问 --
+  prometheus:
+    image: docker.io/prom/prometheus:latest
+    restart: unless-stopped
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro,z
+    ports:
+      - "${PROM_PORT:-9090}:9090"
+    depends_on:
+      - service
+    networks:
+      - default
 
 # 显式固定卷名（不加 compose 项目前缀），与 up.sh 使用的卷保持一致
 volumes:
