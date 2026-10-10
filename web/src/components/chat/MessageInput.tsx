@@ -28,7 +28,9 @@ function ModelSelector({
   const [width, setWidth] = useState<number | null>(null);
 
   const displayText = selectedModel
-    ? `${selectedModel.name} (${selectedModel.provider})`
+    ? selectedModel.isSystem
+      ? `${selectedModel.name} (${selectedModel.provider}) · SYS`
+      : `${selectedModel.name} (${selectedModel.provider})`
     : isLoadingModels
       ? "Loading..."
       : "No models available";
@@ -103,6 +105,20 @@ function ModelSelector({
                   <span className="flex-1">
                     {model.name} ({model.provider})
                   </span>
+                  {model.isSystem && (
+                    <span
+                      className="font-text shrink-0 px-1 py-0.5 rounded"
+                      style={{
+                        fontSize: "9px",
+                        fontWeight: 600,
+                        letterSpacing: "0.04em",
+                        background: "var(--accent-bg, rgba(59,130,246,0.10))",
+                        color: "var(--accent, #3b82f6)",
+                      }}
+                    >
+                      SYS
+                    </span>
+                  )}
                 </span>
               )}
             </ListBox.Item>
@@ -210,11 +226,12 @@ export function MessageInput({
           if (cancelled) return;
           if (response.getModels.success) {
             setInternalModels(response.getModels.models);
-            setInternalSelectedModel((prev) =>
-              prev === null && response.getModels.models.length > 0
-                ? response.getModels.models[0]
-                : prev,
-            );
+            setInternalSelectedModel((prev) => {
+              if (prev !== null) return prev;
+              const list = response.getModels.models;
+              if (list.length === 0) return null;
+              return list.find((m) => m.isDefault) ?? list[0];
+            });
           } else if (attempt < MAX_RETRIES) {
             const delay = BASE_DELAY * Math.pow(2, attempt);
             console.warn(
@@ -407,8 +424,8 @@ export function MessageInput({
                   {renderSendButton(false)}
                 </div>
 
-                {/* TASK-015：图片上传按钮（移至左下角），上传成功后插入 [image:ID] 占位 */}
-                <div className="absolute left-3 bottom-3 flex items-center">
+                {/* TASK-015：图片上传按钮（左下角），上传成功后插入 [image:ID] 占位 */}
+                <div className="absolute left-3 bottom-3 flex items-center" style={{ zIndex: 10 }}>
                   <ImageButton
                     onUploaded={(imageId, filename) => {
                       const placeholder = `[image:${imageId}]`;
@@ -496,8 +513,8 @@ export function MessageInput({
                 {renderSendButton(true)}
               </div>
 
-              {/* TASK-015：图片上传按钮（移至左下角），上传成功后插入 [image:ID] 占位 */}
-              <div className="absolute left-3 bottom-3 flex items-center">
+              {/* TASK-015：图片上传按钮（左下角），上传成功后插入 [image:ID] 占位 */}
+              <div className="absolute left-3 bottom-3 flex items-center" style={{ zIndex: 10 }}>
                 <ImageButton
                   onUploaded={(imageId, filename) => {
                     const placeholder = `[image:${imageId}]`;
@@ -538,7 +555,11 @@ function ImageButton({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
 
-  const handleClick = () => fileInputRef.current?.click();
+  const handleClick = () => {
+    // 某些浏览器在 display:none 的 input 上 .click() 无效，
+    // 用 visibility:hidden + 绝对定位脱离视口替代 display:none
+    fileInputRef.current?.click();
+  };
 
   const handleChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -556,7 +577,6 @@ function ImageButton({
       alert(`Image upload error: ${(e as Error).message}`);
     } finally {
       setUploading(false);
-      // 清空 input，允许重复上传同一文件
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
@@ -567,10 +587,10 @@ function ImageButton({
         type="button"
         onClick={handleClick}
         disabled={uploading}
-        title="Upload image for VL Agent analysis (auto-inserts [image:ID] placeholder after upload)"
+        title="Upload image for VL Agent analysis"
         style={{
-          width: 28,
-          height: 28,
+          width: 32,
+          height: 32,
           borderRadius: 8,
           background: "var(--surface-2)",
           border: "0.5px solid var(--divider-strong)",
@@ -579,15 +599,34 @@ function ImageButton({
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
+          zIndex: 10,
+          position: "relative",
         }}
       >
-        {uploading ? "…" : "🖼"}
+        {uploading ? (
+          <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" viewBox="0 0 24 24">
+            <path d="M21 12a9 9 0 11-6.219-8.56" />
+          </svg>
+        ) : (
+          <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
+          </svg>
+        )}
       </button>
       <input
         ref={fileInputRef}
         type="file"
         accept="image/*"
-        style={{ display: "none" }}
+        style={{
+          position: "absolute",
+          width: 1,
+          height: 1,
+          opacity: 0,
+          overflow: "hidden",
+          left: -9999,
+          top: -9999,
+          pointerEvents: "none",
+        }}
         onChange={handleChange}
       />
     </>

@@ -53,9 +53,9 @@ DB_HOST_PORT="${DB_HOST_PORT:-54321}"
 
 # 提醒关键可选项未配置（不阻断，功能会降级）
 # 提供商 api_key 已迁移至 external_provider / local_provider 表，
-# 环境变量 EXTERNAL_API_KEY 仅作表无数据时的回退来源
-if [ "${LLM_PROVIDER:-external}" = "external" ] && [ -z "${EXTERNAL_API_KEY:-}" ]; then
-  echo "[up] 提示: LLM_PROVIDER=external，请确认 external_provider 表已写入提供商配置（或设置 EXTERNAL_API_KEY 作为回退）" >&2
+# 表无数据时相关 Agent 不可用
+if [ "${LLM_PROVIDER:-external}" = "external" ]; then
+  echo "[up] 提示: LLM_PROVIDER=external，请确认 external_provider 表已写入提供商配置" >&2
 fi
 
 # ============================================

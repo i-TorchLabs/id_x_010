@@ -63,11 +63,19 @@ class ModelInfoType:
 
 @strawberry.type
 class ModelType:
-    id: int = strawberry.field(description="模型ID")
+    id: int = strawberry.field(description="模型ID（合并列表内唯一，仅供前端 Select key 使用）")
     name: str = strawberry.field(description="模型名称")
     provider: str = strawberry.field(description="模型商")
     base_url: str = strawberry.field(description="访问地址")
     model_type: str = strawberry.field(description="模型类型: local 或 external")
+    is_default: bool = strawberry.field(
+        default=False,
+        description="是否为当前用户的默认模型（用户级默认优先于系统级默认）",
+    )
+    is_system: bool = strawberry.field(
+        default=False,
+        description="是否为系统预置模型（True=只读，用户无法在设置弹窗中修改）",
+    )
 
 
 @strawberry.type
@@ -208,7 +216,14 @@ class ModelSettingsInput:
     provider: str = strawberry.field(description="模型厂商，如 siliconflow/openai/deepseek")
     base_url: str = strawberry.field(description="OpenAI 兼容接口地址")
     api_key: str = strawberry.field(description="API-KEY")
-    model_name: str = strawberry.field(description="模型名称")
+    model_name: str = strawberry.field(description="默认模型名称（须在 model_name_list 内）")
+    model_name_list: List[str] = strawberry.field(
+        description="可选模型名称列表，消息输入框的模型选择器据此渲染"
+    )
+    quota_limit_monthly_usd: Optional[float] = strawberry.field(
+        default=None,
+        description="月度额度上限（USD，自然月聚合）；为空表示不限额",
+    )
 
 
 @strawberry.type
@@ -216,7 +231,11 @@ class ModelSettingsType:
     provider: str = strawberry.field(description="模型厂商")
     base_url: str = strawberry.field(description="访问地址")
     api_key: str = strawberry.field(description="API-KEY（仅返回给属主本人）")
-    model_name: str = strawberry.field(description="模型名称")
+    model_name: str = strawberry.field(description="默认模型名称")
+    model_name_list: List[str] = strawberry.field(description="可选模型名称列表")
+    quota_limit_monthly_usd: Optional[float] = strawberry.field(
+        default=None, description="月度额度上限（USD）；NULL 表示不限额"
+    )
     updated_at: Optional[str] = strawberry.field(default=None, description="更新时间")
 
 
@@ -226,6 +245,79 @@ class ModelSettingsResponseType:
     message: str = strawberry.field(description="消息（含连通性检测结果）")
     settings: Optional[ModelSettingsType] = strawberry.field(
         default=None, description="模型设置"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 用户自定义模型 Provider（user_model_providers 表，每用户多行）
+# ---------------------------------------------------------------------------
+
+
+@strawberry.type
+class UserModelPropertyType:
+    """user_model_providers 表的展示视图。"""
+    id: int = strawberry.field(description="Provider 记录 ID")
+    provider: str = strawberry.field(description="模型厂商")
+    base_url: str = strawberry.field(description="访问地址")
+    api_key: str = strawberry.field(description="API-KEY（仅返回给属主本人）")
+    model_name_list: List[str] = strawberry.field(
+        default_factory=list, description="该 Provider 下可选的模型名称列表"
+    )
+    sort_order: int = strawberry.field(description="排序序号")
+    created_at: Optional[str] = strawberry.field(default=None, description="创建时间 ISO")
+    updated_at: Optional[str] = strawberry.field(default=None, description="更新时间 ISO")
+
+
+@strawberry.type
+class UserModelPropertyListResponseType:
+    success: bool = strawberry.field(description="是否成功")
+    message: str = strawberry.field(description="消息")
+    providers: List[UserModelPropertyType] = strawberry.field(
+        default_factory=list, description="用户 Provider 列表"
+    )
+
+
+@strawberry.input
+class UserModelPropertyInput:
+    """新增 / 更新用户 Provider 入参。id 为 None 时按 provider 名新增。"""
+    id: Optional[int] = strawberry.field(default=None, description="已有记录 ID（更新时传）")
+    provider: str = strawberry.field(description="模型厂商，如 siliconflow/openai")
+    base_url: str = strawberry.field(description="OpenAI 兼容接口地址")
+    api_key: str = strawberry.field(description="API-KEY")
+    model_name_list: List[str] = strawberry.field(
+        description="该 Provider 下可选的模型名称列表"
+    )
+    sort_order: int = strawberry.field(default=0, description="排序序号")
+    test_connection: bool = strawberry.field(
+        default=True, description="保存前是否对第一个模型做连通性检测"
+    )
+
+
+@strawberry.type
+class UserModelPropertyMutationResponseType:
+    success: bool = strawberry.field(description="是否成功")
+    message: str = strawberry.field(description="消息")
+    provider: Optional[UserModelPropertyType] = strawberry.field(
+        default=None, description="新增/更新后的 Provider 记录"
+    )
+
+
+@strawberry.input
+class SaveDefaultModelInput:
+    """设置用户默认模型（跨 Provider 选择）。"""
+    model_name: str = strawberry.field(description="默认模型名称")
+    quota_limit_monthly_usd: Optional[float] = strawberry.field(
+        default=None, description="月度额度上限（USD）；留空表示不限额"
+    )
+
+
+@strawberry.type
+class SaveDefaultModelResponseType:
+    success: bool = strawberry.field(description="是否成功")
+    message: str = strawberry.field(description="消息")
+    model_name: Optional[str] = strawberry.field(default=None, description="已设置的默认模型名")
+    quota_limit_monthly_usd: Optional[float] = strawberry.field(
+        default=None, description="已设置的月度配额"
     )
 
 
@@ -672,4 +764,117 @@ class UserFeedbackMutationResponseType:
     message: str = strawberry.field(description="消息")
     feedback: Optional[UserFeedbackType] = strawberry.field(
         default=None, description="提交后的反馈记录"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 系统预置模型（system_model_settings 表，管理员 CRUD，用户只读）
+# ---------------------------------------------------------------------------
+
+
+@strawberry.type
+class SystemModelType:
+    """system_model_settings 表的展示视图。"""
+    id: int = strawberry.field(description="模型记录 ID")
+    name: str = strawberry.field(description="模型名称")
+    provider: str = strawberry.field(description="模型厂商")
+    base_url: str = strawberry.field(description="访问地址")
+    api_key: str = strawberry.field(description="API-KEY（含密钥，供管理员编辑回填）")
+    model_type: str = strawberry.field(description="模型类型: local 或 external")
+    is_default: bool = strawberry.field(description="是否为系统默认模型")
+    enabled: bool = strawberry.field(description="是否启用")
+    sort_order: int = strawberry.field(description="排序序号（小在前）")
+    created_at: Optional[str] = strawberry.field(default=None, description="创建时间 ISO")
+    updated_at: Optional[str] = strawberry.field(default=None, description="更新时间 ISO")
+
+
+@strawberry.type
+class SystemModelListResponseType:
+    success: bool = strawberry.field(description="是否成功")
+    message: str = strawberry.field(description="消息")
+    models: List[SystemModelType] = strawberry.field(
+        default_factory=list, description="系统预置模型列表"
+    )
+
+
+@strawberry.input
+class SystemModelInput:
+    """新增 / 更新系统预置模型入参。id 为 None 时按 name 新增，非 None 时更新指定行。"""
+    id: Optional[int] = strawberry.field(default=None, description="已有记录 ID（更新时传）")
+    name: str = strawberry.field(description="模型名称")
+    provider: str = strawberry.field(description="模型厂商")
+    base_url: str = strawberry.field(description="OpenAI 兼容接口地址")
+    api_key: str = strawberry.field(description="API-KEY")
+    model_type: str = strawberry.field(
+        default="external", description="模型类型: local 或 external"
+    )
+    is_default: bool = strawberry.field(
+        default=False, description="是否设为系统默认（True 时自动取消其余行的默认标记）"
+    )
+    enabled: bool = strawberry.field(default=True, description="是否启用")
+    sort_order: int = strawberry.field(default=0, description="排序序号")
+    test_connection: bool = strawberry.field(
+        default=True, description="保存前是否做连通性检测"
+    )
+
+
+@strawberry.type
+class SystemModelMutationResponseType:
+    success: bool = strawberry.field(description="是否成功")
+    message: str = strawberry.field(description="消息")
+    model: Optional[SystemModelType] = strawberry.field(
+        default=None, description="新增/更新后的模型记录"
+    )
+
+
+@strawberry.type
+class DeleteSystemModelResponseType:
+    success: bool = strawberry.field(description="是否成功")
+    message: str = strawberry.field(description="消息")
+
+
+# ---------------------------------------------------------------------------
+# 用户对系统预置模型的 API Key 映射（system_model_user_mappings 表）
+# ---------------------------------------------------------------------------
+
+
+@strawberry.type
+class SystemModelUserMappingType:
+    """system_model_user_mappings 表的展示视图。"""
+    id: int = strawberry.field(description="映射记录 ID")
+    user_id: int = strawberry.field(description="用户 ID")
+    system_model_id: int = strawberry.field(description="系统预置模型 ID")
+    system_model_name: Optional[str] = strawberry.field(
+        default=None, description="系统预置模型名称（JOIN 回填）"
+    )
+    api_key: str = strawberry.field(description="用户个人 API Key（覆盖全局 key）")
+    created_at: Optional[str] = strawberry.field(default=None, description="创建时间 ISO")
+    updated_at: Optional[str] = strawberry.field(default=None, description="更新时间 ISO")
+
+
+@strawberry.type
+class SystemModelUserMappingListResponseType:
+    success: bool = strawberry.field(description="是否成功")
+    message: str = strawberry.field(description="消息")
+    mappings: List[SystemModelUserMappingType] = strawberry.field(
+        default_factory=list, description="用户系统模型映射列表"
+    )
+
+
+@strawberry.input
+class SystemModelUserKeyInput:
+    """用户保存/更新自己对系统预置模型 API Key 的入参。"""
+    system_model_id: int = strawberry.field(description="系统预置模型 ID")
+    api_key: str = strawberry.field(description="用户个人 API Key")
+    test_connection: bool = strawberry.field(
+        default=True, description="保存前是否做连通性检测"
+    )
+
+
+@strawberry.type
+class SystemModelUserKeyMutationResponseType:
+    success: bool = strawberry.field(description="是否成功")
+    message: str = strawberry.field(description="消息")
+    mapping: Optional[SystemModelUserMappingType] = strawberry.field(
+        default=None, description="保存后的映射记录"
     )

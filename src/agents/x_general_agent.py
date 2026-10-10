@@ -143,12 +143,11 @@ class GeneralAgent:
             or self._get_default_model(model_type)
         )
         self.api_key = (
-            api_key or external_config.get("api_key") or os.getenv("EXTERNAL_API_KEY")
+            api_key or external_config.get("api_key")
         )
         self.base_url = (
             base_url
             or external_config.get("base_url")
-            or os.getenv("EXTERNAL_BASE_URL", "https://api.siliconflow.cn/v1")
         )
 
         self.llm = self._create_llm()

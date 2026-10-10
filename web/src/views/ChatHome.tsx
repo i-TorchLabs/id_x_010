@@ -11,7 +11,7 @@ import { UsageStatsDialog } from "@/components/chat/UsageStatsDialog";
 import { ProfileDialog } from "@/components/chat/ProfileDialog";
 import { useTheme } from "@/context/ThemeContext";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import { streamChatClient, StreamChunk } from "@/api/streamChat";
 import { AgentType } from "@/components/chat/AgentSelector";
 import {
@@ -104,6 +104,9 @@ function SidebarToggle({
     </motion.button>
   );
 }
+// NOTE: SidebarToggle is no longer used — the ChatSidebar component now handles
+// collapse/expand internally via isCollapsed + onToggleCollapse props.
+// Keeping the import-compatible shape in case IntelligentQueryHome still references it.
 
 export default function ChatHome() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -124,71 +127,76 @@ export default function ChatHome() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { theme } = useTheme();
 
-  // 加载模型列表（应用级别，只加载一次）
-  useEffect(() => {
-    let cancelled = false;
-    const MAX_RETRIES = 5;
-    const BASE_DELAY = 1000; // 基础重试延迟
-    const REQUEST_TIMEOUT = 10000; // 10秒超时
+  // 加载模型列表（应用级别，初次加载 + 设置保存后刷新复用）
+  const reloadModels = useCallback(
+    async (opts?: { forceReselect?: boolean }) => {
+      const MAX_RETRIES = 5;
+      const BASE_DELAY = 1000; // 基础重试延迟
+      const REQUEST_TIMEOUT = 10000; // 10秒超时
 
-    const loadModels = async (attempt = 0) => {
-      if (cancelled) return;
-      setIsLoadingModels(true);
-      let retrying = false;
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
-
+      const loadModels = async (attempt = 0) => {
+        setIsLoadingModels(true);
+        let retrying = false;
         try {
-          const response = await modelGraphqlApi.getModels(controller.signal);
-          clearTimeout(timeoutId);
-          if (cancelled) return;
-          if (response.getModels.success) {
-            setModels(response.getModels.models);
-            setSelectedModel((prev) =>
-              prev === null && response.getModels.models.length > 0
-                ? response.getModels.models[0]
-                : prev,
-            );
-          } else if (attempt < MAX_RETRIES) {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+
+          try {
+            const response = await modelGraphqlApi.getModels(controller.signal);
+            clearTimeout(timeoutId);
+            if (response.getModels.success) {
+              const list = response.getModels.models;
+              setModels(list);
+              setSelectedModel((prev) => {
+                // 设置保存后（forceReselect）或之前未选中时，按 is_default / 首项重选
+                if (opts?.forceReselect || prev === null) {
+                  if (list.length === 0) return null;
+                  return list.find((m) => m.isDefault) ?? list[0];
+                }
+                // 之前选中的模型若仍在新列表中则保留
+                if (prev && list.some((m) => m.name === prev.name)) return prev;
+                return list.find((m) => m.isDefault) ?? list[0] ?? null;
+              });
+            } else if (attempt < MAX_RETRIES) {
+              const delay = BASE_DELAY * Math.pow(2, attempt);
+              console.warn(
+                `Failed to load models (attempt ${attempt + 1}): ${response.getModels.message}; retrying in ${delay}ms`,
+              );
+              retrying = true;
+              setTimeout(() => loadModels(attempt + 1), delay);
+              return;
+            }
+          } catch (fetchError) {
+            clearTimeout(timeoutId);
+            throw fetchError;
+          }
+        } catch (error) {
+          if (attempt < MAX_RETRIES) {
             const delay = BASE_DELAY * Math.pow(2, attempt);
             console.warn(
-              `Failed to load models (attempt ${attempt + 1}): ${response.getModels.message}; retrying in ${delay}ms`,
+              `Model list load error (attempt ${attempt + 1}); retrying in ${delay}ms:`,
+              error,
             );
             retrying = true;
             setTimeout(() => loadModels(attempt + 1), delay);
             return;
           }
-        } catch (fetchError) {
-          clearTimeout(timeoutId);
-          throw fetchError;
+          console.error("Final model list load failure:", error);
+        } finally {
+          if (!retrying) {
+            setIsLoadingModels(false);
+          }
         }
-      } catch (error) {
-        if (cancelled) return;
-        if (attempt < MAX_RETRIES) {
-          const delay = BASE_DELAY * Math.pow(2, attempt);
-          console.warn(
-            `Model list load error (attempt ${attempt + 1}); retrying in ${delay}ms:`,
-            error,
-          );
-          retrying = true;
-          setTimeout(() => loadModels(attempt + 1), delay);
-          return;
-        }
-        console.error("Final model list load failure:", error);
-      } finally {
-        if (!cancelled && !retrying) {
-          setIsLoadingModels(false);
-        }
-      }
-    };
+      };
 
-    loadModels();
+      await loadModels();
+    },
+    [],
+  );
 
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  useEffect(() => {
+    void reloadModels();
+  }, [reloadModels]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -1003,36 +1011,28 @@ export default function ChatHome() {
     <div
       className={`flex h-screen ${isDark ? "bg-[#000000]" : "bg-[#f5f5f7]"}`}
     >
-      {/* ── Left Panel: Sidebar ── */}
-      <AnimatePresence initial={false}>
-        {isSidebarOpen && (
-          <ChatSidebar
-            onNewChat={handleNewChat}
-            userName={
-              userInfo?.displayName ??
-              (userInfo?.email
-                ? userInfo.email.split("@")[0]
-                : "User")
-            }
-            userEmail={userInfo?.email ?? "Signed in"}
-            avatarUrl={userInfo?.avatarUrl ?? null}
-            onLogout={() => setShowLogoutConfirm(true)}
-            onSettings={() => setShowSettings(true)}
-            onUsageStats={() => setShowUsageStats(true)}
-            onEditProfile={() => setShowProfile(true)}
-            onActivePromptChange={setActivePrompt}
-          />
-        )}
-      </AnimatePresence>
+      {/* ── Left Panel: Sidebar (always mounted, collapse to rail) ── */}
+      <ChatSidebar
+        onNewChat={handleNewChat}
+        userName={
+          userInfo?.displayName ??
+          (userInfo?.email
+            ? userInfo.email.split("@")[0]
+            : "User")
+        }
+        userEmail={userInfo?.email ?? "Signed in"}
+        avatarUrl={userInfo?.avatarUrl ?? null}
+        onLogout={() => setShowLogoutConfirm(true)}
+        onSettings={() => setShowSettings(true)}
+        onUsageStats={() => setShowUsageStats(true)}
+        onEditProfile={() => setShowProfile(true)}
+        onActivePromptChange={setActivePrompt}
+        isCollapsed={!isSidebarOpen}
+        onToggleCollapse={() => setIsSidebarOpen(!isSidebarOpen)}
+      />
 
       {/* Main Chat Area */}
       <main className="flex-1 flex flex-col relative min-w-0">
-        {/* 侧边栏吸附把手：始终贴在 leftpanel 右缘(收起时贴左屏边) */}
-        <SidebarToggle
-          open={isSidebarOpen}
-          onToggle={() => setIsSidebarOpen(!isSidebarOpen)}
-        />
-
         {/* Chat Content */}
         {isEmpty ? (
           <>
@@ -1168,6 +1168,9 @@ export default function ChatHome() {
       <ModelSettingsDialog
         isOpen={showSettings}
         onOpenChange={setShowSettings}
+        onSaved={() => {
+          void reloadModels({ forceReselect: true });
+        }}
       />
 
       {/* Usage Stats Dialog (流量统计) */}

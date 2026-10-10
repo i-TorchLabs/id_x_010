@@ -187,9 +187,15 @@ CREATE TABLE IF NOT EXISTS user_model_settings (
     base_url VARCHAR(256) NOT NULL,
     api_key VARCHAR(512) NOT NULL,
     model_name VARCHAR(128) NOT NULL,
+    model_name_list JSONB NOT NULL DEFAULT '[]'::jsonb,
+    quota_limit_monthly_usd DOUBLE PRECISION,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- 已有库增量字段（幂等）
+ALTER TABLE user_model_settings ADD COLUMN IF NOT EXISTS model_name_list JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE user_model_settings ADD COLUMN IF NOT EXISTS quota_limit_monthly_usd DOUBLE PRECISION;
 
 CREATE INDEX IF NOT EXISTS ix_user_model_settings_user_id ON user_model_settings(user_id);
 
@@ -198,7 +204,89 @@ COMMENT ON COLUMN user_model_settings.user_id IS '用户ID';
 COMMENT ON COLUMN user_model_settings.provider IS '模型厂商';
 COMMENT ON COLUMN user_model_settings.base_url IS '访问地址';
 COMMENT ON COLUMN user_model_settings.api_key IS 'API-KEY';
-COMMENT ON COLUMN user_model_settings.model_name IS '模型名称';
+COMMENT ON COLUMN user_model_settings.model_name IS '默认模型名称（须在 model_name_list 内）';
+COMMENT ON COLUMN user_model_settings.model_name_list IS '可选模型名称列表（JSON 数组），模型选择器据此渲染';
+COMMENT ON COLUMN user_model_settings.quota_limit_monthly_usd IS '月度额度上限（USD，自然月聚合）；NULL 表示不限额';
+
+-- ============================================
+-- 7d. 用户自定义模型 Provider 表 (user_model_providers)
+--    每用户可配置多个 Provider，每个 Provider 有独立的 endpoint + model_name_list
+-- ============================================
+CREATE TABLE IF NOT EXISTS user_model_providers (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    provider VARCHAR(64) NOT NULL,
+    base_url VARCHAR(256) NOT NULL,
+    api_key VARCHAR(512) NOT NULL,
+    model_name_list JSONB NOT NULL DEFAULT '[]'::jsonb,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT uq_user_model_provider UNIQUE (user_id, provider)
+);
+
+CREATE INDEX IF NOT EXISTS ix_user_model_providers_user_id ON user_model_providers(user_id);
+
+COMMENT ON TABLE user_model_providers IS '用户自定义模型 Provider 表（每用户多行）';
+COMMENT ON COLUMN user_model_providers.user_id IS '用户 ID';
+COMMENT ON COLUMN user_model_providers.provider IS '模型厂商，如 siliconflow/openai/deepseek';
+COMMENT ON COLUMN user_model_providers.base_url IS 'OpenAI 兼容接口地址';
+COMMENT ON COLUMN user_model_providers.api_key IS 'API-KEY';
+COMMENT ON COLUMN user_model_providers.model_name_list IS '该 Provider 下可选的模型名称列表（JSON 数组）';
+COMMENT ON COLUMN user_model_providers.sort_order IS '排序序号（小在前）';
+
+-- ============================================
+-- 7b. 系统预置模型表 (system_model_settings)
+--    管理员维护，用户只读；enabled 行对所有用户在模型选择器中可见
+-- ============================================
+CREATE TABLE IF NOT EXISTS system_model_settings (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(128) NOT NULL UNIQUE,
+    provider VARCHAR(64) NOT NULL,
+    base_url VARCHAR(256) NOT NULL,
+    api_key VARCHAR(512) NOT NULL,
+    model_type VARCHAR(32) NOT NULL DEFAULT 'external',
+    is_default BOOLEAN NOT NULL DEFAULT FALSE,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ix_system_model_settings_name ON system_model_settings(name);
+CREATE INDEX IF NOT EXISTS ix_system_model_settings_enabled ON system_model_settings(enabled);
+
+COMMENT ON TABLE system_model_settings IS '系统预置模型表（管理员维护，用户只读）';
+COMMENT ON COLUMN system_model_settings.name IS '模型名称';
+COMMENT ON COLUMN system_model_settings.provider IS '模型厂商';
+COMMENT ON COLUMN system_model_settings.base_url IS '访问地址';
+COMMENT ON COLUMN system_model_settings.api_key IS 'API-KEY';
+COMMENT ON COLUMN system_model_settings.model_type IS '模型类型: local 或 external';
+COMMENT ON COLUMN system_model_settings.is_default IS '是否为系统默认模型（用户未配置时的回退默认）';
+COMMENT ON COLUMN system_model_settings.enabled IS '是否启用（禁用后不在选择器展示）';
+COMMENT ON COLUMN system_model_settings.sort_order IS '排序序号（小在前）';
+
+-- ============================================
+-- 7c. 用户对系统预置模型的 API Key 映射表 (system_model_user_mappings)
+--    每用户可为每个系统预置模型覆盖自己的 api_key，用于按用户统计用量
+-- ============================================
+CREATE TABLE IF NOT EXISTS system_model_user_mappings (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    system_model_id INTEGER NOT NULL REFERENCES system_model_settings(id) ON DELETE CASCADE,
+    api_key VARCHAR(512) NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT uq_user_system_model UNIQUE (user_id, system_model_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_system_model_user_mappings_user_id ON system_model_user_mappings(user_id);
+CREATE INDEX IF NOT EXISTS ix_system_model_user_mappings_system_model_id ON system_model_user_mappings(system_model_id);
+
+COMMENT ON TABLE system_model_user_mappings IS '用户对系统预置模型的 API Key 映射表';
+COMMENT ON COLUMN system_model_user_mappings.user_id IS '用户 ID';
+COMMENT ON COLUMN system_model_user_mappings.system_model_id IS '系统预置模型 ID';
+COMMENT ON COLUMN system_model_user_mappings.api_key IS '用户个人 API Key（覆盖系统模型全局 key）';
 
 -- ============================================
 -- 8. SQL Agent 目标库配置表 (agent_db_settings)
@@ -317,6 +405,30 @@ COMMENT ON COLUMN usage_logs.output_tokens IS '输出 token 数';
 COMMENT ON COLUMN usage_logs.total_tokens IS '总 token 数';
 COMMENT ON COLUMN usage_logs.cost_usd IS '估算花费（USD），本地模型为 0';
 COMMENT ON COLUMN usage_logs.created_at IS '创建时间';
+
+-- ============================================
+-- 12. SSO 单点登录配置表 (sso_settings)
+--    取代原 .env 的 AA_OAUTH_CLIENT_ID / AA_OAUTH_CLIENT_SECRET /
+--    AA_OAUTH_REDIRECT_URI；取 id 最小行作为生效配置
+-- ============================================
+CREATE TABLE IF NOT EXISTS sso_settings (
+    id SERIAL PRIMARY KEY,
+    client_id VARCHAR(128) NOT NULL,
+    client_secret VARCHAR(256) NOT NULL,
+    redirect_uri VARCHAR(256) NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+COMMENT ON TABLE sso_settings IS 'SSO 单点登录配置表';
+COMMENT ON COLUMN sso_settings.id IS 'ID';
+COMMENT ON COLUMN sso_settings.client_id IS 'ADFS 分配的 Client ID';
+COMMENT ON COLUMN sso_settings.client_secret IS 'ADFS 共享秘钥（明文，仅服务端持有）';
+COMMENT ON COLUMN sso_settings.redirect_uri IS 'OAuth2 回调地址（须与 ADFS 注册一致）';
+
+-- 示例（按需修改后执行）：
+-- INSERT INTO sso_settings (client_id, client_secret, redirect_uri)
+-- VALUES ('373d4823-7c0b-4375-a16c-e902f979ee34', 'xxx', 'https://host/f/010/oauth2');
 
 -- ============================================
 -- 触发器：自动更新 users 表的 updated_at 字段

@@ -1026,7 +1026,7 @@ class DatabaseConnection:
         self._sql_database: Optional[SQLDatabase] = None
 
     async def _resolve_settings(self):
-        """解析最终连接参数：数据库表 agent_db_settings 优先，环境变量回退。"""
+        """解析最终连接参数：从 agent_db_settings 表读取。"""
         if self._settings_resolved:
             return
 
@@ -1054,7 +1054,10 @@ class DatabaseConnection:
                     f"(db_name={row.db_name}, host={row.db_host}:{row.db_port})"
                 )
             else:
-                self._resolve_settings_from_env()
+                logger.error(
+                    f"{get_request_id()}SQLAgent 目标库配置缺失: "
+                    f"agent_db_settings 表无数据 (db_name={self.database})"
+                )
         else:
             logger.info(
                 f"{get_request_id()}SQLAgent 目标库配置来源: 显式传参 "
@@ -1062,43 +1065,6 @@ class DatabaseConnection:
             )
 
         self._settings_resolved = True
-
-    def _resolve_settings_from_env(self):
-        """环境变量回退：优先取解密后的明文变量（由 main.py 启动时注入
-        os.environ），其次尝试解密 _ENC 变量（.env 文件中存储的加密值）。"""
-        from utils.decrypt_util import decrypt
-
-        def _resolve_env(plain_key: str, enc_key: str, default: str) -> str:
-            val = os.getenv(plain_key)
-            if val:
-                return val
-            enc_val = os.getenv(enc_key)
-            if enc_val:
-                try:
-                    return decrypt(enc_val)
-                except Exception:
-                    pass
-            return default
-
-        self.host = self.host or _resolve_env(
-            "AGENT_DB_HOST", "AGENT_DB_HOST_ENC", "localhost"
-        )
-        self.port = self.port or int(
-            _resolve_env("AGENT_DB_PORT", "AGENT_DB_PORT_ENC", "5432")
-        )
-        self.database = self.database or _resolve_env(
-            "AGENT_DB_NAME", "AGENT_DB_NAME_ENC", "postgres"
-        )
-        self.user = self.user or _resolve_env(
-            "AGENT_DB_USERNAME", "AGENT_DB_USERNAME_ENC", "postgres"
-        )
-        self.password = self.password or _resolve_env(
-            "AGENT_DB_PASSWORD", "AGENT_DB_PASSWORD_ENC", ""
-        )
-        logger.info(
-            f"{get_request_id()}SQLAgent 目标库配置来源: 环境变量回退 "
-            f"(db_name={self.database}, host={self.host}:{self.port})"
-        )
 
     async def connect(self):
         if self._is_connected:
@@ -1368,12 +1334,11 @@ class SQLAgent:
             or DEFAULT_EXTERNAL_MODEL
         )
         self.api_key = (
-            api_key or external_config.get("api_key") or os.getenv("EXTERNAL_API_KEY")
+            api_key or external_config.get("api_key")
         )
         self.base_url = (
             base_url
             or external_config.get("base_url")
-            or os.getenv("EXTERNAL_BASE_URL", "https://api.siliconflow.cn/v1")
         )
 
         self.llm = self._create_llm()

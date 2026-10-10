@@ -15,13 +15,18 @@ from x_models.id_x_010.src.models.x_models import (
     ExternalModel,
     ExternalProvider,
     LocalProvider,
+    SsoSettings,
+    SystemModelSettings,
+    SystemModelUserMapping,
     UsageLog,
     User,
     UserMarkdownPrompt,
+    UserModelProperty,
     UserModelSettings,
     UserToken,
     get_session,
     set_llm_provider_config,
+    set_oauth_config,
 )
 from x_models.id_x_010.src.schemas.x_schemas import AuthResponseType, UserInfoType
 from x_models.id_x_010.src.utils import x_oauth
@@ -274,8 +279,34 @@ async def upsert_user_model_settings(
     base_url: str,
     api_key: str,
     model_name: str,
+    model_name_list: List[str],
+    quota_limit_monthly_usd: Optional[float] = None,
 ) -> Optional[UserModelSettings]:
-    """新建或更新用户的模型设置（每用户一行）。"""
+    """新建或更新用户的默认模型设置（每用户一行）。
+
+    Args:
+        model_name: 默认模型名称，须在 ``model_name_list`` 内；
+            若不在列表内则自动追加为首项，保证不变式成立。
+        model_name_list: 可选模型名称列表（去重保序后落库）。
+        quota_limit_monthly_usd: 月度额度上限（USD），None 表示不限额。
+    """
+    # 规范化模型列表：去空白、去空串、去重保序
+    cleaned_list: List[str] = []
+    seen = set()
+    for name in model_name_list or []:
+        n = (name or "").strip()
+        if n and n not in seen:
+            seen.add(n)
+            cleaned_list.append(n)
+
+    # 默认模型必须在列表内
+    default_name = (model_name or "").strip()
+    if default_name and default_name not in seen:
+        cleaned_list.insert(0, default_name)
+        seen.add(default_name)
+    if not cleaned_list:
+        cleaned_list = [default_name] if default_name else []
+
     async with get_session()() as session:
         result = await session.execute(
             select(UserModelSettings).where(UserModelSettings.user_id == user_id)
@@ -288,22 +319,198 @@ async def upsert_user_model_settings(
                 provider=provider,
                 base_url=base_url,
                 api_key=api_key,
-                model_name=model_name,
+                model_name=default_name,
+                model_name_list=cleaned_list,
+                quota_limit_monthly_usd=quota_limit_monthly_usd,
             )
             session.add(settings)
         else:
             settings.provider = provider
             settings.base_url = base_url
             settings.api_key = api_key
-            settings.model_name = model_name
+            settings.model_name = default_name
+            settings.model_name_list = cleaned_list
+            settings.quota_limit_monthly_usd = quota_limit_monthly_usd
 
         await session.commit()
         await session.refresh(settings)
         logger.info(
             f"{get_request_id()}用户模型设置已保存: user_id={user_id}, "
-            f"provider={provider}, model={model_name}"
+            f"provider={provider}, default={default_name}, "
+            f"list={cleaned_list}, quota_usd={quota_limit_monthly_usd}"
         )
         return settings
+
+
+# ==========================================
+# 用户自定义模型 Provider（user_model_providers 表）
+# 每用户可配置多个 Provider，每个 Provider 有独立的 endpoint + model_name_list
+# ==========================================
+
+
+async def list_user_model_providers(user_id: int) -> List[UserModelProperty]:
+    """列出指定用户的全部自定义 Provider，按 sort_order / id 升序。"""
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(UserModelProperty)
+                .where(UserModelProperty.user_id == user_id)
+                .order_by(
+                    UserModelProperty.sort_order.asc(),
+                    UserModelProperty.id.asc(),
+                )
+            )
+            return list(result.scalars().all())
+    except Exception as e:
+        logger.error(f"{get_request_id()}列出用户 Provider 失败: {e}", exc_info=True)
+        return []
+
+
+async def get_user_model_provider(
+    user_id: int, provider_id: int
+) -> Optional[UserModelProperty]:
+    """按 id 读取单个 Provider 行（属主校验）。"""
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(UserModelProperty).where(
+                    UserModelProperty.id == provider_id,
+                    UserModelProperty.user_id == user_id,
+                )
+            )
+            return result.scalar_one_or_none()
+    except Exception as e:
+        logger.error(f"{get_request_id()}读取用户 Provider 失败: {e}", exc_info=True)
+        return None
+
+
+async def upsert_user_model_provider(
+    user_id: int,
+    provider: str,
+    base_url: str,
+    api_key: str,
+    model_name_list: Optional[List[str]] = None,
+    sort_order: int = 0,
+    provider_id: Optional[int] = None,
+) -> Optional[UserModelProperty]:
+    """新建或更新用户自定义 Provider。
+
+    - ``provider_id`` 为 None 时按 provider 名新建（已存在则更新）。
+    - ``provider_id`` 非 None 时更新指定行。
+    - ``model_name_list`` 去重保序后落库。
+    """
+    cleaned_list: List[str] = []
+    seen = set()
+    for name in model_name_list or []:
+        n = (name or "").strip()
+        if n and n not in seen:
+            seen.add(n)
+            cleaned_list.append(n)
+
+    provider_name = (provider or "").strip()
+    base_url = (base_url or "").strip().rstrip("/")
+    api_key = (api_key or "").strip()
+
+    try:
+        async with get_session()() as session:
+            if provider_id is not None:
+                result = await session.execute(
+                    select(UserModelProperty).where(
+                        UserModelProperty.id == provider_id,
+                        UserModelProperty.user_id == user_id,
+                    )
+                )
+                model = result.scalar_one_or_none()
+                if model is None:
+                    return None
+            else:
+                result = await session.execute(
+                    select(UserModelProperty).where(
+                        UserModelProperty.user_id == user_id,
+                        UserModelProperty.provider == provider_name,
+                    )
+                )
+                model = result.scalar_one_or_none()
+                if model is None:
+                    model = UserModelProperty(
+                        user_id=user_id,
+                        provider=provider_name,
+                        base_url=base_url,
+                        api_key=api_key,
+                        model_name_list=cleaned_list,
+                        sort_order=sort_order,
+                    )
+                    session.add(model)
+
+            model.provider = provider_name
+            model.base_url = base_url
+            model.api_key = api_key
+            model.model_name_list = cleaned_list
+            model.sort_order = sort_order
+
+            await session.commit()
+            await session.refresh(model)
+            logger.info(
+                f"{get_request_id()}用户 Provider 已保存: user_id={user_id}, "
+                f"provider={provider_name}, models={cleaned_list}, id={model.id}"
+            )
+            return model
+    except Exception as e:
+        logger.error(f"{get_request_id()}保存用户 Provider 失败: {e}", exc_info=True)
+        return None
+
+
+async def delete_user_model_provider(user_id: int, provider_id: int) -> bool:
+    """删除用户自定义 Provider 行。"""
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(UserModelProperty).where(
+                    UserModelProperty.id == provider_id,
+                    UserModelProperty.user_id == user_id,
+                )
+            )
+            model = result.scalar_one_or_none()
+            if model is None:
+                return False
+            await session.delete(model)
+            await session.commit()
+            logger.info(
+                f"{get_request_id()}用户 Provider 已删除: "
+                f"user_id={user_id}, provider_id={provider_id}"
+            )
+            return True
+    except Exception as e:
+        logger.error(f"{get_request_id()}删除用户 Provider 失败: {e}", exc_info=True)
+        return False
+
+
+async def find_provider_for_model(
+    user_id: int, model_name: str
+) -> Optional[UserModelProperty]:
+    """在用户的所有 Provider 中查找包含 model_name 的 Provider 行。
+
+    供 resolve_model_endpoint 在模型选择器选中自定义模型时解析端点。
+    """
+    if not model_name:
+        return None
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(UserModelProperty).where(
+                    UserModelProperty.user_id == user_id,
+                )
+            )
+            providers = result.scalars().all()
+            for p in providers:
+                if model_name in (p.model_name_list or []):
+                    return p
+            return None
+    except Exception as e:
+        logger.error(
+            f"{get_request_id()}查找 Provider for model 失败: {e}", exc_info=True
+        )
+        return None
 
 
 def _normalize_base_url(url: str) -> str:
@@ -444,6 +651,320 @@ async def delete_external_model(model_id: int) -> bool:
     except Exception as e:
         logger.error(f"{get_request_id()}删除外部模型失败: {e}", exc_info=True)
         return False
+
+
+# ==========================================
+# 系统预置模型（system_model_settings 表）
+# 管理员维护，用户只读；enabled 行对所有用户在选择器中可见
+# ==========================================
+
+
+async def list_system_models(enabled_only: bool = False) -> List[SystemModelSettings]:
+    """列出系统预置模型，按 sort_order / id 升序。
+
+    Args:
+        enabled_only: True 时仅返回 enabled=True 的行（供 get_models 合并）。
+    """
+    try:
+        async with get_session()() as session:
+            stmt = select(SystemModelSettings)
+            if enabled_only:
+                stmt = stmt.where(SystemModelSettings.enabled.is_(True))
+            stmt = stmt.order_by(
+                SystemModelSettings.sort_order.asc(),
+                SystemModelSettings.id.asc(),
+            )
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
+    except Exception as e:
+        logger.error(f"{get_request_id()}列出系统模型失败: {e}", exc_info=True)
+        return []
+
+
+async def get_system_model_by_name(name: str) -> Optional[SystemModelSettings]:
+    """按模型名称查询单行系统预置模型。
+
+    供 chat / sql_approval 等流程判断前端选中的 model_name 是否为系统模型：
+    命中则用该行的 base_url / api_key 发起 LLM 调用，覆盖用户级设置。
+    """
+    if not name:
+        return None
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(SystemModelSettings).where(SystemModelSettings.name == name)
+            )
+            return result.scalar_one_or_none()
+    except Exception as e:
+        logger.error(f"{get_request_id()}按名称查询系统模型失败: {e}", exc_info=True)
+        return None
+
+
+async def upsert_system_model(
+    name: str,
+    provider: str,
+    base_url: str,
+    api_key: str,
+    model_type: str = "external",
+    is_default: bool = False,
+    enabled: bool = True,
+    sort_order: int = 0,
+    model_id: Optional[int] = None,
+) -> Optional[SystemModelSettings]:
+    """新建或更新系统预置模型。
+
+    - ``model_id`` 为 None 时按 name 唯一性新增（name 已存在则更新）。
+    - ``model_id`` 非 None 时更新指定行。
+    - ``is_default=True`` 时自动把其余行的 is_default 置 False（同一时刻仅一个系统默认）。
+    """
+    try:
+        async with get_session()() as session:
+            if model_id is not None:
+                result = await session.execute(
+                    select(SystemModelSettings).where(SystemModelSettings.id == model_id)
+                )
+                model = result.scalar_one_or_none()
+                if model is None:
+                    return None
+            else:
+                result = await session.execute(
+                    select(SystemModelSettings).where(SystemModelSettings.name == name)
+                )
+                model = result.scalar_one_or_none()
+                if model is None:
+                    model = SystemModelSettings(
+                        name=name,
+                        provider=provider,
+                        base_url=base_url,
+                        api_key=api_key,
+                        model_type=model_type or "external",
+                        is_default=is_default,
+                        enabled=enabled,
+                        sort_order=sort_order,
+                    )
+                    session.add(model)
+
+            model.name = name
+            model.provider = provider
+            model.base_url = base_url
+            model.api_key = api_key
+            model.model_type = model_type or "external"
+            model.enabled = enabled
+            model.sort_order = sort_order
+
+            if is_default:
+                model.is_default = True
+                # 把其余行 is_default 置 False
+                others = await session.execute(
+                    select(SystemModelSettings).where(
+                        SystemModelSettings.id != model.id,
+                        SystemModelSettings.is_default.is_(True),
+                    )
+                )
+                for other in others.scalars().all():
+                    other.is_default = False
+            else:
+                model.is_default = is_default
+
+            await session.commit()
+            await session.refresh(model)
+            logger.info(
+                f"{get_request_id()}系统模型已保存: id={model.id}, name={name}, "
+                f"provider={provider}, default={is_default}, enabled={enabled}"
+            )
+            return model
+    except Exception as e:
+        logger.error(f"{get_request_id()}保存系统模型失败: {e}", exc_info=True)
+        return None
+
+
+async def delete_system_model(model_id: int) -> bool:
+    """按 id 删除系统预置模型行。返回是否删除成功。"""
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(SystemModelSettings).where(SystemModelSettings.id == model_id)
+            )
+            model = result.scalar_one_or_none()
+            if model is None:
+                return False
+            await session.delete(model)
+            await session.commit()
+            logger.info(f"{get_request_id()}系统模型已删除: id={model_id}")
+            return True
+    except Exception as e:
+        logger.error(f"{get_request_id()}删除系统模型失败: {e}", exc_info=True)
+        return False
+
+
+# ==========================================
+# 用户对系统预置模型的 API Key 映射
+# (system_model_user_mappings 表)
+# ==========================================
+
+
+async def get_user_system_model_mapping(
+    user_id: int, system_model_id: int
+) -> Optional[SystemModelUserMapping]:
+    """查询单个用户对单个系统模型的 API Key 覆盖记录。"""
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(SystemModelUserMapping).where(
+                    SystemModelUserMapping.user_id == user_id,
+                    SystemModelUserMapping.system_model_id == system_model_id,
+                )
+            )
+            return result.scalar_one_or_none()
+    except Exception as e:
+        logger.error(f"{get_request_id()}查询用户系统模型映射失败: {e}", exc_info=True)
+        return None
+
+
+async def list_user_system_model_mappings(
+    user_id: int,
+) -> List[SystemModelUserMapping]:
+    """列出指定用户对全部系统模型的 API Key 映射。"""
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(SystemModelUserMapping)
+                .where(SystemModelUserMapping.user_id == user_id)
+                .order_by(SystemModelUserMapping.id.asc())
+            )
+            return list(result.scalars().all())
+    except Exception as e:
+        logger.error(
+            f"{get_request_id()}列出用户系统模型映射失败: {e}", exc_info=True
+        )
+        return []
+
+
+async def upsert_user_system_model_mapping(
+    user_id: int,
+    system_model_id: int,
+    api_key: str,
+) -> Optional[SystemModelUserMapping]:
+    """新建或更新用户对系统模型的 API Key 映射。
+
+    (user_id, system_model_id) 唯一——已存在则更新 api_key，不存在则插入。
+    """
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(SystemModelUserMapping).where(
+                    SystemModelUserMapping.user_id == user_id,
+                    SystemModelUserMapping.system_model_id == system_model_id,
+                )
+            )
+            mapping = result.scalar_one_or_none()
+
+            if mapping is None:
+                mapping = SystemModelUserMapping(
+                    user_id=user_id,
+                    system_model_id=system_model_id,
+                    api_key=api_key,
+                )
+                session.add(mapping)
+            else:
+                mapping.api_key = api_key
+
+            await session.commit()
+            await session.refresh(mapping)
+            logger.info(
+                f"{get_request_id()}用户系统模型映射已保存: "
+                f"user_id={user_id}, system_model_id={system_model_id}"
+            )
+            return mapping
+    except Exception as e:
+        logger.error(
+            f"{get_request_id()}保存用户系统模型映射失败: {e}", exc_info=True
+        )
+        return None
+
+
+async def delete_user_system_model_mapping(
+    user_id: int, system_model_id: int
+) -> bool:
+    """删除用户对系统模型的 API Key 映射（回退到全局 key）。"""
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(SystemModelUserMapping).where(
+                    SystemModelUserMapping.user_id == user_id,
+                    SystemModelUserMapping.system_model_id == system_model_id,
+                )
+            )
+            mapping = result.scalar_one_or_none()
+            if mapping is None:
+                return False
+            await session.delete(mapping)
+            await session.commit()
+            logger.info(
+                f"{get_request_id()}用户系统模型映射已删除: "
+                f"user_id={user_id}, system_model_id={system_model_id}"
+            )
+            return True
+    except Exception as e:
+        logger.error(
+            f"{get_request_id()}删除用户系统模型映射失败: {e}", exc_info=True
+        )
+        return False
+
+
+async def resolve_model_endpoint(
+    model_name: Optional[str],
+    user_settings: Optional[UserModelSettings],
+    user_id: Optional[int] = None,
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """解析实际调用的模型端点（api_key, base_url, model_name）。
+
+    优先级：
+    1. ``model_name`` 命中 ``system_model_settings`` 且该用户有 per-user mapping →
+       使用用户的 api_key + 系统模型的 base_url
+    2. ``model_name`` 命中 ``system_model_settings`` 但无 per-user mapping →
+       使用系统模型的全局 api_key
+    3. ``user_id`` 非空且 ``model_name`` 在用户的某个 UserModelProperty.model_name_list 中 →
+       使用该 Provider 的 base_url / api_key
+    4. ``user_settings`` 非空 → 使用旧版单 endpoint（兼容）
+    5. 均无 → 返回全 None（由调用方回退到全局 orchestrator）
+
+    Args:
+        user_id: 当前用户 ID；传入时查 per-user mapping 和多 Provider。
+        user_settings: 旧版用户设置（兼容回退）；model_name 用于取默认模型名。
+
+    Returns:
+        (api_key, base_url, effective_model_name)
+    """
+    if model_name:
+        # 1) 系统预置模型
+        sys_model = await get_system_model_by_name(model_name)
+        if sys_model is not None and sys_model.enabled:
+            api_key = sys_model.api_key
+            if user_id is not None:
+                user_mapping = await get_user_system_model_mapping(
+                    user_id, sys_model.id
+                )
+                if user_mapping is not None:
+                    api_key = user_mapping.api_key
+                    logger.info(
+                        f"{get_request_id()}使用 per-user 系统模型 key: "
+                        f"user_id={user_id}, model={model_name}"
+                    )
+            return api_key, sys_model.base_url, model_name
+
+        # 2) 用户自定义 Provider（多 Provider 模式）
+        if user_id is not None:
+            provider = await find_provider_for_model(user_id, model_name)
+            if provider is not None:
+                return provider.api_key, provider.base_url, model_name
+
+    # 3) 旧版单 endpoint 回退（兼容）
+    if user_settings is not None:
+        effective = model_name or user_settings.model_name
+        return user_settings.api_key, user_settings.base_url, effective
+
+    return None, None, model_name
 
 
 async def list_user_markdown_prompts(user_id: int) -> List[UserMarkdownPrompt]:
@@ -782,10 +1303,10 @@ async def load_llm_provider_config() -> Optional[dict]:
 
     LLM_PROVIDER=external → external_provider 表；
     LLM_PROVIDER=local    → local_provider 表。
-    表无数据或读取失败时缓存保持原状，各 Agent 回退环境变量配置。
+    表无数据或读取失败时缓存保持原状，各 Agent 配置为空值。
 
     注意：get_orchestrator() 缓存的默认 supervisor 在首次构建时固化
-    配置，此后表数据变更对已缓存实例不生效（与环境变量语义一致）。
+    配置，此后表数据变更对已缓存实例不生效。
     """
     provider = (os.getenv("LLM_PROVIDER", "external") or "external").strip().lower()
     if provider != "local":
@@ -809,7 +1330,7 @@ async def load_llm_provider_config() -> Optional[dict]:
     if row is None:
         logger.warning(
             f"{get_request_id()}{model_cls.__tablename__} 表无数据，"
-            f"LLM 提供商配置回退环境变量"
+            f"LLM 提供商配置为空"
         )
         return None
 
@@ -824,6 +1345,49 @@ async def load_llm_provider_config() -> Optional[dict]:
     logger.info(
         f"{get_request_id()}LLM 提供商配置已加载: 来源={model_cls.__tablename__} 表, "
         f"llm_base_url={row.llm_base_url}"
+    )
+    return config
+
+
+# ==========================================
+# SSO 配置（sso_settings）
+# ==========================================
+
+
+async def load_oauth_config() -> Optional[dict]:
+    """从 sso_settings 表读取首行 SSO 配置并注入全局缓存。
+
+    取 id 最小行作为生效配置（与 external_provider / local_provider 语义一致）。
+    表无数据或读取失败时缓存保持原状，view_sso_login 拒绝 SSO 登录。
+    """
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(SsoSettings).order_by(SsoSettings.id).limit(1)
+            )
+            row = result.scalar_one_or_none()
+    except Exception as e:
+        logger.error(
+            f"{get_request_id()}读取 SSO 配置失败: table=sso_settings, {e}",
+            exc_info=True,
+        )
+        return None
+
+    if row is None:
+        logger.warning(
+            f"{get_request_id()}sso_settings 表无数据，SSO 登录不可用"
+        )
+        return None
+
+    config = {
+        "client_id": row.client_id,
+        "client_secret": row.client_secret,
+        "redirect_uri": row.redirect_uri,
+    }
+    set_oauth_config(config)
+    logger.info(
+        f"{get_request_id()}SSO 配置已加载: 来源=sso_settings 表, "
+        f"client_id={row.client_id}"
     )
     return config
 
@@ -890,10 +1454,7 @@ def merge_context(
 # SSO 单点登录（ADFS OAuth2 授权码授予流）
 # ==========================================
 
-# client_secret 仅服务端持有，从环境变量读取，绝不进入前端代码。
-OAUTH_CLIENT_ID = os.environ.get("AA_OAUTH_CLIENT_ID", "")
-OAUTH_CLIENT_SECRET = os.environ.get("AA_OAUTH_CLIENT_SECRET", "")
-OAUTH_REDIRECT_URI = os.environ.get("AA_OAUTH_REDIRECT_URI", "")
+# client_secret 仅服务端持有，从 sso_settings 表读取，绝不进入前端代码。
 
 # SSO 用户无密码：写入一个不会被任何 sha256 摘要命中的占位符，
 # 既满足 users.password_hash NOT NULL 约束，又保证密码登录路径拒登。
@@ -909,11 +1470,6 @@ def _sanitize_header(value: object) -> str:
     return re.sub(r"[\r\n]+", " ", str(value or "")).strip()
 
 
-def _oauth_config_missing() -> bool:
-    """SSO 服务端配置是否缺失。"""
-    return not (OAUTH_CLIENT_ID and OAUTH_CLIENT_SECRET and OAUTH_REDIRECT_URI)
-
-
 async def view_sso_login(code: str, state: str) -> AuthResponseType:
     """SSO 登录：ADFS 授权码授予流。
 
@@ -926,12 +1482,22 @@ async def view_sso_login(code: str, state: str) -> AuthResponseType:
 
     返回结构与 login/register 一致（AuthResponseType），前端可复用登录态写入逻辑。
     """
-    if _oauth_config_missing():
+    from x_models.id_x_010.src.models.x_models import get_oauth_config
+
+    oauth_cfg = get_oauth_config() or await load_oauth_config()
+    if not oauth_cfg or not (
+        oauth_cfg.get("client_id")
+        and oauth_cfg.get("client_secret")
+        and oauth_cfg.get("redirect_uri")
+    ):
         logger.error(
-            f"{get_request_id()}SSO 服务端配置缺失"
-            "（AA_OAUTH_CLIENT_ID/SECRET/REDIRECT_URI）"
+            f"{get_request_id()}SSO 服务端配置缺失（sso_settings 表无数据）"
         )
         return AuthResponseType(success=False, message="SSO 服务未配置")
+
+    client_id = oauth_cfg["client_id"]
+    client_secret = oauth_cfg["client_secret"]
+    redirect_uri = oauth_cfg["redirect_uri"]
 
     rid = get_request_id()
     logger.info(
@@ -944,9 +1510,9 @@ async def view_sso_login(code: str, state: str) -> AuthResponseType:
     expected_nonce = hashlib.sha256(code.encode("utf-8")).hexdigest()
     token_resp = x_oauth.exchange_code_for_token(
         code=code,
-        client_id=OAUTH_CLIENT_ID,
-        client_secret=OAUTH_CLIENT_SECRET,
-        redirect_uri=OAUTH_REDIRECT_URI,
+        client_id=client_id,
+        client_secret=client_secret,
+        redirect_uri=redirect_uri,
         expected_nonce=expected_nonce,
     )
     if token_resp is None:
@@ -964,7 +1530,7 @@ async def view_sso_login(code: str, state: str) -> AuthResponseType:
 
     logger.info(f"{rid}SSO 换取 id_token 成功，开始验签")
     payload_data, reason = x_oauth.verify_id_token(
-        id_token, expected_aud=OAUTH_CLIENT_ID
+        id_token, expected_aud=client_id
     )
     if payload_data is None:
         # 失败诊断直接进 warn.log：payload keys 是定位 ADFS 配置问题的关键证据

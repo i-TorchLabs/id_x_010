@@ -116,16 +116,14 @@ export default function IntelligentQueryHome() {
       className="flex h-screen theme-transition"
       style={{ background: "var(--bg)" }}
     >
-      {/* ── Sidebar ── */}
-      <AnimatePresence initial={false}>
-        {isSidebarOpen && (
-          <ChatSidebar
-            modelType={modelType}
-            onModelChange={setModelType}
-            onNewChat={handleNewChat}
-          />
-        )}
-      </AnimatePresence>
+      {/* ── Sidebar (always mounted, collapse to rail) ── */}
+      <ChatSidebar
+        modelType={modelType}
+        onModelChange={setModelType}
+        onNewChat={handleNewChat}
+        isCollapsed={!isSidebarOpen}
+        onToggleCollapse={() => setIsSidebarOpen(!isSidebarOpen)}
+      />
 
       <main className="flex-1 flex flex-col relative min-w-0">
         {isEmpty ? (
@@ -159,21 +157,15 @@ export default function IntelligentQueryHome() {
                     className="icon-btn"
                   >
                     <svg
-                      className="w-8 h-8"
+                      className="w-5 h-5"
                       fill="none"
                       stroke="currentColor"
-                      strokeWidth={1.5}
+                      strokeWidth={1.8}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       viewBox="0 0 24 24"
                     >
-                      <path
-                        d={
-                          isSidebarOpen
-                            ? "M6 18L18 6M6 6l12 12"
-                            : "M4 6h16M4 12h16M4 18h16"
-                        }
-                      />
+                      <path d="M15 18l-6-6 6-6" />
                     </svg>
                   </Button>
                   <div>

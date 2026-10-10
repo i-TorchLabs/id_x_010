@@ -71,8 +71,25 @@ def set_llm_provider_config(config: Optional[dict]) -> None:
     _llm_provider_config = config
 
 
+# ==========================================
+# SSO 配置缓存，由 views.load_oauth_config() 从 sso_settings 表读取后注入
+# ==========================================
+_oauth_config: Optional[dict] = None
+
+
+def set_oauth_config(config: Optional[dict]) -> None:
+    """由 views 层调用，将 sso_settings 表读取结果注入全局缓存。"""
+    global _oauth_config
+    _oauth_config = config
+
+
+def get_oauth_config() -> Optional[dict]:
+    """获取 SSO 配置缓存，供 view_sso_login 同步读取。"""
+    return _oauth_config
+
+
 def get_external_model_config():
-    """外部模型提供商配置：优先取 external_provider 表（经缓存），表无数据时回退环境变量。"""
+    """外部模型提供商配置：从 external_provider 表（经缓存）读取。表无数据时返回空值。"""
     if _llm_provider_config and _llm_provider_config.get("provider") == "external":
         return {
             "model_name": os.getenv("EXTERNAL_LLM_MODEL"),
@@ -83,16 +100,15 @@ def get_external_model_config():
         }
     return {
         "model_name": os.getenv("EXTERNAL_LLM_MODEL"),
-        "base_url": os.getenv("EXTERNAL_BASE_URL")
-        or os.getenv("EXTERNAL_LLM_BASE_URL", "https://api.siliconflow.cn/v1"),
-        "api_key": os.getenv("EXTERNAL_API_KEY"),
-        "embd_base_url": os.getenv("EXTERNAL_EMBD_BASE_URL"),
-        "vl_base_url": os.getenv("EXTERNAL_VL_BASE_URL"),
+        "base_url": None,
+        "api_key": None,
+        "embd_base_url": None,
+        "vl_base_url": None,
     }
 
 
 def get_local_model_config():
-    """本地模型提供商配置：优先取 local_provider 表（经缓存），表无数据时回退环境变量。"""
+    """本地模型提供商配置：从 local_provider 表（经缓存）读取。表无数据时返回空值。"""
     if _llm_provider_config and _llm_provider_config.get("provider") == "local":
         return {
             "model_name": os.getenv("LOCAL_LLM_MODEL"),
@@ -103,18 +119,21 @@ def get_local_model_config():
         }
     return {
         "model_name": os.getenv("LOCAL_LLM_MODEL"),
-        "base_url": os.getenv("LOCAL_MODEL_BASE_URL")
-        or os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:11434/v1"),
-        "api_key": os.getenv("LOCAL_MODEL_API_KEY")
-        or os.getenv("LOCAL_API_KEY")
-        or "ollama",
-        "embd_base_url": os.getenv("LOCAL_EMBD_BASE_URL"),
-        "vl_base_url": os.getenv("LOCAL_VL_BASE_URL"),
+        "base_url": None,
+        "api_key": None,
+        "embd_base_url": None,
+        "vl_base_url": None,
     }
 
 
 class ConversationLog(Base):
+    """对话日志表：每轮对话的用户提问、模型回答与思考过程。
+
+    conversation_id 关联多轮对话；extra_metadata 存放扩展信息（如工具调用摘要）。
+    """
+
     __tablename__ = "conversation_logs"
+    __table_args__ = {"comment": "对话日志表"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     conversation_id: Mapped[Optional[str]] = mapped_column(
@@ -162,6 +181,7 @@ class UsageLog(Base):
     """
 
     __tablename__ = "usage_logs"
+    __table_args__ = {"comment": "用量日志表（token 消耗与花费）"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[Optional[int]] = mapped_column(
@@ -198,7 +218,14 @@ class UsageLog(Base):
 
 
 class UserToken(Base):
+    """用户认证令牌表：登录成功后签发，Bearer 头携带校验。
+
+    token 全局唯一，expires_at 控制过期（默认 24h）；
+    is_valid() 综合判断过期与空值。
+    """
+
     __tablename__ = "user_tokens"
+    __table_args__ = {"comment": "用户令牌表"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(
@@ -238,7 +265,13 @@ class UserToken(Base):
 
 
 class User(Base):
+    """用户主表：邮箱、密码哈希、显示名、头像、激活/管理员标志。
+
+    password_algo 标识哈希算法：新数据 bcrypt，老数据 sha256（登录时自动升级）。
+    """
+
     __tablename__ = "users"
+    __table_args__ = {"comment": "用户表"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     email: Mapped[str] = mapped_column(
@@ -301,7 +334,13 @@ class User(Base):
 
 
 class PasswordResetToken(Base):
+    """密码重置令牌：忘记密码时签发，一次有效，过期作废。
+
+    同一用户再次申请重置时，旧令牌自动标记 used=True。
+    """
+
     __tablename__ = "password_reset_tokens"
+    __table_args__ = {"comment": "密码重置令牌表"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(
@@ -347,7 +386,14 @@ class PasswordResetToken(Base):
 
 
 class ExternalModel(Base):
+    """外部模型注册表：每行一个可选模型，供模型选择器渲染。
+
+    base_url 为唯一键（应用层据此 upsert），api_key 明文存储。
+    被 user_model_settings 的设置流程同步登记，也在 get_models() 回退路径中使用。
+    """
+
     __tablename__ = "external_models"
+    __table_args__ = {"comment": "外部模型表"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False, comment="模型名称")
@@ -368,13 +414,24 @@ class ExternalModel(Base):
 
 
 class UserModelSettings(Base):
-    """用户级模型设置（每用户一行），由 /home 设置弹窗保存。
+    """用户级默认模型设置（每用户一行），由 /home 设置弹窗保存。
+
+    字段语义：
+    - ``provider`` / ``base_url`` / ``api_key``：列表内全部模型共享同一接入点
+      （同一 OpenAI 兼容端点 + 同一密钥），故每用户只需一份。
+    - ``model_name``：该用户的**默认模型**——消息输入框的模型选择器未手动切换时，
+      后端据此调用 LLM。
+    - ``model_name_list``：该用户可选的**模型名称列表**（JSON 数组），模型选择器
+      据此渲染下拉项；``model_name`` 必须在该列表内。
+    - ``quota_limit_monthly_usd``：月度额度上限（USD），按 ``usage_logs.cost_usd``
+      自然月聚合统计；为 NULL 表示不限额。
 
     api_key 按项目既有约定明文存储（与 external_models 一致），
     接口仅返回给令牌属主本人。
     """
 
     __tablename__ = "user_model_settings"
+    __table_args__ = {"comment": "用户模型设置表"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(
@@ -386,7 +443,19 @@ class UserModelSettings(Base):
     )
     api_key: Mapped[str] = mapped_column(String(512), nullable=False, comment="API-KEY")
     model_name: Mapped[str] = mapped_column(
-        String(128), nullable=False, comment="模型名称"
+        String(128), nullable=False, comment="默认模型名称（须在 model_name_list 内）"
+    )
+    model_name_list: Mapped[Optional[list]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+        comment="可选模型名称列表（JSON 数组），模型选择器据此渲染",
+    )
+    quota_limit_monthly_usd: Mapped[Optional[float]] = mapped_column(
+        Float,
+        nullable=True,
+        default=None,
+        comment="月度额度上限（USD，自然月聚合）；NULL 表示不限额",
     )
     created_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True),
@@ -408,6 +477,221 @@ class UserModelSettings(Base):
             "base_url": self.base_url,
             "api_key": self.api_key,
             "model_name": self.model_name,
+            "model_name_list": self.model_name_list or [],
+            "quota_limit_monthly_usd": self.quota_limit_monthly_usd,
+            "created_at": self.created_at.isoformat()
+            if self.created_at is not None
+            else None,
+             "updated_at": self.updated_at.isoformat()
+             if self.updated_at is not None
+             else None,
+         }
+
+
+class UserModelProperty(Base):
+    """用户自定义模型 Provider（每用户可配置多个 Provider）。
+
+    每行代表一个用户的一个 Provider 接入点：独立的 ``provider`` / ``base_url`` /
+    ``api_key``，以及该 Provider 下可选的 ``model_name_list``（JSON 数组）。
+
+    与 ``UserModelSettings`` 的关系：
+    - ``UserModelSettings`` 每用户一行，保存**默认模型名**和**月度配额**。
+    - ``UserModelProperty`` 每用户多行，每行一个 Provider 的接入凭据 + 模型列表。
+    - 模型选择器渲染 = 系统预置模型 ∪ 所有 UserModelProperty.model_name_list
+    - 选中模型时，后端按 model_name 在所有 UserModelProperty 行中查找包含该名的行，
+      取其 ``base_url`` / ``api_key`` 发起 LLM 调用。
+
+    (user_id, provider) 唯一：同一用户同一 Provider 仅一行。
+    """
+
+    __tablename__ = "user_model_providers"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "provider", name="uq_user_model_provider"
+        ),
+        {"comment": "用户自定义模型 Provider 表（每用户多行）"},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id"), nullable=False, index=True, comment="用户ID"
+    )
+    provider: Mapped[str] = mapped_column(
+        String(64), nullable=False, comment="模型厂商，如 siliconflow/openai/deepseek"
+    )
+    base_url: Mapped[str] = mapped_column(
+        String(256), nullable=False, comment="OpenAI 兼容接口地址"
+    )
+    api_key: Mapped[str] = mapped_column(String(512), nullable=False, comment="API-KEY")
+    model_name_list: Mapped[Optional[list]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+        comment="该 Provider 下可选的模型名称列表（JSON 数组）",
+    )
+    sort_order: Mapped[int] = mapped_column(
+        Integer, default=0, comment="排序序号（小在前）"
+    )
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        comment="创建时间",
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        comment="更新时间",
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "provider": self.provider,
+            "base_url": self.base_url,
+            "api_key": self.api_key,
+            "model_name_list": self.model_name_list or [],
+            "sort_order": self.sort_order,
+            "created_at": self.created_at.isoformat()
+            if self.created_at is not None
+            else None,
+            "updated_at": self.updated_at.isoformat()
+            if self.updated_at is not None
+            else None,
+        }
+
+
+class SystemModelSettings(Base):
+    """系统预置模型配置（管理员维护，用户只读）。
+
+    每行一个模型；``enabled=True`` 的行出现在所有用户的模型选择器中，
+    与 ``user_model_settings.model_name_list`` 合并展示。用户可在选择器中
+    选用系统模型，但无法在设置弹窗中修改/删除它们——只有管理员可经
+    ``saveSystemModel`` / ``deleteSystemModel`` mutation 维护。
+
+    与 ``user_model_settings`` 的差异：
+    - ``user_model_settings`` 每用户一行，``model_name_list`` 存多条模型名，
+      共享同一 endpoint（provider/base_url/api_key）。
+    - ``system_model_settings`` 每模型一行，各自携带独立 endpoint，
+      便于不同系统模型接入不同提供商。
+
+    选中系统模型发起对话时，后端按 ``name`` 查表取该行的
+    ``base_url`` / ``api_key``，覆盖用户级设置的同名字段。
+    """
+
+    __tablename__ = "system_model_settings"
+    __table_args__ = {"comment": "系统预置模型表（管理员维护，用户只读）"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(
+        String(128), unique=True, nullable=False, index=True, comment="模型名称"
+    )
+    provider: Mapped[str] = mapped_column(String(64), nullable=False, comment="模型厂商")
+    base_url: Mapped[str] = mapped_column(
+        String(256), nullable=False, comment="访问地址"
+    )
+    api_key: Mapped[str] = mapped_column(String(512), nullable=False, comment="API-KEY")
+    model_type: Mapped[str] = mapped_column(
+        String(32), default="external", nullable=False, comment="模型类型: local 或 external"
+    )
+    is_default: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, comment="是否为系统默认模型（用户未配置时的回退默认）"
+    )
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, comment="是否启用（禁用后不在选择器展示）"
+    )
+    sort_order: Mapped[int] = mapped_column(
+        Integer, default=0, comment="排序序号（小在前）"
+    )
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        comment="创建时间",
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        comment="更新时间",
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "provider": self.provider,
+            "base_url": self.base_url,
+            "api_key": self.api_key,
+            "model_type": self.model_type,
+            "is_default": bool(self.is_default),
+            "enabled": bool(self.enabled),
+            "sort_order": self.sort_order,
+            "created_at": self.created_at.isoformat()
+            if self.created_at is not None
+            else None,
+            "updated_at": self.updated_at.isoformat()
+            if self.updated_at is not None
+            else None,
+        }
+
+
+class SystemModelUserMapping(Base):
+    """用户对系统预置模型的个人 API Key 映射。
+
+    管理员在 ``system_model_settings`` 中定义全局系统模型（含全局默认 api_key）；
+    每个用户可在此表覆盖为自己的 api_key，便于按用户统计系统模型调用花费与用量。
+
+    解析优先级（``resolve_model_endpoint``）：
+    1. 命中系统模型且有 per-user mapping → 使用用户的 api_key + 系统模型的 base_url
+    2. 命中系统模型但无 per-user mapping → 使用系统模型的全局 api_key
+    3. 都未命中 → 回退到 user_model_settings
+
+    (user_id, system_model_id) 唯一：同一用户对同一系统模型仅一条覆盖记录。
+    用户可经 ``saveSystemModelUserKey`` mutation 设置自己的 key，
+    也可经 ``deleteSystemModelUserKey`` 删除（回退到全局 key）。
+    """
+
+    __tablename__ = "system_model_user_mappings"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "system_model_id", name="uq_user_system_model"
+        ),
+        {"comment": "用户对系统预置模型的 API Key 映射表"},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id"), nullable=False, index=True, comment="用户ID"
+    )
+    system_model_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("system_model_settings.id"),
+        nullable=False,
+        index=True,
+        comment="系统预置模型ID",
+    )
+    api_key: Mapped[str] = mapped_column(
+        String(512), nullable=False, comment="用户个人 API Key（覆盖系统模型全局 key）"
+    )
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        comment="创建时间",
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        comment="更新时间",
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "system_model_id": self.system_model_id,
+            "api_key": self.api_key,
             "created_at": self.created_at.isoformat()
             if self.created_at is not None
             else None,
@@ -421,11 +705,12 @@ class AgentDBSettings(Base):
     """SQL Agent 目标库连接配置（每行一个可选数据库）。
 
     取代原 .env 中的 AGENT_DB_* 配置项；db_password 按项目既有约定
-    明文存储（与 external_models.api_key 一致）。表无数据时运行侧
-    仍回退环境变量 AGENT_DB_*（含 _ENC 加密值）。
+    明文存储（与 external_models.api_key 一致）。表无数据时 SQL Agent
+    不可用，其余功能不受影响。
     """
 
     __tablename__ = "agent_db_settings"
+    __table_args__ = {"comment": "SQL Agent 目标库配置表"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     db_name: Mapped[str] = mapped_column(
@@ -481,6 +766,7 @@ class ExternalProvider(Base):
     """
 
     __tablename__ = "external_provider"
+    __table_args__ = {"comment": "外部模型提供商配置表"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     api_key: Mapped[str] = mapped_column(String(512), nullable=False, comment="API-KEY")
@@ -529,6 +815,7 @@ class LocalProvider(Base):
     """
 
     __tablename__ = "local_provider"
+    __table_args__ = {"comment": "本地模型提供商配置表"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     api_key: Mapped[str] = mapped_column(String(512), nullable=False, comment="API-KEY")
@@ -569,8 +856,63 @@ class LocalProvider(Base):
         }
 
 
+class SsoSettings(Base):
+    """SSO 单点登录配置（取 id 最小行作为当前生效配置）。
+
+    取代原 .env 的 AA_OAUTH_CLIENT_ID / AA_OAUTH_CLIENT_SECRET /
+    AA_OAUTH_REDIRECT_URI 配置项；由 views 层读入缓存。client_secret
+    按项目既有约定明文存储（与 external_models.api_key 一致）。
+    """
+
+    __tablename__ = "sso_settings"
+    __table_args__ = {"comment": "SSO 单点登录配置表"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    client_id: Mapped[str] = mapped_column(
+        String(128), nullable=False, comment="ADFS 分配的 Client ID"
+    )
+    client_secret: Mapped[str] = mapped_column(
+        String(256), nullable=False, comment="ADFS 共享秘钥（明文，仅服务端持有）"
+    )
+    redirect_uri: Mapped[str] = mapped_column(
+        String(256), nullable=False, comment="OAuth2 回调地址（须与 ADFS 注册一致）"
+    )
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        comment="创建时间",
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        comment="更新时间",
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+            "redirect_uri": self.redirect_uri,
+            "created_at": self.created_at.isoformat()
+            if self.created_at is not None
+            else None,
+            "updated_at": self.updated_at.isoformat()
+            if self.updated_at is not None
+            else None,
+        }
+
+
 class LocalModel(Base):
+    """本地模型注册表：每行一个可选模型，供模型选择器渲染。
+
+    与 external_models 结构对称；LLM_PROVIDER=local 时由 views 层读取 local_provider
+    作为接入点，本表仅用于前端展示与选择。
+    """
+
     __tablename__ = "local_models"
+    __table_args__ = {"comment": "本地模型表"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False, comment="模型名称")
@@ -603,6 +945,7 @@ class UserMarkdownPrompt(Base):
     __tablename__ = "user_markdown_prompts"
     __table_args__ = (
         UniqueConstraint("user_id", "filename", name="uq_user_markdown_filename"),
+        {"comment": "用户级 Markdown 提示词库"},
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -662,6 +1005,7 @@ class TableComment(Base):
         UniqueConstraint(
             "db_name", "table_name", name="uq_table_comments_db_table"
         ),
+        {"comment": "表注释索引（供 SQL Agent 向量召回相关表）"},
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -692,6 +1036,7 @@ class DocumentChunk(Base):
     """
 
     __tablename__ = "document_chunks"
+    __table_args__ = {"comment": "用户文档分片（供 General Agent KB 检索召回）"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[Optional[int]] = mapped_column(
@@ -718,6 +1063,7 @@ class ConversationSummary(Base):
     """
 
     __tablename__ = "conversation_summaries"
+    __table_args__ = {"comment": "会话滚动摘要与实体记忆（长期记忆存储）"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     conversation_id: Mapped[str] = mapped_column(
@@ -747,6 +1093,7 @@ class SqlExample(Base):
     """
 
     __tablename__ = "sql_examples"
+    __table_args__ = {"comment": "SQL Few-Shot 例子库（仅 SQL Agent 召回使用）"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     db_name: Mapped[str] = mapped_column(
@@ -776,6 +1123,7 @@ class ApprovalTask(Base):
     """
 
     __tablename__ = "approval_tasks"
+    __table_args__ = {"comment": "SQL 审批任务表（跨浏览器/进程恢复）"}
 
     id: Mapped[str] = mapped_column(
         String(64),
@@ -820,6 +1168,7 @@ class ReportSubscription(Base):
     """
 
     __tablename__ = "report_subscriptions"
+    __table_args__ = {"comment": "报告订阅表（定时执行 SQL 并导出）"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(
@@ -865,6 +1214,7 @@ class UploadedImage(Base):
     """
 
     __tablename__ = "uploaded_images"
+    __table_args__ = {"comment": "用户上传图片表（供 VL Agent 视觉分析）"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[Optional[int]] = mapped_column(
@@ -891,6 +1241,7 @@ class PromptTemplate(Base):
     """
 
     __tablename__ = "prompt_templates"
+    __table_args__ = {"comment": "Prompt 模板表（admin 可热更新，无需发版）"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     key: Mapped[str] = mapped_column(
@@ -924,6 +1275,7 @@ class UserFeedback(Base):
     """
 
     __tablename__ = "user_feedback"
+    __table_args__ = {"comment": "用户反馈表（每条消息的赞/踩 + 备注）"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[Optional[int]] = mapped_column(
@@ -954,6 +1306,7 @@ class SqlEvalCase(Base):
     """
 
     __tablename__ = "sql_eval_cases"
+    __table_args__ = {"comment": "SQL 评估用例表（admin 维护的测试集）"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     question: Mapped[str] = mapped_column(Text, nullable=False, comment="自然语言问题")
@@ -978,6 +1331,7 @@ class SqlEvalResult(Base):
     """
 
     __tablename__ = "sql_eval_results"
+    __table_args__ = {"comment": "SQL 评估结果表（每次 runSqlEval 写入）"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     case_id: Mapped[int] = mapped_column(

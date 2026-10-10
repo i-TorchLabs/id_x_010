@@ -367,6 +367,8 @@ export interface ModelInfo {
   provider: string;
   baseUrl: string;
   modelType: string;
+  isDefault?: boolean;
+  isSystem?: boolean;
 }
 
 // 模型列表响应类型
@@ -397,6 +399,8 @@ export const modelGraphqlApi = {
             provider
             baseUrl
             modelType
+            isDefault
+            isSystem
           }
         }
       }
@@ -412,6 +416,8 @@ export interface ModelSettings {
   baseUrl: string;
   apiKey: string;
   modelName: string;
+  modelNameList: string[];
+  quotaLimitMonthlyUsd: number | null;
   updatedAt: string | null;
 }
 
@@ -439,6 +445,8 @@ export interface ModelSettingsInput {
   baseUrl: string;
   apiKey: string;
   modelName: string;
+  modelNameList: string[];
+  quotaLimitMonthlyUsd?: number | null;
 }
 
 // 连通性测试输入类型
@@ -474,6 +482,8 @@ export const settingsGraphqlApi = {
             baseUrl
             apiKey
             modelName
+            modelNameList
+            quotaLimitMonthlyUsd
             updatedAt
           }
         }
@@ -499,6 +509,8 @@ export const settingsGraphqlApi = {
             baseUrl
             apiKey
             modelName
+            modelNameList
+            quotaLimitMonthlyUsd
             updatedAt
           }
         }
@@ -526,6 +538,157 @@ export const settingsGraphqlApi = {
       }
     `;
     return graphqlClient.request<TestConnectionPayload>({
+      query: mutation,
+      variables: { input },
+    });
+  },
+};
+
+// ── 用户自定义模型 Provider（多 Provider，每 Provider 多模型）──
+
+export interface UserModelPropertyItem {
+  id: number;
+  provider: string;
+  baseUrl: string;
+  apiKey: string;
+  modelNameList: string[];
+  sortOrder: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface MyModelProvidersPayload {
+  myModelProviders: {
+    success: boolean;
+    message: string;
+    providers: UserModelPropertyItem[];
+  };
+}
+
+export interface UserModelPropertySaveInput {
+  id?: number | null;
+  provider: string;
+  baseUrl: string;
+  apiKey: string;
+  modelNameList: string[];
+  sortOrder?: number;
+  testConnection?: boolean;
+}
+
+export interface SaveModelProviderPayload {
+  saveModelProvider: {
+    success: boolean;
+    message: string;
+    provider: UserModelPropertyItem | null;
+  };
+}
+
+export interface DeleteModelProviderPayload {
+  deleteModelProvider: {
+    success: boolean;
+    message: string;
+  };
+}
+
+export interface SaveDefaultModelInput {
+  modelName: string;
+  quotaLimitMonthlyUsd?: number | null;
+}
+
+export interface SaveDefaultModelPayload {
+  saveDefaultModel: {
+    success: boolean;
+    message: string;
+    modelName: string | null;
+    quotaLimitMonthlyUsd: number | null;
+  };
+}
+
+export const userModelProviderGraphqlApi = {
+  /** 获取当前用户的全部自定义模型 Provider */
+  myModelProviders: async (): Promise<MyModelProvidersPayload> => {
+    const query = `
+      query MyModelProviders {
+        myModelProviders {
+          success
+          message
+          providers {
+            id
+            provider
+            baseUrl
+            apiKey
+            modelNameList
+            sortOrder
+            createdAt
+            updatedAt
+          }
+        }
+      }
+    `;
+    return graphqlClient.request<MyModelProvidersPayload>({ query });
+  },
+
+  /** 新增/更新用户 Provider（含连通性检测） */
+  saveModelProvider: async (
+    input: UserModelPropertySaveInput,
+  ): Promise<SaveModelProviderPayload> => {
+    const mutation = `
+      mutation SaveModelProvider($input: UserModelPropertyInput!) {
+        saveModelProvider(input: $input) {
+          success
+          message
+          provider {
+            id
+            provider
+            baseUrl
+            apiKey
+            modelNameList
+            sortOrder
+            createdAt
+            updatedAt
+          }
+        }
+      }
+    `;
+    return graphqlClient.request<SaveModelProviderPayload>({
+      query: mutation,
+      variables: { input },
+    });
+  },
+
+  /** 删除用户 Provider */
+  deleteModelProvider: async (
+    providerId: number,
+  ): Promise<DeleteModelProviderPayload> => {
+    const mutation = `
+      mutation DeleteModelProvider($providerId: Int!) {
+        deleteModelProvider(providerId: $providerId) {
+          success
+          message
+        }
+      }
+    `;
+    return graphqlClient.request<DeleteModelProviderPayload>({
+      query: mutation,
+      variables: { providerId },
+    });
+  },
+
+  /** 设置默认模型名与月度配额 */
+  saveDefaultModel: async (
+    input: SaveDefaultModelInput,
+  ): Promise<SaveDefaultModelPayload> => {
+    const mutation = `
+      mutation SaveDefaultModel($input: SaveDefaultModelInput!) {
+        saveDefaultModel(input: $input) {
+          success
+          message
+          modelName
+          quotaLimitMonthlyUsd
+        }
+      }
+    `;
+    return graphqlClient.request<SaveDefaultModelPayload>({
       query: mutation,
       variables: { input },
     });
@@ -660,6 +823,245 @@ export const externalModelGraphqlApi = {
     return graphqlClient.request<SetActiveModelPayload>({
       query: mutation,
       variables: { modelId },
+    });
+  },
+};
+
+// ── 系统预置模型管理（system_model_settings 表，管理员 CRUD；用户只读）──
+
+export interface SystemModelItem {
+  id: number;
+  name: string;
+  provider: string;
+  baseUrl: string;
+  apiKey: string;
+  modelType: string;
+  isDefault: boolean;
+  enabled: boolean;
+  sortOrder: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface SystemModelListPayload {
+  systemModels: {
+    success: boolean;
+    message: string;
+    models: SystemModelItem[];
+  };
+}
+
+export interface SystemModelSaveInput {
+  id?: number | null;
+  name: string;
+  provider: string;
+  baseUrl: string;
+  apiKey: string;
+  modelType?: string;
+  isDefault?: boolean;
+  enabled?: boolean;
+  sortOrder?: number;
+  testConnection?: boolean;
+}
+
+export interface SystemModelMutationPayload {
+  saveSystemModel: {
+    success: boolean;
+    message: string;
+    model: SystemModelItem | null;
+  };
+}
+
+export interface DeleteSystemModelPayload {
+  deleteSystemModel: {
+    success: boolean;
+    message: string;
+  };
+}
+
+export const systemModelGraphqlApi = {
+  /** 列出系统预置模型（管理员） */
+  listSystemModels: async (): Promise<SystemModelListPayload> => {
+    const query = `
+      query SystemModels {
+        systemModels {
+          success
+          message
+          models {
+            id
+            name
+            provider
+            baseUrl
+            apiKey
+            modelType
+            isDefault
+            enabled
+            sortOrder
+            createdAt
+            updatedAt
+          }
+        }
+      }
+    `;
+    return graphqlClient.request<SystemModelListPayload>({ query });
+  },
+
+  /** 新增/更新系统预置模型（管理员，可选连通性检测） */
+  saveSystemModel: async (
+    input: SystemModelSaveInput,
+  ): Promise<SystemModelMutationPayload> => {
+    const mutation = `
+      mutation SaveSystemModel($input: SystemModelInput!) {
+        saveSystemModel(input: $input) {
+          success
+          message
+          model {
+            id
+            name
+            provider
+            baseUrl
+            apiKey
+            modelType
+            isDefault
+            enabled
+            sortOrder
+            createdAt
+            updatedAt
+          }
+        }
+      }
+    `;
+    return graphqlClient.request<SystemModelMutationPayload>({
+      query: mutation,
+      variables: { input },
+    });
+  },
+
+  /** 删除系统预置模型（管理员） */
+  deleteSystemModel: async (
+    modelId: number,
+  ): Promise<DeleteSystemModelPayload> => {
+    const mutation = `
+      mutation DeleteSystemModel($modelId: Int!) {
+        deleteSystemModel(modelId: $modelId) {
+          success
+          message
+        }
+      }
+    `;
+    return graphqlClient.request<DeleteSystemModelPayload>({
+      query: mutation,
+      variables: { modelId },
+    });
+  },
+};
+
+// ── 用户对系统预置模型的 API Key 映射（per-user key override）──
+
+export interface SystemModelUserMappingItem {
+  id: number;
+  userId: number;
+  systemModelId: number;
+  systemModelName?: string | null;
+  apiKey: string;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface SystemModelUserKeyListPayload {
+  mySystemModelKeys: {
+    success: boolean;
+    message: string;
+    mappings: SystemModelUserMappingItem[];
+  };
+}
+
+export interface SystemModelUserKeySaveInput {
+  systemModelId: number;
+  apiKey: string;
+  testConnection?: boolean;
+}
+
+export interface SystemModelUserKeyMutationPayload {
+  saveSystemModelUserKey: {
+    success: boolean;
+    message: string;
+    mapping: SystemModelUserMappingItem | null;
+  };
+}
+
+export interface DeleteSystemModelUserKeyPayload {
+  deleteSystemModelUserKey: {
+    success: boolean;
+    message: string;
+  };
+}
+
+export const systemModelUserKeyGraphqlApi = {
+  /** 获取当前用户对系统预置模型的 API Key 映射列表 */
+  mySystemModelKeys: async (): Promise<SystemModelUserKeyListPayload> => {
+    const query = `
+      query MySystemModelKeys {
+        mySystemModelKeys {
+          success
+          message
+          mappings {
+            id
+            userId
+            systemModelId
+            systemModelName
+            apiKey
+            createdAt
+            updatedAt
+          }
+        }
+      }
+    `;
+    return graphqlClient.request<SystemModelUserKeyListPayload>({ query });
+  },
+
+  /** 保存当前用户对系统预置模型的个人 API Key */
+  saveSystemModelUserKey: async (
+    input: SystemModelUserKeySaveInput,
+  ): Promise<SystemModelUserKeyMutationPayload> => {
+    const mutation = `
+      mutation SaveSystemModelUserKey($input: SystemModelUserKeyInput!) {
+        saveSystemModelUserKey(input: $input) {
+          success
+          message
+          mapping {
+            id
+            userId
+            systemModelId
+            systemModelName
+            apiKey
+            createdAt
+            updatedAt
+          }
+        }
+      }
+    `;
+    return graphqlClient.request<SystemModelUserKeyMutationPayload>({
+      query: mutation,
+      variables: { input },
+    });
+  },
+
+  /** 删除当前用户对系统预置模型的个人 API Key（回退到全局 key） */
+  deleteSystemModelUserKey: async (
+    systemModelId: number,
+  ): Promise<DeleteSystemModelUserKeyPayload> => {
+    const mutation = `
+      mutation DeleteSystemModelUserKey($systemModelId: Int!) {
+        deleteSystemModelUserKey(systemModelId: $systemModelId) {
+          success
+          message
+        }
+      }
+    `;
+    return graphqlClient.request<DeleteSystemModelUserKeyPayload>({
+      query: mutation,
+      variables: { systemModelId },
     });
   },
 };

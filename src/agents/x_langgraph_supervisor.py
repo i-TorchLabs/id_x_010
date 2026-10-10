@@ -181,10 +181,9 @@ class SemanticRouter:
             final_api_key = (
                 openai_api_key
                 or external_config.get("api_key")
-                or os.getenv("EXTERNAL_API_KEY")
             )
-            # embedding 端点优先取专用 EMBD 地址（external_provider 表 /
-            # EXTERNAL_EMBD_BASE_URL），缺省时回退 LLM 地址
+            # embedding 端点优先取专用 EMBD 地址（external_provider 表），
+            # 缺省时回退 LLM 地址
             final_base_url = (
                 openai_base_url
                 or external_config.get("embd_base_url")
@@ -368,12 +367,11 @@ class LLMRouter:
             or DEFAULT_EXTERNAL_MODEL
         )
         self.api_key = (
-            api_key or external_config.get("api_key") or os.getenv("EXTERNAL_API_KEY")
+            api_key or external_config.get("api_key")
         )
         self.base_url = (
             base_url
             or external_config.get("base_url")
-            or os.getenv("EXTERNAL_BASE_URL", "https://api.siliconflow.cn/v1")
         )
 
         self.llm = self._create_llm()

@@ -25,6 +25,7 @@ from x_models.id_x_010.src.models.x_models import (
     SqlEvalCase,
     SqlEvalResult,
     SqlExample,
+    SystemModelSettings,
     UsageLog,
     User,
     UserFeedback,
@@ -39,7 +40,12 @@ from x_models.id_x_010.src.schemas.x_schemas import (
     ChatResponseType,
     DatabaseInfoType,
     DatabaseListResponseType,
+    DeleteSystemModelResponseType,
     ForgotPasswordInput,
+    SystemModelUserKeyInput,
+    SystemModelUserKeyMutationResponseType,
+    SystemModelUserMappingListResponseType,
+    SystemModelUserMappingType,
     ForgotPasswordResponseType,
     HealthType,
     LoginInput,
@@ -54,6 +60,10 @@ from x_models.id_x_010.src.schemas.x_schemas import (
     OauthInput,
     RegisterInput,
     StreamChunkType,
+    SystemModelInput,
+    SystemModelListResponseType,
+    SystemModelMutationResponseType,
+    SystemModelType,
     TestConnectionInput,
     TestConnectionResponseType,
     UsageDailyType,
@@ -90,25 +100,41 @@ from x_models.id_x_010.src.schemas.x_schemas import (
     SqlEvalResultType,
     SqlEvalRunResponseType,
     UserFeedbackMutationResponseType,
+    SaveDefaultModelInput,
+    SaveDefaultModelResponseType,
+    UserModelPropertyInput,
+    UserModelPropertyListResponseType,
+    UserModelPropertyMutationResponseType,
+    UserModelPropertyType,
 )
 from x_models.id_x_010.src.views.x_views import (
     build_user_info,
     create_user_markdown_prompt,
     delete_external_model,
     delete_markdown_prompt,
+    delete_system_model,
+    delete_user_model_provider,
+    find_provider_for_model,
     get_active_markdown_prompt,
     get_agent_db_settings,
     get_conversation_history,
     get_external_model_by_id,
     get_external_model_by_name,
+    get_system_model_by_name,
     get_user_avatar,
+    get_user_model_provider,
     get_user_model_settings,
+    get_user_system_model_mapping,
     list_agent_db_settings,
     list_external_models,
+    list_system_models,
     list_user_markdown_prompts,
+    list_user_model_providers,
+    list_user_system_model_mappings,
     load_llm_provider_config,
     merge_context,
     rename_markdown_prompt,
+    resolve_model_endpoint,
     save_conversation_log,
     save_usage_log,
     select_markdown_prompt,
@@ -117,7 +143,11 @@ from x_models.id_x_010.src.views.x_views import (
     update_markdown_content,
     update_user_profile,
     upsert_external_model,
+    upsert_system_model,
+    upsert_user_model_provider,
     upsert_user_model_settings,
+    upsert_user_system_model_mapping,
+    delete_user_system_model_mapping,
     view_sso_login,
 )
 
@@ -169,49 +199,135 @@ class Query:
                 tasks=[],
             )
 
-    @strawberry.field(description="获取模型列表")
-    async def get_models(self) -> ModelListResponseType:
+    @strawberry.field(description="获取模型列表（系统预置模型 + 用户自定义模型合并展示）")
+    async def get_models(self, info: strawberry.Info) -> ModelListResponseType:
         try:
-            models = []
+            request = _get_info_request(info)
+            user = await _get_bearer_user(request)
 
-            async with get_session()() as session:
-                external_result = await session.execute(select(ExternalModel))
-                external_models = external_result.scalars().all()
+            # ── 1) 读取系统预置模型（enabled，按 sort_order 排序）──
+            sys_models = await list_system_models(enabled_only=True)
 
-                for model in external_models:
+            # ── 2) 读取用户设置（默认模型名 + 配额）──
+            user_settings: Optional[UserModelSettings] = None
+            user_providers: list = []
+            if user is not None:
+                user_settings = await get_user_model_settings(user.id)
+                user_providers = await list_user_model_providers(user.id)
+
+            user_default_name = ""
+            if user_settings is not None:
+                user_default_name = user_settings.model_name or ""
+
+            # ── 3) 确定全局默认模型名（用户级优先于系统级）──
+            sys_default_name = next(
+                (m.name for m in sys_models if m.is_default), None
+            )
+            effective_default = user_default_name or sys_default_name or ""
+
+            # ── 4) 合并去重（按 name 去重，系统模型在前，用户 Provider 模型在后）──
+            seen_names: set = set()
+            models: List[ModelType] = []
+            next_id = 1
+
+            for sm in sys_models:
+                if sm.name in seen_names:
+                    continue
+                seen_names.add(sm.name)
+                models.append(
+                    ModelType(
+                        id=next_id,
+                        name=sm.name,
+                        provider=sm.provider,
+                        base_url=sm.base_url,
+                        model_type=sm.model_type or "external",
+                        is_default=(sm.name == effective_default),
+                        is_system=True,
+                    )
+                )
+                next_id += 1
+
+            # 用户多 Provider 模型展开
+            for up in user_providers:
+                for name in (up.model_name_list or []):
+                    if name in seen_names:
+                        continue
+                    seen_names.add(name)
                     models.append(
                         ModelType(
-                            id=model.id,
-                            name=model.name,
-                            provider=model.provider,
-                            base_url=model.base_url,
+                            id=next_id,
+                            name=name,
+                            provider=up.provider,
+                            base_url=up.base_url,
                             model_type="external",
+                            is_default=(name == effective_default),
+                            is_system=False,
                         )
                     )
+                    next_id += 1
 
-                local_result = await session.execute(select(LocalModel))
-                local_models = local_result.scalars().all()
-
-                for model in local_models:
+            # 兼容旧版单 endpoint：无 Provider 行但有旧 user_model_settings
+            if not user_providers and user_settings is not None:
+                for name in (user_settings.model_name_list or []):
+                    if name in seen_names:
+                        continue
+                    seen_names.add(name)
                     models.append(
                         ModelType(
-                            id=model.id,
-                            name=model.name,
-                            provider=model.provider,
-                            base_url=model.base_url,
-                            model_type="local",
+                            id=next_id,
+                            name=name,
+                            provider=user_settings.provider,
+                            base_url=user_settings.base_url,
+                            model_type="external",
+                            is_default=(name == effective_default),
+                            is_system=False,
                         )
                     )
+                    next_id += 1
+
+            # ── 5) 未登录或均无数据时，回退到全局 external_models + local_models ──
+            if not models:
+                async with get_session()() as session:
+                    external_result = await session.execute(select(ExternalModel))
+                    external_models = external_result.scalars().all()
+
+                    for model in external_models:
+                        models.append(
+                            ModelType(
+                                id=next_id,
+                                name=model.name,
+                                provider=model.provider,
+                                base_url=model.base_url,
+                                model_type="external",
+                            )
+                        )
+                        next_id += 1
+
+                    local_result = await session.execute(select(LocalModel))
+                    local_models = local_result.scalars().all()
+
+                    for model in local_models:
+                        models.append(
+                            ModelType(
+                                id=next_id,
+                                name=model.name,
+                                provider=model.provider,
+                                base_url=model.base_url,
+                                model_type="local",
+                            )
+                        )
+                        next_id += 1
 
             if not models:
                 logger.warning(
-                    f"{get_request_id()}数据库模型表为空，尝试从环境变量回退获取模型列表"
+                    f"{get_request_id()}数据库模型表为空"
                 )
                 return Query._fallback_models()
 
             logger.info(
-                f"{get_request_id()}成功获取模型列表: {len(external_models)} 个外部模型, "
-                f"{len(local_models)} 个本地模型"
+                f"{get_request_id()}成功获取模型列表: "
+                f"system={len(sys_models)}, user={len(user_name_list)}, "
+                f"merged={len(models)}, default={effective_default}"
             )
 
             return ModelListResponseType(
@@ -222,52 +338,19 @@ class Query:
 
         except Exception as e:
             logger.error(f"{get_request_id()}获取模型列表失败: {e}", exc_info=True)
-            # 数据库查询失败时，尝试环境变量回退
+            # 数据库查询失败时返回空列表
             return Query._fallback_models(str(e))
 
     @staticmethod
     def _fallback_models(error_msg: str = "") -> ModelListResponseType:
-        """当数据库不可用时，从环境变量回退获取模型列表。"""
-        import os as _os
-
-        models = []
-        base_url = _os.getenv("EXTERNAL_BASE_URL", "")
-        if base_url:
-            models.append(
-                ModelType(
-                    id=-1,
-                    name="external-default",
-                    provider="external",
-                    base_url=base_url,
-                    model_type="external",
-                )
-            )
-
-        local_base_url = _os.getenv("LOCAL_MODEL_BASE_URL", "")
-        if local_base_url:
-            models.append(
-                ModelType(
-                    id=-2,
-                    name="local-default",
-                    provider="local",
-                    base_url=local_base_url,
-                    model_type="local",
-                )
-            )
-
-        source = (
-            f"（回退模式{f': {error_msg}' if error_msg else ''}）"
-            if error_msg or not any([_os.getenv("EXTERNAL_BASE_URL")])
-            else ""
-        )
-        message = f"回退获取 {len(models)} 个模型" if models else "无可用模型"
-        if source:
-            message += source
-
+        """当数据库不可用时返回空模型列表。"""
+        message = "无可用模型"
+        if error_msg:
+            message += f"（数据库不可用: {error_msg}）"
         return ModelListResponseType(
-            success=len(models) > 0,
+            success=False,
             message=message,
-            models=models,
+            models=[],
         )
 
     @strawberry.field(description="获取数据库列表")
@@ -275,33 +358,14 @@ class Query:
         try:
             db_items = []
 
-            # 优先从 agent_db_settings 表读取可用数据库
+            # 从 agent_db_settings 表读取可用数据库
             agent_db_rows = await list_agent_db_settings()
-            if agent_db_rows:
-                db_items = [
-                    DatabaseInfoType(
-                        key=row.db_name, label=row.db_label or row.db_name
-                    )
-                    for row in agent_db_rows
-                ]
-            else:
-                # 表无数据时回退环境变量 AGENT_DB_LIST（JSON 映射或逗号分隔）
-                # JSON 格式：{"显示名": "真实库名"}，前端渲染显示名（label），
-                # 后端按真实库名（key）匹配 agent_db_settings 并建连
-                db_list_str = os.getenv("AGENT_DB_LIST", "")
-                if db_list_str:
-                    try:
-                        db_dict = json.loads(db_list_str)
-                        db_items = [
-                            DatabaseInfoType(key=v, label=k) for k, v in db_dict.items()
-                        ]
-                    except (json.JSONDecodeError, AttributeError):
-                        # 兼容旧格式：逗号分隔的纯名称列表
-                        db_items = [
-                            DatabaseInfoType(key=name.strip(), label=name.strip())
-                            for name in db_list_str.split(",")
-                            if name.strip()
-                        ]
+            db_items = [
+                DatabaseInfoType(
+                    key=row.db_name, label=row.db_label or row.db_name
+                )
+                for row in agent_db_rows
+            ]
 
             logger.info(
                 f"{get_request_id()}获取数据库列表: {[(d.key, d.label) for d in db_items]}"
@@ -546,6 +610,53 @@ class Query:
                 success=False, message=f"获取失败: {str(e)}", models=[]
             )
 
+    @strawberry.field(description="获取系统预置模型列表（含 api_key，供管理员编辑；普通用户只读）")
+    async def system_models(self, info: strawberry.Info) -> SystemModelListResponseType:
+        from x_models.id_x_010.src.middleware.x_admin import (
+            AdminRequiredError,
+            require_admin,
+        )
+
+        try:
+            await require_admin(_get_info_request(info))
+            rows = await list_system_models(enabled_only=False)
+            models = [
+                SystemModelType(
+                    id=r.id,
+                    name=r.name,
+                    provider=r.provider,
+                    base_url=r.base_url,
+                    api_key=r.api_key,
+                    model_type=r.model_type or "external",
+                    is_default=bool(r.is_default),
+                    enabled=bool(r.enabled),
+                    sort_order=r.sort_order,
+                    created_at=(
+                        r.created_at.isoformat() if r.created_at else None
+                    ),
+                    updated_at=(
+                        r.updated_at.isoformat() if r.updated_at else None
+                    ),
+                )
+                for r in rows
+            ]
+            return SystemModelListResponseType(
+                success=True,
+                message=f"成功获取 {len(models)} 个系统预置模型",
+                models=models,
+            )
+        except AdminRequiredError as e:
+            return SystemModelListResponseType(
+                success=False, message=e.message, models=[]
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}获取系统模型列表失败: {e}", exc_info=True
+            )
+            return SystemModelListResponseType(
+                success=False, message=f"获取失败: {str(e)}", models=[]
+            )
+
 
 async def hash_password(password: str) -> str:
     """生成 bcrypt 哈希（TASK-019）。
@@ -668,6 +779,8 @@ def _settings_type(settings: UserModelSettings) -> ModelSettingsType:
         base_url=settings.base_url,
         api_key=settings.api_key,
         model_name=settings.model_name,
+        model_name_list=list(settings.model_name_list or []),
+        quota_limit_monthly_usd=settings.quota_limit_monthly_usd,
         updated_at=settings.updated_at.isoformat() if settings.updated_at else None,
     )
 
@@ -740,21 +853,26 @@ class Mutation:
             request = _get_info_request(info)
             user_settings = await _get_bearer_settings(request)
 
-            if user_settings is not None:
+            # 解析实际调用的模型端点：前端选中的 model_name 若命中系统预置模型，
+            # 则使用该系统模型的 api_key / base_url；否则回退到用户级设置。
+            # 若用户已设置 per-user 系统模型 key，则用其覆盖全局 key。
+            chat_api_key, chat_base_url, effective_model_name = (
+                await resolve_model_endpoint(
+                    input.model_name, user_settings, user.id if user else None
+                )
+            )
+
+            if chat_api_key is not None and chat_base_url is not None:
                 orchestrator = LangGraphSupervisor(
                     model_type=input.model_type,
-                    model_name=user_settings.model_name,
-                    api_key=user_settings.api_key,
-                    base_url=user_settings.base_url,
+                    model_name=effective_model_name,
+                    api_key=chat_api_key,
+                    base_url=chat_base_url,
                 )
-                chat_api_key = user_settings.api_key
-                chat_base_url = user_settings.base_url
-                chat_model_name = user_settings.model_name
+                chat_model_name = effective_model_name
             else:
                 orchestrator = get_orchestrator()
-                chat_api_key = None
-                chat_base_url = None
-                chat_model_name = input.model_name
+                chat_model_name = effective_model_name
 
             # 自动注入用户当前选中的 Markdown 提示词（每轮对话均携带）
             active_prompt_content: Optional[str] = None
@@ -1056,16 +1174,24 @@ class Mutation:
             # 按 LLM_PROVIDER 加载提供商表配置（external_provider / local_provider）
             await load_llm_provider_config()
 
-            # 用户已保存自定义模型设置时，以其覆盖默认链路配置
-            user_settings = await _get_bearer_settings(_get_info_request(info))
-            if user_settings is not None:
-                model_name = user_settings.model_name
+            # 解析模型端点：前端传入的 model_name 若命中系统预置模型，
+            # 使用该系统模型的端点；否则回退到用户级设置
+            _req = _get_info_request(info)
+            _app_user = await _get_bearer_user(_req)
+            user_settings = await _get_bearer_settings(_req)
+            agent_api_key, agent_base_url, resolved_model_name = (
+                await resolve_model_endpoint(
+                    model_name, user_settings, _app_user.id if _app_user else None
+                )
+            )
+            if resolved_model_name:
+                model_name = resolved_model_name
 
             sql_agent = SQLAgent(
                 model_type=model_type,
                 model_name=model_name,
-                api_key=user_settings.api_key if user_settings else None,
-                base_url=user_settings.base_url if user_settings else None,
+                api_key=agent_api_key,
+                base_url=agent_base_url,
                 db_name=db_name,
             )
 
@@ -1200,12 +1326,14 @@ class Mutation:
 
             from x_models.id_x_010.src.utils.x_indexer import index_database
 
+            reindex_api_key, reindex_base_url, reindex_model_name = (
+                await resolve_model_endpoint(None, user_settings, user.id)
+            )
+
             sql_agent = SQLAgent(
-                model_name=(
-                    user_settings.model_name if user_settings else None
-                ),
-                api_key=user_settings.api_key if user_settings else None,
-                base_url=user_settings.base_url if user_settings else None,
+                model_name=reindex_model_name,
+                api_key=reindex_api_key,
+                base_url=reindex_base_url,
                 db_name=db_name,
             )
             await sql_agent.db.connect()
@@ -2139,18 +2267,32 @@ class Mutation:
             base_url = input.base_url.strip().rstrip("/")
             api_key = input.api_key.strip()
             model_name = input.model_name.strip()
+            model_name_list = [n.strip() for n in (input.model_name_list or []) if n and n.strip()]
+            quota_limit = input.quota_limit_monthly_usd
 
             if not all([provider, base_url, api_key, model_name]):
                 return ModelSettingsResponseType(
                     success=False,
-                    message="模型厂商、访问地址、API-KEY、模型名称均为必填项",
+                    message="模型厂商、访问地址、API-KEY、默认模型名称均为必填项",
+                    settings=None,
+                )
+
+            # 默认模型必须在列表内；列表为空时以默认模型作为唯一可选项
+            if model_name not in model_name_list:
+                model_name_list = [model_name, *model_name_list]
+
+            # 额度上限若传入须为非负数
+            if quota_limit is not None and quota_limit < 0:
+                return ModelSettingsResponseType(
+                    success=False,
+                    message="月度额度上限须为非负数（留空表示不限额）",
                     settings=None,
                 )
 
             logger.info(
                 f"{get_request_id()}收到模型设置保存请求，开始连通性检测: "
                 f"user_id={user.id}, provider={provider}, "
-                f"model={model_name}, base_url={base_url}"
+                f"default={model_name}, list={model_name_list}, base_url={base_url}"
             )
 
             ok, message = await test_model_connectivity(
@@ -2169,11 +2311,12 @@ class Mutation:
                 base_url=base_url,
                 api_key=api_key,
                 model_name=model_name,
+                model_name_list=model_name_list,
+                quota_limit_monthly_usd=quota_limit,
             )
 
-            # 同步登记到 external_models 表，使该模型出现在 get_models()
-            # 返回的模型列表中（消息输入框的模型选择器可选用）。
-            # 失败不影响用户设置已保存的事实，仅记日志。
+            # 同步登记默认模型到 external_models 表，使未配置用户级模型设置时
+            # 全局列表仍可见该模型。失败不影响用户设置已保存的事实，仅记日志。
             try:
                 await upsert_external_model(
                     name=model_name,
@@ -2233,6 +2376,214 @@ class Mutation:
             logger.error(f"{get_request_id()}连通性测试失败: {e}", exc_info=True)
             return TestConnectionResponseType(
                 success=False, message=f"连通性测试失败: {str(e)}"
+            )
+
+    # ------------------------------------------------------------------
+    # 用户自定义模型 Provider（多 Provider，每 Provider 多模型）
+    # ------------------------------------------------------------------
+
+    @strawberry.field(description="获取当前用户的全部自定义模型 Provider（多 Provider 多模型）")
+    async def my_model_providers(
+        self, info: strawberry.Info
+    ) -> UserModelPropertyListResponseType:
+        try:
+            request = _get_info_request(info)
+            user = await _get_bearer_user(request)
+            if user is None:
+                return UserModelPropertyListResponseType(
+                    success=False, message="未登录或登录已过期", providers=[]
+                )
+
+            providers = await list_user_model_providers(user.id)
+            return UserModelPropertyListResponseType(
+                success=True,
+                message=f"查询到 {len(providers)} 个 Provider",
+                providers=[
+                    UserModelPropertyType(
+                        id=p.id,
+                        provider=p.provider,
+                        base_url=p.base_url,
+                        api_key=p.api_key,
+                        model_name_list=list(p.model_name_list or []),
+                        sort_order=p.sort_order,
+                        created_at=(
+                            p.created_at.isoformat() if p.created_at else None
+                        ),
+                        updated_at=(
+                            p.updated_at.isoformat() if p.updated_at else None
+                        ),
+                    )
+                    for p in providers
+                ],
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}获取用户 Provider 列表失败: {e}", exc_info=True
+            )
+            return UserModelPropertyListResponseType(
+                success=False, message=f"失败: {str(e)}", providers=[]
+            )
+
+    @strawberry.mutation(description="新增/更新用户自定义模型 Provider（含连通性检测）")
+    async def save_model_provider(
+        self, info: strawberry.Info, input: UserModelPropertyInput
+    ) -> UserModelPropertyMutationResponseType:
+        try:
+            request = _get_info_request(info)
+            user = await _get_bearer_user(request)
+            if user is None:
+                return UserModelPropertyMutationResponseType(
+                    success=False, message="未登录或登录已过期", provider=None
+                )
+
+            provider_name = input.provider.strip()
+            base_url = input.base_url.strip().rstrip("/")
+            api_key = input.api_key.strip()
+            model_list = [n.strip() for n in (input.model_name_list or []) if n and n.strip()]
+
+            if not all([provider_name, base_url, api_key]):
+                return UserModelPropertyMutationResponseType(
+                    success=False,
+                    message="模型厂商、访问地址、API-KEY 均为必填项",
+                    provider=None,
+                )
+            if not model_list:
+                return UserModelPropertyMutationResponseType(
+                    success=False,
+                    message="至少添加一个模型名称",
+                    provider=None,
+                )
+
+            # 连通性检测：用第一个模型名测试
+            if input.test_connection:
+                ok, msg = await test_model_connectivity(
+                    base_url=base_url, api_key=api_key, model_name=model_list[0]
+                )
+                if not ok:
+                    return UserModelPropertyMutationResponseType(
+                        success=False,
+                        message=f"连通性检测未通过: {msg}",
+                        provider=None,
+                    )
+
+            saved = await upsert_user_model_provider(
+                user_id=user.id,
+                provider=provider_name,
+                base_url=base_url,
+                api_key=api_key,
+                model_name_list=model_list,
+                sort_order=input.sort_order,
+                provider_id=input.id,
+            )
+            if saved is None:
+                return UserModelPropertyMutationResponseType(
+                    success=False, message="保存失败", provider=None
+                )
+
+            return UserModelPropertyMutationResponseType(
+                success=True,
+                message="Provider 已保存",
+                provider=UserModelPropertyType(
+                    id=saved.id,
+                    provider=saved.provider,
+                    base_url=saved.base_url,
+                    api_key=saved.api_key,
+                    model_name_list=list(saved.model_name_list or []),
+                    sort_order=saved.sort_order,
+                    created_at=(
+                        saved.created_at.isoformat() if saved.created_at else None
+                    ),
+                    updated_at=(
+                        saved.updated_at.isoformat() if saved.updated_at else None
+                    ),
+                ),
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}保存用户 Provider 失败: {e}", exc_info=True
+            )
+            return UserModelPropertyMutationResponseType(
+                success=False, message=f"失败: {str(e)}", provider=None
+            )
+
+    @strawberry.mutation(description="删除用户自定义模型 Provider")
+    async def delete_model_provider(
+        self, info: strawberry.Info, provider_id: int
+    ) -> UserModelPropertyMutationResponseType:
+        try:
+            request = _get_info_request(info)
+            user = await _get_bearer_user(request)
+            if user is None:
+                return UserModelPropertyMutationResponseType(
+                    success=False, message="未登录或登录已过期", provider=None
+                )
+
+            ok = await delete_user_model_provider(user.id, provider_id)
+            if not ok:
+                return UserModelPropertyMutationResponseType(
+                    success=False, message="Provider 不存在或已被删除", provider=None
+                )
+            return UserModelPropertyMutationResponseType(
+                success=True, message="Provider 已删除", provider=None
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}删除用户 Provider 失败: {e}", exc_info=True
+            )
+            return UserModelPropertyMutationResponseType(
+                success=False, message=f"失败: {str(e)}", provider=None
+            )
+
+    @strawberry.mutation(description="设置默认模型名与月度配额（跨 Provider 选择默认模型）")
+    async def save_default_model(
+        self, info: strawberry.Info, input: SaveDefaultModelInput
+    ) -> SaveDefaultModelResponseType:
+        try:
+            request = _get_info_request(info)
+            user = await _get_bearer_user(request)
+            if user is None:
+                return SaveDefaultModelResponseType(
+                    success=False, message="未登录或登录已过期",
+                )
+
+            model_name = input.model_name.strip()
+            if not model_name:
+                return SaveDefaultModelResponseType(
+                    success=False, message="默认模型名不能为空",
+                )
+
+            quota = input.quota_limit_monthly_usd
+            if quota is not None and quota < 0:
+                return SaveDefaultModelResponseType(
+                    success=False, message="月度额度须为非负数",
+                )
+
+            settings = await upsert_user_model_settings(
+                user_id=user.id,
+                provider="",
+                base_url="",
+                api_key="",
+                model_name=model_name,
+                model_name_list=[],
+                quota_limit_monthly_usd=quota,
+            )
+            if settings is None:
+                return SaveDefaultModelResponseType(
+                    success=False, message="保存失败",
+                )
+
+            return SaveDefaultModelResponseType(
+                success=True,
+                message="默认模型已设置",
+                model_name=settings.model_name,
+                quota_limit_monthly_usd=settings.quota_limit_monthly_usd,
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}保存默认模型失败: {e}", exc_info=True
+            )
+            return SaveDefaultModelResponseType(
+                success=False, message=f"失败: {str(e)}",
             )
 
     @strawberry.mutation(description="新增/更新外部模型到 external_models 表（支持多模型 + Provider 自定义）")
@@ -2351,12 +2702,22 @@ class Mutation:
                     success=False, message="模型不存在"
                 )
 
+            # 沿用用户既有的模型列表与额度配置，仅切换默认模型；
+            # 若默认模型不在列表内则自动追加。无既有设置则新建单元素列表。
+            existing = await get_user_model_settings(user.id)
+            name_list = list(existing.model_name_list or []) if existing else []
+            if model.name not in name_list:
+                name_list = [model.name, *name_list]
+            quota = existing.quota_limit_monthly_usd if existing else None
+
             settings = await upsert_user_model_settings(
                 user_id=user.id,
                 provider=model.provider,
                 base_url=model.base_url,
                 api_key=model.api_key,
                 model_name=model.name,
+                model_name_list=name_list,
+                quota_limit_monthly_usd=quota,
             )
             if settings is None:
                 return SetActiveModelResponseType(
@@ -2364,18 +2725,290 @@ class Mutation:
                 )
 
             logger.info(
-                f"{get_request_id()}活跃模型已切换: user_id={user.id}, "
+                f"{get_request_id()}默认模型已切换: user_id={user.id}, "
                 f"model={model.name}, id={model.id}"
             )
             return SetActiveModelResponseType(
                 success=True,
-                message=f"活跃模型已切换为 {model.name}",
+                message=f"默认模型已切换为 {model.name}",
             )
         except Exception as e:
             logger.error(f"{get_request_id()}设置活跃模型失败: {e}", exc_info=True)
             return SetActiveModelResponseType(
                 success=False, message=f"设置失败: {str(e)}"
             )
+
+    # ------------------------------------------------------------------
+    # 系统预置模型管理（system_model_settings 表，管理员 CRUD）
+    # ------------------------------------------------------------------
+
+    @strawberry.mutation(description="管理员：新增/更新系统预置模型（保存前可选连通性检测）")
+    async def save_system_model(
+        self, info: strawberry.Info, input: SystemModelInput
+    ) -> SystemModelMutationResponseType:
+        from x_models.id_x_010.src.middleware.x_admin import (
+            AdminRequiredError,
+            require_admin,
+        )
+
+        try:
+            await require_admin(_get_info_request(info))
+        except AdminRequiredError as e:
+            return SystemModelMutationResponseType(
+                success=False, message=e.message, model=None
+            )
+
+        provider = input.provider.strip()
+        base_url = input.base_url.strip().rstrip("/")
+        api_key = input.api_key.strip()
+        name = input.name.strip()
+        model_type = (input.model_type or "external").strip()
+
+        if not all([name, provider, base_url, api_key]):
+            return SystemModelMutationResponseType(
+                success=False,
+                message="模型名称、厂商、访问地址、API-KEY 均为必填项",
+                model=None,
+            )
+
+        if input.test_connection:
+            logger.info(
+                f"{get_request_id()}保存系统模型前连通性检测: "
+                f"provider={provider}, model={name}"
+            )
+            ok, msg = await test_model_connectivity(
+                base_url=base_url, api_key=api_key, model_name=name
+            )
+            if not ok:
+                return SystemModelMutationResponseType(
+                    success=False,
+                    message=f"连通性检测未通过，模型未保存: {msg}",
+                    model=None,
+                )
+
+        saved = await upsert_system_model(
+            name=name,
+            provider=provider,
+            base_url=base_url,
+            api_key=api_key,
+            model_type=model_type,
+            is_default=input.is_default,
+            enabled=input.enabled,
+            sort_order=input.sort_order,
+            model_id=input.id,
+        )
+        if saved is None:
+            return SystemModelMutationResponseType(
+                success=False, message="保存到数据库失败", model=None
+            )
+
+        result_model = SystemModelType(
+            id=saved.id,
+            name=saved.name,
+            provider=saved.provider,
+            base_url=saved.base_url,
+            api_key=saved.api_key,
+            model_type=saved.model_type or "external",
+            is_default=bool(saved.is_default),
+            enabled=bool(saved.enabled),
+            sort_order=saved.sort_order,
+            created_at=saved.created_at.isoformat() if saved.created_at else None,
+            updated_at=saved.updated_at.isoformat() if saved.updated_at else None,
+        )
+        msg = "连通性检测通过，系统模型已保存" if input.test_connection else "系统模型已保存"
+        return SystemModelMutationResponseType(
+            success=True, message=msg, model=result_model
+        )
+
+    @strawberry.mutation(description="管理员：删除系统预置模型")
+    async def delete_system_model(
+        self, info: strawberry.Info, model_id: int
+    ) -> DeleteSystemModelResponseType:
+        from x_models.id_x_010.src.middleware.x_admin import (
+            AdminRequiredError,
+            require_admin,
+        )
+
+        try:
+            await require_admin(_get_info_request(info))
+        except AdminRequiredError as e:
+            return DeleteSystemModelResponseType(success=False, message=e.message)
+
+        try:
+            ok = await delete_system_model(model_id)
+            if not ok:
+                return DeleteSystemModelResponseType(
+                    success=False, message="模型不存在或已被删除"
+                )
+            return DeleteSystemModelResponseType(
+                success=True, message="系统模型已删除"
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}删除系统模型失败: {e}", exc_info=True
+            )
+            return DeleteSystemModelResponseType(
+                success=False, message=f"删除失败: {str(e)}"
+            )
+
+    # ------------------------------------------------------------------
+    # 用户对系统预置模型的 API Key 映射（system_model_user_mappings 表）
+    # 用户可保存自己的 key 覆盖系统模型的全局 key，便于按用户统计用量
+    # ------------------------------------------------------------------
+
+    @strawberry.field(description="获取当前用户对系统预置模型的 API Key 映射列表")
+    async def my_system_model_keys(
+        self, info: strawberry.Info
+    ) -> SystemModelUserMappingListResponseType:
+        try:
+            request = _get_info_request(info)
+            user = await _get_bearer_user(request)
+            if user is None:
+                return SystemModelUserMappingListResponseType(
+                    success=False, message="未登录或登录已过期", mappings=[]
+                )
+
+            mappings = await list_user_system_model_mappings(user.id)
+            # JOIN 回填 system_model_name
+            sys_models = {m.id: m for m in await list_system_models(enabled_only=False)}
+            result = []
+            for mp in mappings:
+                sm = sys_models.get(mp.system_model_id)
+                result.append(
+                    SystemModelUserMappingType(
+                        id=mp.id,
+                        user_id=mp.user_id,
+                        system_model_id=mp.system_model_id,
+                        system_model_name=sm.name if sm else None,
+                        api_key=mp.api_key,
+                        created_at=(
+                            mp.created_at.isoformat() if mp.created_at else None
+                        ),
+                        updated_at=(
+                            mp.updated_at.isoformat() if mp.updated_at else None
+                        ),
+                    )
+                )
+            return SystemModelUserMappingListResponseType(
+                success=True,
+                message=f"查询到 {len(result)} 条映射",
+                mappings=result,
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}获取用户系统模型映射失败: {e}", exc_info=True
+            )
+            return SystemModelUserMappingListResponseType(
+                success=False, message=f"失败: {str(e)}", mappings=[]
+            )
+
+    @strawberry.mutation(description="保存当前用户对系统预置模型的个人 API Key")
+    async def save_system_model_user_key(
+        self, info: strawberry.Info, input: SystemModelUserKeyInput
+    ) -> SystemModelUserKeyMutationResponseType:
+        try:
+            request = _get_info_request(info)
+            user = await _get_bearer_user(request)
+            if user is None:
+                return SystemModelUserKeyMutationResponseType(
+                    success=False, message="未登录或登录已过期", mapping=None
+                )
+
+            api_key = input.api_key.strip()
+            if not api_key:
+                return SystemModelUserKeyMutationResponseType(
+                    success=False, message="API Key 不能为空", mapping=None
+                )
+
+            # 校验 system_model_id 存在且 enabled
+            sys_models = await list_system_models(enabled_only=True)
+            sm = next((m for m in sys_models if m.id == input.system_model_id), None)
+            if sm is None:
+                return SystemModelUserKeyMutationResponseType(
+                    success=False,
+                    message=f"系统预置模型不存在或未启用: id={input.system_model_id}",
+                    mapping=None,
+                )
+
+            # 可选连通性检测
+            if input.test_connection:
+                ok, msg = await test_model_connectivity(
+                    base_url=sm.base_url, api_key=api_key, model_name=sm.name
+                )
+                if not ok:
+                    return SystemModelUserKeyMutationResponseType(
+                        success=False,
+                        message=f"连通性检测未通过: {msg}",
+                        mapping=None,
+                    )
+
+            mapping = await upsert_user_system_model_mapping(
+                user_id=user.id,
+                system_model_id=input.system_model_id,
+                api_key=api_key,
+            )
+            if mapping is None:
+                return SystemModelUserKeyMutationResponseType(
+                    success=False, message="保存失败", mapping=None
+                )
+
+            return SystemModelUserKeyMutationResponseType(
+                success=True,
+                message="用户的系统模型 API Key 已保存",
+                mapping=SystemModelUserMappingType(
+                    id=mapping.id,
+                    user_id=mapping.user_id,
+                    system_model_id=mapping.system_model_id,
+                    system_model_name=sm.name,
+                    api_key=mapping.api_key,
+                    created_at=(
+                        mapping.created_at.isoformat() if mapping.created_at else None
+                    ),
+                    updated_at=(
+                        mapping.updated_at.isoformat() if mapping.updated_at else None
+                    ),
+                ),
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}保存用户系统模型映射失败: {e}", exc_info=True
+            )
+            return SystemModelUserKeyMutationResponseType(
+                success=False, message=f"失败: {str(e)}", mapping=None
+            )
+
+    @strawberry.mutation(description="删除当前用户对系统预置模型的个人 API Key（回退到全局 key）")
+    async def delete_system_model_user_key(
+        self, info: strawberry.Info, system_model_id: int
+    ) -> SystemModelUserKeyMutationResponseType:
+        try:
+            request = _get_info_request(info)
+            user = await _get_bearer_user(request)
+            if user is None:
+                return SystemModelUserKeyMutationResponseType(
+                    success=False, message="未登录或登录已过期", mapping=None
+                )
+
+            ok = await delete_user_system_model_mapping(user.id, system_model_id)
+            if not ok:
+                return SystemModelUserKeyMutationResponseType(
+                    success=False,
+                    message="映射不存在或已被删除",
+                    mapping=None,
+                )
+            return SystemModelUserKeyMutationResponseType(
+                success=True,
+                message="已删除个人 Key，将回退到系统模型的全局 Key",
+                mapping=None,
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}删除用户系统模型映射失败: {e}", exc_info=True
+            )
+            return SystemModelUserKeyMutationResponseType(
+                success=False, message=f"失败: {str(e)}", mapping=None
+            )
+
     async def logout(self) -> AuthResponseType:
         try:
             return AuthResponseType(
@@ -2634,16 +3267,37 @@ class Subscription:
             # 按 LLM_PROVIDER 加载提供商表配置（external_provider / local_provider）
             await load_llm_provider_config()
 
-            # 模型解析优先级：前端选中的 model_name → external_models 表查
-            # base_url/api_key → 据此建连。无需 user_model_settings 中转，
-            # 用户在消息输入框选哪个模型就用哪个。
+            # 模型解析优先级（通过 resolve_model_endpoint 统一处理）：
+            #   1. 前端选中的 model_name → system_model_settings 表查 base_url/api_key
+            #   2. 用户级模型设置（model_name_list 共享同一 base_url/api_key）
+            #   3. 全局 provider 配置（external_provider 表）
+            #   回退到 external_models 表（兼容旧数据）
             request = _get_info_request(info)
-            ext_model = await get_external_model_by_name(model_name or "")
-            if ext_model is not None:
-                override_api_key = ext_model.api_key
-                override_base_url = ext_model.base_url
+            user_settings = await _get_bearer_settings(request)
+
+            override_api_key, override_base_url, resolved_model = (
+                await resolve_model_endpoint(
+                    model_name, user_settings,
+                    rl_user.id if rl_user else None,
+                )
+            )
+            if resolved_model:
+                model_name = resolved_model
+
+            if override_api_key is None and model_name:
+                # 兼容旧数据：未命中系统模型表时查 external_models
+                ext_model = await get_external_model_by_name(model_name)
+                if ext_model is not None:
+                    override_api_key = ext_model.api_key
+                    override_base_url = ext_model.base_url
+                    logger.info(
+                        f"{get_request_id()}使用 external_models 配置: "
+                        f"model={model_name}, base_url={override_base_url}"
+                    )
+
+            if override_api_key is not None and override_base_url is not None:
                 logger.info(
-                    f"{get_request_id()}使用 external_models 配置: "
+                    f"{get_request_id()}模型端点已解析: "
                     f"model={model_name}, base_url={override_base_url}"
                 )
                 orchestrator = LangGraphSupervisor(
@@ -2653,10 +3307,8 @@ class Subscription:
                     base_url=override_base_url,
                 )
             else:
-                # 回退：未在前端选择模型或名称不在 external_models 表中，
-                # 使用全局 provider 配置（external_provider 表 / 环境变量）
-                override_api_key = None
-                override_base_url = None
+                # 回退：未在前端选择模型且无用户设置，
+                # 使用全局 provider 配置（external_provider 表）
                 orchestrator = get_orchestrator()
 
             # 自动注入用户当前选中的 Markdown 提示词（每轮对话均携带）
@@ -3457,12 +4109,14 @@ def register_routers(route_prefix: str) -> Router:
         # 按 LLM_PROVIDER 加载提供商表配置（external_provider / local_provider）
         await load_llm_provider_config()
 
-        # 用户已保存自定义模型设置时，以其覆盖默认链路配置
+        # 用户已保存自定义模型设置时，以其覆盖默认链路配置；
+        # 前端传入的 model_name 优先，仅在其为空时回退到用户默认模型
         user_settings = await _get_bearer_settings(request)
-        if user_settings is not None:
+        if user_settings is not None and not model_name:
             model_name = user_settings.model_name
 
         # 模型解析：前端选中的 model_name → external_models 表查 base_url/api_key
+        # 用户级模型（不在 external_models 表内）回退到 user_settings 的共享凭据
         ext_model = await get_external_model_by_name(model_name or "")
         if ext_model is not None:
             override_api_key = ext_model.api_key
@@ -3472,7 +4126,7 @@ def register_routers(route_prefix: str) -> Router:
             override_base_url = user_settings.base_url if user_settings else None
 
         # db_name 为空时从 agent_db_settings 表取首行作为默认目标库，
-        # 避免 DatabaseConnection 回退到环境变量连错库
+        # 避免 DatabaseConnection 因无配置而连接失败
         effective_db_name = db_name
         if not effective_db_name:
             default_db = await get_agent_db_settings()
