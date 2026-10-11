@@ -127,6 +127,11 @@ class ErrorType:
 class LoginInput:
     email: str = strawberry.field(description="邮箱")
     password: str = strawberry.field(description="密码")
+    role: Optional[str] = strawberry.field(
+        default=None,
+        description="登录场景角色校验：传入 'admin' 则仅允许管理员登录，"
+        "'user' 仅允许普通用户登录；留空表示不校验（兼容旧客户端）",
+    )
 
 
 @strawberry.input
@@ -152,6 +157,9 @@ class UserInfoType:
     )
     avatar_url: Optional[str] = strawberry.field(
         default=None, description="头像 URL（已设置头像时为 /b/id_x_010/avatar/<user_id>?v=<ts>）"
+    )
+    role: Optional[str] = strawberry.field(
+        default=None, description="用户角色：admin=管理员 / user=普通用户"
     )
     created_at: Optional[str] = strawberry.field(default=None, description="创建时间")
 
@@ -596,7 +604,8 @@ class AdminUserType:
     email: str = strawberry.field(description="邮箱")
     display_name: Optional[str] = strawberry.field(default=None, description="显示名称")
     is_active: bool = strawberry.field(description="是否激活")
-    is_admin: bool = strawberry.field(description="是否管理员")
+    is_admin: bool = strawberry.field(description="是否管理员（与 role 同步）")
+    role: str = strawberry.field(description="用户角色：admin=管理员 / user=普通用户")
     created_at: Optional[str] = strawberry.field(default=None, description="创建时间 ISO")
     updated_at: Optional[str] = strawberry.field(default=None, description="更新时间 ISO")
 
@@ -877,4 +886,33 @@ class SystemModelUserKeyMutationResponseType:
     message: str = strawberry.field(description="消息")
     mapping: Optional[SystemModelUserMappingType] = strawberry.field(
         default=None, description="保存后的映射记录"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 后台管理：用户配额 + 全局用量统计
+# ---------------------------------------------------------------------------
+
+
+@strawberry.type
+class AdminUserUsageType:
+    """单个用户的系统模型用量汇总。"""
+    user_id: int = strawberry.field(description="用户 ID")
+    email: str = strawberry.field(description="用户邮箱")
+    display_name: Optional[str] = strawberry.field(default=None, description="显示名")
+    system_model_quota_usd: Optional[float] = strawberry.field(
+        default=None, description="系统模型月度配额（USD）；NULL 不限额"
+    )
+    month_cost_usd: float = strawberry.field(description="本月系统模型花费（USD）")
+    month_requests: int = strawberry.field(description="本月系统模型请求数")
+    total_cost_usd: float = strawberry.field(description="全部系统模型花费（USD）")
+
+
+@strawberry.type
+class AdminUsageStatsResponseType:
+    """管理员用量统计返回：按用户维度聚合。"""
+    success: bool = strawberry.field(description="是否成功")
+    message: str = strawberry.field(description="消息")
+    users: List[AdminUserUsageType] = strawberry.field(
+        default_factory=list, description="用户用量列表"
     )

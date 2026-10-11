@@ -22,14 +22,14 @@ export default function OAuthCallbackPage() {
     const state = params.get("state");
 
     if (!code) {
-      router.replace("/f/login?error=sso_missing_code");
+      router.replace("/f/user-login?error=sso_missing_code");
       return;
     }
 
     // CSRF 校验：state 必须与授权请求时生成并暂存的一致
     const savedState = sessionStorage.getItem(OAUTH_STATE_KEY);
     if (!savedState || savedState !== state) {
-      router.replace("/f/login?error=sso_state_mismatch");
+      router.replace("/f/user-login?error=sso_state_mismatch");
       return;
     }
     sessionStorage.removeItem(OAUTH_STATE_KEY);
@@ -40,7 +40,7 @@ export default function OAuthCallbackPage() {
         const resp = result.ssoLogin;
         if (!resp.success || !resp.token || !resp.user) {
           router.replace(
-            `/f/login?error=${encodeURIComponent(resp.message || "SSO sign-in failed")}`,
+            `/f/user-login?error=${encodeURIComponent(resp.message || "SSO sign-in failed")}`,
           );
           return;
         }
@@ -48,12 +48,14 @@ export default function OAuthCallbackPage() {
           localStorage.setItem("token", resp.token);
           localStorage.setItem("user", JSON.stringify(resp.user));
         }
-        router.push("/f/home");
+        // SSO 默认建立普通用户：管理员若经 SSO 登录则按 role 跳转
+        const role: string = resp.user.role ?? "user";
+        router.push(role === "admin" ? "/admin" : "/f/home");
       })
       .catch((error) => {
         console.error("SSO login failed:", error);
         router.replace(
-          `/f/login?error=${encodeURIComponent(error.message || "SSO sign-in failed")}`,
+          `/f/user-login?error=${encodeURIComponent(error.message || "SSO sign-in failed")}`,
         );
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps

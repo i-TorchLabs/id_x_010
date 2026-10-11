@@ -74,6 +74,7 @@ async def save_usage_log(
     model_name: str,
     intent: str,
     usage: Optional[dict],
+    is_system_model: bool = False,
 ) -> None:
     """落库一行用量记录（token 消耗 + 估算花费）。best-effort，绝不抛错。
 
@@ -85,6 +86,8 @@ async def save_usage_log(
         intent: 意图（general / sql / code）
         usage: LangChain ``usage_metadata`` 字典，含 input_tokens / output_tokens /
             total_tokens；为 None 或缺字段时按 0 处理
+        is_system_model: 是否为系统预置模型调用。True 时计入配额与统计；
+            False（用户自定义模型）不计入配额与统计。
     """
     try:
         input_tokens = int((usage or {}).get("input_tokens", 0) or 0)
@@ -97,12 +100,17 @@ async def save_usage_log(
         else:
             cost = compute_cost(model_name, input_tokens, output_tokens)
 
+        # 用户自定义模型不计费，不统计
+        if not is_system_model:
+            cost = 0.0
+
         async with get_session()() as session:
             log = UsageLog(
                 user_id=user_id,
                 conversation_id=conversation_id or None,
                 model_name=model_name or None,
                 model_type=model_type or None,
+                is_system_model=is_system_model,
                 intent=intent or None,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
@@ -113,8 +121,8 @@ async def save_usage_log(
             await session.commit()
             logger.info(
                 f"{get_request_id()}用量日志已保存: user_id={user_id}, "
-                f"model={model_name}, in={input_tokens}, out={output_tokens}, "
-                f"cost=${cost:.6f}"
+                f"model={model_name}, system={is_system_model}, "
+                f"in={input_tokens}, out={output_tokens}, cost=${cost:.6f}"
             )
     except Exception as e:
         logger.error(f"{get_request_id()}保存用量日志失败: {e}", exc_info=True)
@@ -149,6 +157,9 @@ def build_user_info(user: User) -> "UserInfoType":
         phone=user.phone,
         display_name=user.display_name,
         avatar_url=avatar_url,
+        role=getattr(user, "role", None) or (
+            "admin" if getattr(user, "is_admin", False) else "user"
+        ),
         created_at=user.created_at.isoformat() if user.created_at else None,
     )
 
@@ -284,11 +295,12 @@ async def upsert_user_model_settings(
 ) -> Optional[UserModelSettings]:
     """新建或更新用户的默认模型设置（每用户一行）。
 
-    Args:
-        model_name: 默认模型名称，须在 ``model_name_list`` 内；
-            若不在列表内则自动追加为首项，保证不变式成立。
-        model_name_list: 可选模型名称列表（去重保序后落库）。
-        quota_limit_monthly_usd: 月度额度上限（USD），None 表示不限额。
+    .. deprecated::
+        多 Provider 架构下，provider/base_url/api_key/model_name_list 由
+        ``user_model_providers`` 表管理。本函数仅用于兼容旧版 save_model_settings
+        mutation 与 save_default_model 的首次创建场景。
+
+    对于仅更新默认模型名与配额的场景，请使用 ``update_user_default_model``。
     """
     # 规范化模型列表：去空白、去空串、去重保序
     cleaned_list: List[str] = []
@@ -307,6 +319,11 @@ async def upsert_user_model_settings(
     if not cleaned_list:
         cleaned_list = [default_name] if default_name else []
 
+    # 多 Provider 架构下允许空 provider/base_url/api_key（仅默认模型名 + 配额）
+    _provider = provider or "default"
+    _base_url = base_url or "none"
+    _api_key = api_key or "none"
+
     async with get_session()() as session:
         result = await session.execute(
             select(UserModelSettings).where(UserModelSettings.user_id == user_id)
@@ -316,21 +333,27 @@ async def upsert_user_model_settings(
         if settings is None:
             settings = UserModelSettings(
                 user_id=user_id,
-                provider=provider,
-                base_url=base_url,
-                api_key=api_key,
+                provider=_provider,
+                base_url=_base_url,
+                api_key=_api_key,
                 model_name=default_name,
                 model_name_list=cleaned_list,
                 quota_limit_monthly_usd=quota_limit_monthly_usd,
             )
             session.add(settings)
         else:
-            settings.provider = provider
-            settings.base_url = base_url
-            settings.api_key = api_key
+            # 多 Provider 架构：仅更新默认模型名与配额，不覆盖 provider/base_url/api_key
             settings.model_name = default_name
-            settings.model_name_list = cleaned_list
             settings.quota_limit_monthly_usd = quota_limit_monthly_usd
+            # 仅当调用方传入了有意义的 provider/base_url/api_key 时才更新
+            if provider:
+                settings.provider = provider
+            if base_url:
+                settings.base_url = base_url
+            if api_key:
+                settings.api_key = api_key
+            if model_name_list:
+                settings.model_name_list = cleaned_list
 
         await session.commit()
         await session.refresh(settings)
@@ -927,11 +950,12 @@ async def resolve_model_endpoint(
     3. ``user_id`` 非空且 ``model_name`` 在用户的某个 UserModelProperty.model_name_list 中 →
        使用该 Provider 的 base_url / api_key
     4. ``user_settings`` 非空 → 使用旧版单 endpoint（兼容）
-    5. 均无 → 返回全 None（由调用方回退到全局 orchestrator）
+    5. ``model_name`` 为空时回退到系统默认模型（``system_model_settings.is_default=True``）
+    6. 均无 → 返回全 None（由调用方回退到全局 orchestrator）
 
     Args:
         user_id: 当前用户 ID；传入时查 per-user mapping 和多 Provider。
-        user_settings: 旧版用户设置（兼容回退）；model_name 用于取默认模型名。
+        model_name: 旧版用户设置（兼容回退）；model_name 用于取默认模型名。
 
     Returns:
         (api_key, base_url, effective_model_name)
@@ -963,6 +987,18 @@ async def resolve_model_endpoint(
     if user_settings is not None:
         effective = model_name or user_settings.model_name
         return user_settings.api_key, user_settings.base_url, effective
+
+    # 4) model_name 为空时回退到系统默认模型（is_default=True 行）
+    #    未传 model_name 的请求（如前端未选择模型）应使用系统默认，
+    #    供后续 _is_system_model 判定与 usage_logs 计费统计。
+    if not model_name:
+        sys_models = await list_system_models(enabled_only=True)
+        default_model = next((m for m in sys_models if m.is_default), None)
+        if default_model is not None:
+            logger.info(
+                f"{get_request_id()}model_name 为空，回退到系统默认模型: {default_model.name}"
+            )
+            return default_model.api_key, default_model.base_url, default_model.name
 
     return None, None, model_name
 
@@ -1574,6 +1610,8 @@ async def view_sso_login(code: str, state: str) -> AuthResponseType:
                     email=email,
                     password_hash=_SSO_PASSWORD_PLACEHOLDER,
                     is_active=True,
+                    role="user",
+                    is_admin=False,
                 )
                 session.add(user)
                 await session.flush()

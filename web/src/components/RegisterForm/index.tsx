@@ -280,7 +280,7 @@ export default function RegisterForm({
       <div className="text-center mt-8 text-[14px] text-muted">
         Already have an account?{" "}
         <a
-          href="/f/login"
+          href="/f/user-login"
           className="no-underline hover:underline text-foreground font-semibold"
         >
           Log In

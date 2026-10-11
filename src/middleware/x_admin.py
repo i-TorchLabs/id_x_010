@@ -23,11 +23,14 @@ class AdminRequiredError(Exception):
 async def require_admin(request) -> Optional[User]:
     """鉴权：返回当前登录管理员 User；非管理员或不登录抛 AdminRequiredError。
 
+    role 为权威字段（admin=管理员 / user=普通用户），is_admin 作为兼容兜底；
+    二者任一为管理员即放行，适配老库未回填 role 的过渡期。
+
     Args:
         request: Litestar Request 对象（由 _get_info_request(info) 拿到）。
 
     Raises:
-        AdminRequiredError: 未登录 / 非管理员 / is_admin 字段缺失。
+        AdminRequiredError: 未登录 / 非管理员 / role 与 is_admin 均缺失。
     """
     if request is None:
         raise AdminRequiredError("请求上下文缺失")
@@ -39,11 +42,23 @@ async def require_admin(request) -> Optional[User]:
     if user is None:
         raise AdminRequiredError("未登录")
 
-    # is_admin 字段在 TASK-013 才加入；getattr 兜底，老库升级中视为非 admin
-    if not getattr(user, "is_admin", False):
+    # role 权威，is_admin 兼容兜底；老库 role 缺失视为 "user"
+    role = getattr(user, "role", None) or (
+        "admin" if getattr(user, "is_admin", False) else "user"
+    )
+    is_admin_flag = role == "admin" or bool(getattr(user, "is_admin", False))
+    if not is_admin_flag:
         logger.warning(
-            f"{get_request_id()}require_admin 拒绝非管理员: user_id={user.id}, email={user.email}"
+            f"{get_request_id()}require_admin 拒绝非管理员: "
+            f"user_id={user.id}, email={user.email}, role={role}"
         )
         raise AdminRequiredError("需要管理员权限")
+
+    # role 与 is_admin 不一致时回填同步（老库过渡期）
+    if role == "admin" and not getattr(user, "is_admin", False):
+        try:
+            user.is_admin = True
+        except Exception:
+            pass
 
     return user

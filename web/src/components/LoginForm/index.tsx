@@ -29,6 +29,7 @@ interface LoginFormProps {
   emailError: boolean;
   passwordError: boolean;
   onSsoClick: () => void;
+  isAdmin?: boolean;
 }
 
 export default function LoginForm({
@@ -48,6 +49,7 @@ export default function LoginForm({
   emailError,
   passwordError,
   onSsoClick,
+  isAdmin = false,
 }: LoginFormProps) {
   const eyeIcon = showPassword ? (
     <svg
@@ -111,9 +113,11 @@ export default function LoginForm({
       {/* Header */}
       <div className="text-center mb-9">
         <h1 className="text-[28px] font-semibold mb-1.5 leading-[1.14] tracking-[-0.28px] text-foreground">
-          Welcome to SME AI Lab
+          {isAdmin ? "Admin Console" : "Welcome to SME AI Lab"}
         </h1>
-        <p className="text-[14px] text-muted">Please enter your details</p>
+        <p className="text-[14px] text-muted">
+          {isAdmin ? "Administrator sign-in" : "Please enter your details"}
+        </p>
       </div>
 
       <form
@@ -220,36 +224,65 @@ export default function LoginForm({
           isDisabled={isSubmitting}
           className="rounded-full font-semibold"
         >
-          {isSubmitting ? "Signing in..." : "Log In"}
+          {isSubmitting
+            ? "Signing in..."
+            : isAdmin
+              ? "Admin Sign In"
+              : "Log In"}
         </Button>
 
-        {/* SSO 分隔与入口 */}
-        <div className="flex items-center gap-3 my-5">
-          <span className="flex-1 h-px bg-border" />
-          <span className="text-xs text-muted">or</span>
-          <span className="flex-1 h-px bg-border" />
-        </div>
-        <Button
-          type="button"
-          fullWidth
-          variant="secondary"
-          size="lg"
-          className="rounded-full font-semibold"
-          onClick={onSsoClick}
-        >
-          Sign in with CUHK SSO
-        </Button>
+        {/* SSO 分隔与入口（仅普通用户登录页展示，管理后台不提供 SSO） */}
+        {!isAdmin && (
+          <>
+            <div className="flex items-center gap-3 my-5">
+              <span className="flex-1 h-px bg-border" />
+              <span className="text-xs text-muted">or</span>
+              <span className="flex-1 h-px bg-border" />
+            </div>
+            <Button
+              type="button"
+              fullWidth
+              variant="secondary"
+              size="lg"
+              className="rounded-full font-semibold"
+              onClick={onSsoClick}
+            >
+              Sign in with CUHK SSO
+            </Button>
+          </>
+        )}
       </form>
 
       {/* Footer link */}
       <div className="text-center mt-8 text-[14px] text-muted">
-        Don&apos;t have an account?{" "}
-        <a
-          href="/f/register"
-          className="no-underline hover:underline text-foreground font-semibold"
-        >
-          Sign Up
-        </a>
+        {isAdmin ? (
+          <>
+            Are you a regular user?{" "}
+            <a
+              href="/f/user-login"
+              className="no-underline hover:underline text-foreground font-semibold"
+            >
+              User Sign In
+            </a>
+          </>
+        ) : (
+          <>
+            Don&apos;t have an account?{" "}
+            <a
+              href="/f/user-register"
+              className="no-underline hover:underline text-foreground font-semibold"
+            >
+              Sign Up
+            </a>
+            <span className="mx-2 text-muted/60">·</span>
+            <a
+              href="/f/admin-login"
+              className="no-underline hover:underline text-foreground font-semibold"
+            >
+              Admin Login
+            </a>
+          </>
+        )}
       </div>
     </div>
   );

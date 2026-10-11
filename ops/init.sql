@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS users (
     display_name VARCHAR(64),
     avatar BYTEA,
     is_active BOOLEAN DEFAULT TRUE,
+    is_admin BOOLEAN DEFAULT FALSE,
+    role VARCHAR(16) NOT NULL DEFAULT 'user',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -31,6 +33,19 @@ COMMENT ON COLUMN users.is_admin IS '是否管理员（控制 /admin 路由与 a
 -- TASK-019：密码哈希算法；老数据 null 视为 sha256，登录时自动升级为 bcrypt
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_algo VARCHAR(16) DEFAULT 'bcrypt';
 COMMENT ON COLUMN users.password_algo IS '密码哈希算法：bcrypt / sha256（老数据）';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS system_model_quota_usd DOUBLE PRECISION;
+COMMENT ON COLUMN users.system_model_quota_usd IS '系统预置模型月度配额上限（USD）；NULL 不限额，仅限系统模型';
+-- 用户角色：admin=管理员 / user=普通用户。与 is_admin 同步，role 为权威字段。
+ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(16) NOT NULL DEFAULT 'user';
+COMMENT ON COLUMN users.role IS '用户角色：admin=管理员 / user=普通用户';
+-- 老库迁移：已 is_admin=TRUE 的行回填 role='admin'（幂等，仅更新 role 仍为默认值或 NULL 的行）
+UPDATE users SET role = 'admin' WHERE is_admin = TRUE AND (role IS NULL OR role = 'user');
+-- 同步反向：role='admin' 但 is_admin 未置位的行补齐（防御性，正常不会触发）
+UPDATE users SET is_admin = TRUE WHERE role = 'admin' AND is_admin IS NOT TRUE;
+
+-- usage_logs 增量字段：is_system_model（区分系统模型与用户自定义模型调用）
+ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS is_system_model BOOLEAN NOT NULL DEFAULT FALSE;
+COMMENT ON COLUMN usage_logs.is_system_model IS '是否为系统预置模型调用（配额与统计仅计入系统模型）';
 
 -- 用户表索引
 CREATE INDEX IF NOT EXISTS ix_users_email ON users(email);
@@ -45,6 +60,8 @@ COMMENT ON COLUMN users.password_hash IS '密码哈希';
 COMMENT ON COLUMN users.display_name IS '显示名称（可由用户自定义，空则回退到 email 本地名）';
 COMMENT ON COLUMN users.avatar IS '头像图片二进制（BYTEA），通过 /avatar/<user_id> 端点按需输出';
 COMMENT ON COLUMN users.is_active IS '是否激活';
+COMMENT ON COLUMN users.is_admin IS '是否管理员（与 role 同步，role 为权威字段）';
+COMMENT ON COLUMN users.role IS '用户角色：admin=管理员 / user=普通用户';
 COMMENT ON COLUMN users.created_at IS '创建时间';
 COMMENT ON COLUMN users.updated_at IS '更新时间';
 

@@ -99,6 +99,7 @@ export interface User {
   phone: string | null;
   displayName: string | null;
   avatarUrl: string | null;
+  role: string | null;
   createdAt: string | null;
 }
 
@@ -116,6 +117,9 @@ export interface RegisterPayload {
 export interface LoginInput {
   email: string;
   password: string;
+  // 可选角色校验："admin" 仅允许管理员登录，"user" 仅允许普通用户登录；
+  // 留空表示不校验（兼容旧客户端）。由不同登录页传入。
+  role?: string;
 }
 
 // 登录响应类型
@@ -200,6 +204,7 @@ export const userGraphqlApi = {
             phone
             displayName
             avatarUrl
+            role
             createdAt
           }
         }
@@ -228,6 +233,7 @@ export const userGraphqlApi = {
             phone
             displayName
             avatarUrl
+            role
             createdAt
           }
         }
@@ -301,6 +307,7 @@ export const userGraphqlApi = {
             phone
             displayName
             avatarUrl
+            role
             createdAt
           }
         }
@@ -331,6 +338,7 @@ export const userGraphqlApi = {
             phone
             displayName
             avatarUrl
+            role
             createdAt
           }
         }

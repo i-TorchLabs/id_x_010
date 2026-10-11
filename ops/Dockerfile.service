@@ -13,8 +13,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
-    PIP_TRUSTED_HOST=mirrors.aliyun.com
+    PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple/ \
+    PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn \
+    PIP_DEFAULT_TIMEOUT=60
 
 # 切换为阿里云 Debian 镜像源（基础镜像为 bookworm；写入 sources.list 供后续
 # 多阶段构建的运行阶段也能复用同一基础设施加速）。
@@ -40,9 +41,10 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 # 先装依赖（利用 layer cache：requirements 变化才重装）。
 # 插件 requirements.txt 覆盖引擎层依赖（granian / litestar / advanced_alchemy 等）。
-# PIP_INDEX_URL 已在 ENV 中指向阿里云 PyPI 镜像。
+# PIP_INDEX_URL 已在 ENV 中指向清华 TUNA PyPI 镜像（同步较及时，规避阿里云
+# 镜像对新发布包的 404 问题）。--retries 3 增强瞬时网络抖动容错。
 COPY x_models/id_x_010/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+RUN pip install --no-cache-dir --retries 3 -r /tmp/requirements.txt
 
 # --------------------------- 运行阶段 ---------------------------
 FROM docker.io/library/python:3.10-slim

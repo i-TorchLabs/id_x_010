@@ -196,6 +196,10 @@ class UsageLog(Base):
     model_type: Mapped[Optional[str]] = mapped_column(
         String(32), comment="模型类型: local 或 external"
     )
+    is_system_model: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False,
+        comment="是否为系统预置模型调用（配额与统计仅计入系统模型）"
+    )
     intent: Mapped[Optional[str]] = mapped_column(String(64), comment="识别的意图")
     input_tokens: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, comment="输入 token 数"
@@ -265,8 +269,9 @@ class UserToken(Base):
 
 
 class User(Base):
-    """用户主表：邮箱、密码哈希、显示名、头像、激活/管理员标志。
+    """用户主表：邮箱、密码哈希、显示名、头像、激活/管理员标志、角色。
 
+    role 为权威角色字段（admin=管理员 / user=普通用户），与 is_admin 同步；
     password_algo 标识哈希算法：新数据 bcrypt，老数据 sha256（登录时自动升级）。
     """
 
@@ -296,9 +301,25 @@ class User(Base):
     is_admin: Mapped[Optional[bool]] = mapped_column(
         Boolean, default=False, comment="是否管理员（控制 /admin 路由与 admin mutation 访问）"
     )
+    # 用户角色：admin=管理员 / user=普通用户。与 is_admin 同步，role 为权威字段；
+    # is_admin 保留兼容老的 require_admin 校验与 AdminPanel 复选框。
+    role: Mapped[str] = mapped_column(
+        String(16),
+        default="user",
+        nullable=False,
+        comment="用户角色：admin=管理员 / user=普通用户",
+    )
     # TASK-019：密码哈希算法标识；老数据 null 视为 sha256，登录时自动升级为 bcrypt
     password_algo: Mapped[Optional[str]] = mapped_column(
         String(16), default="bcrypt", comment="密码哈希算法：bcrypt / sha256（老数据）"
+    )
+    # 系统预置模型月度配额上限（USD）；NULL 表示不限额。仅限制系统模型使用，
+    # 不限制用户自定义模型。不在 UI 展示，仅后端 check_user_quota 使用。
+    system_model_quota_usd: Mapped[Optional[float]] = mapped_column(
+        Float,
+        nullable=True,
+        default=None,
+        comment="系统预置模型月度配额上限（USD）；NULL 不限额，仅限系统模型",
     )
     created_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True),
@@ -324,6 +345,8 @@ class User(Base):
             "email": self.email,
             "phone": self.phone,
             "is_active": self.is_active,
+            "is_admin": getattr(self, "is_admin", False),
+            "role": self.role,
             "created_at": self.created_at.isoformat()
             if self.created_at is not None
             else None,

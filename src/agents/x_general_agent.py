@@ -1,3 +1,4 @@
+import json
 import os
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
@@ -264,6 +265,7 @@ class GeneralAgent:
             "stream_usage": True,
         }
 
+        raw_usage = None
         async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
             async with client.stream(
                 "POST", url, json=body, headers=headers
@@ -287,8 +289,20 @@ class GeneralAgent:
                             yield ("thinking", reasoning)
                         if content:
                             yield ("content", content)
+
+                        usage = chunk.get("usage")
+                        if isinstance(usage, dict):
+                            usage_meta = {
+                                "input_tokens": usage.get("prompt_tokens", 0) or 0,
+                                "output_tokens": usage.get("completion_tokens", 0) or 0,
+                                "total_tokens": usage.get("total_tokens", 0) or 0,
+                            }
+                            raw_usage = usage_meta
                     except (_json.JSONDecodeError, KeyError, IndexError):
                         continue
+
+        if raw_usage is not None:
+            yield ("usage", _json.dumps(raw_usage))
 
     async def chat(
         self,
@@ -558,7 +572,14 @@ class GeneralAgent:
         try:
             _raw_produced = False
             _raw_in_thinking = False
+            _raw_usage = None
             async for chunk_type, token in self._stream_llm_raw(messages):
+                if chunk_type == "usage":
+                    try:
+                        _raw_usage = json.loads(token)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                    continue
                 _raw_produced = True
                 if chunk_type == "thinking":
                     yield {
@@ -597,7 +618,7 @@ class GeneralAgent:
                 yield {
                     "type": "done",
                     "model_used": self.model_name,
-                    "usage": None,
+                    "usage": _raw_usage,
                 }
                 return
         except Exception as _raw_e:
@@ -607,10 +628,17 @@ class GeneralAgent:
                     f"{get_request_id()}模型限制 temperature=1，raw 重试 [stream_chat]: model={self.model_name}"
                 )
                 _retry_produced = False
+                _retry_usage = None
                 try:
                     async for chunk_type, token in self._stream_llm_raw(
                         messages, temperature=1.0
                     ):
+                        if chunk_type == "usage":
+                            try:
+                                _retry_usage = json.loads(token)
+                            except (json.JSONDecodeError, TypeError):
+                                pass
+                            continue
                         _retry_produced = True
                         if chunk_type == "thinking":
                             yield {
@@ -640,7 +668,7 @@ class GeneralAgent:
                         yield {
                             "type": "done",
                             "model_used": self.model_name,
-                            "usage": None,
+                            "usage": _retry_usage,
                         }
                         return
                 except Exception as _retry_e:

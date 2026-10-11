@@ -45,7 +45,7 @@ function handleUnauthorized(): void {
     localStorage.removeItem("token");
     localStorage.removeItem("expires_at");
     localStorage.removeItem("user");
-    window.location.href = "/f/login";
+    window.location.href = "/f/user-login";
   }
 }
 

@@ -89,7 +89,7 @@ export default function RegisterPage() {
                 }
 
                 // 注册成功后跳转到登录页面
-                router.push("/f/login?registered=true");
+                router.push("/f/user-login?registered=true");
             } catch (error: any) {
                 console.error("Registration failed:", error);
                 setErrorMsg(error.message || "Registration failed, please try again");

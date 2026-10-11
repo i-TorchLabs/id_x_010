@@ -91,7 +91,7 @@ class StreamChatClient {
       localStorage.removeItem("user");
 
       // 重定向到登录页面
-      window.location.href = "/f/login";
+      window.location.href = "/f/user-login";
     }
   }
 

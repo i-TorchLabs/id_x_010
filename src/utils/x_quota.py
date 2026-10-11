@@ -1,13 +1,11 @@
-"""用户月度额度检查（TASK-008 重构）。
+"""用户月度额度检查。
 
-按 ``user_model_settings.quota_limit_monthly_usd`` 配置的月度额度上限，
-从 ``usage_logs.cost_usd`` 按**自然月**聚合该用户全部模型的花费进行比较。
+按 ``users.system_model_quota_usd`` 配置的月度额度上限，从 ``usage_logs`` 仅
+聚合 ``is_system_model=True`` 的系统预置模型调用花费进行比较。
 
-- 用户未配置模型设置、或 ``quota_limit_monthly_usd`` 为 NULL：不限额，放行。
+- ``system_model_quota_usd`` 为 NULL：不限额，放行。
+- 仅限制系统预置模型调用；用户自定义模型不受配额限制。
 - 聚合失败时 best-effort 放行（不阻塞主链路），仅记 warning。
-
-取代了原先按日 token 聚合的 ``DEFAULT_DAILY_TOKEN_QUOTA`` 机制；流量（RPM）
-限制由 ``x_ratelimit`` 独立处理，本模块不再涉及。
 """
 
 from datetime import datetime, timezone
@@ -15,8 +13,7 @@ from typing import Tuple
 
 from sqlalchemy import func, select
 
-from x_models.id_x_010.src.models.x_models import UsageLog, get_session
-from x_models.id_x_010.src.views.x_views import get_user_model_settings
+from x_models.id_x_010.src.models.x_models import UsageLog, User, get_session
 
 
 def _month_start_utc(now: datetime) -> datetime:
@@ -25,7 +22,9 @@ def _month_start_utc(now: datetime) -> datetime:
 
 
 async def check_user_quota(user_id: int) -> Tuple[bool, str]:
-    """检查用户本月花费是否超过其配置的月度额度上限。
+    """检查用户本月系统模型花费是否超过配额上限。
+
+    仅统计 ``is_system_model=True`` 的调用；用户自定义模型不计入。
 
     Args:
         user_id: 用户 ID。
@@ -35,22 +34,27 @@ async def check_user_quota(user_id: int) -> Tuple[bool, str]:
         任何异常都 best-effort 返回 (True, "")，不阻塞主流程。
     """
     try:
-        settings = await get_user_model_settings(user_id)
-        if settings is None:
-            return True, ""
-
-        limit = settings.quota_limit_monthly_usd
-        if limit is None:
-            return True, ""
-
-        now = datetime.now(timezone.utc)
-        month_start = _month_start_utc(now)
-
         async with get_session()() as session:
+            user = (
+                await session.execute(
+                    select(User).where(User.id == user_id)
+                )
+            ).scalar_one_or_none()
+            if user is None:
+                return True, ""
+
+            limit = getattr(user, "system_model_quota_usd", None)
+            if limit is None:
+                return True, ""
+
+            now = datetime.now(timezone.utc)
+            month_start = _month_start_utc(now)
+
             total = (
                 await session.execute(
                     select(func.coalesce(func.sum(UsageLog.cost_usd), 0.0)).where(
                         UsageLog.user_id == user_id,
+                        UsageLog.is_system_model.is_(True),
                         UsageLog.created_at >= month_start,
                     )
                 )
@@ -62,8 +66,8 @@ async def check_user_quota(user_id: int) -> Tuple[bool, str]:
         if total >= limit:
             return (
                 False,
-                f"本月额度已用尽（${total:.2f}/${limit:.2f}），"
-                f"次月 1 日自动恢复",
+                f"本月系统模型额度已用尽（${total:.2f}/${limit:.2f}），"
+                f"次月 1 日自动恢复。自定义模型不受此限制。",
             )
 
         return True, ""

@@ -16,9 +16,22 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 -- TASK-013 / TASK-019：users 表新增字段
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE;
-COMMENT ON COLUMN users.is_admin IS '是否管理员（控制 /admin 路由与 admin mutation 访问）';
+COMMENT ON COLUMN users.is_admin IS '是否管理员（与 role 同步，role 为权威字段）';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_algo VARCHAR(16) DEFAULT 'bcrypt';
 COMMENT ON COLUMN users.password_algo IS '密码哈希算法：bcrypt / sha256（老数据）';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS system_model_quota_usd DOUBLE PRECISION;
+COMMENT ON COLUMN users.system_model_quota_usd IS '系统预置模型月度配额上限（USD）；NULL 不限额，仅限系统模型';
+-- 用户角色：admin=管理员 / user=普通用户。与 is_admin 同步，role 为权威字段。
+ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(16) NOT NULL DEFAULT 'user';
+COMMENT ON COLUMN users.role IS '用户角色：admin=管理员 / user=普通用户';
+-- 老库迁移：已 is_admin=TRUE 的行回填 role='admin'（幂等）
+UPDATE users SET role = 'admin' WHERE is_admin = TRUE AND (role IS NULL OR role = 'user');
+-- 同步反向：role='admin' 但 is_admin 未置位的行补齐（防御性）
+UPDATE users SET is_admin = TRUE WHERE role = 'admin' AND is_admin IS NOT TRUE;
+
+-- usage_logs 增量字段：is_system_model
+ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS is_system_model BOOLEAN NOT NULL DEFAULT FALSE;
+COMMENT ON COLUMN usage_logs.is_system_model IS '是否为系统预置模型调用（配额与统计仅计入系统模型）';
 
 -- 把所有 sha256/NULL 老数据标记为 sha256（登录时由 verify_password 自动升级）
 UPDATE users

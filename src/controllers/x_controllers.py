@@ -106,6 +106,7 @@ from x_models.id_x_010.src.schemas.x_schemas import (
     UserModelPropertyListResponseType,
     UserModelPropertyMutationResponseType,
     UserModelPropertyType,
+    AdminUsageStatsResponseType,
 )
 from x_models.id_x_010.src.views.x_views import (
     build_user_info,
@@ -326,7 +327,7 @@ class Query:
 
             logger.info(
                 f"{get_request_id()}成功获取模型列表: "
-                f"system={len(sys_models)}, user={len(user_name_list)}, "
+                f"system={len(sys_models)}, providers={len(user_providers)}, "
                 f"merged={len(models)}, default={effective_default}"
             )
 
@@ -504,6 +505,7 @@ class Query:
                     select(date_col, func.count().label("cnt"), in_col, out_col, tot_col, cost_col)
                     .where(
                         UsageLog.user_id == user.id,
+                        UsageLog.is_system_model.is_(True),
                         UsageLog.created_at >= start,
                     )
                     .group_by(date_col)
@@ -540,6 +542,7 @@ class Query:
                     )
                     .where(
                         UsageLog.user_id == user.id,
+                        UsageLog.is_system_model.is_(True),
                         UsageLog.created_at >= start,
                     )
                     .group_by(UsageLog.model_name)
@@ -655,6 +658,189 @@ class Query:
             )
             return SystemModelListResponseType(
                 success=False, message=f"获取失败: {str(e)}", models=[]
+            )
+
+    @strawberry.field(description="获取当前用户的全部自定义模型 Provider（多 Provider 多模型）")
+    async def my_model_providers(
+        self, info: strawberry.Info
+    ) -> UserModelPropertyListResponseType:
+        try:
+            request = _get_info_request(info)
+            user = await _get_bearer_user(request)
+            if user is None:
+                return UserModelPropertyListResponseType(
+                    success=False, message="未登录或登录已过期", providers=[]
+                )
+
+            providers = await list_user_model_providers(user.id)
+            return UserModelPropertyListResponseType(
+                success=True,
+                message=f"查询到 {len(providers)} 个 Provider",
+                providers=[
+                    UserModelPropertyType(
+                        id=p.id,
+                        provider=p.provider,
+                        base_url=p.base_url,
+                        api_key=p.api_key,
+                        model_name_list=list(p.model_name_list or []),
+                        sort_order=p.sort_order,
+                        created_at=(
+                            p.created_at.isoformat() if p.created_at else None
+                        ),
+                        updated_at=(
+                            p.updated_at.isoformat() if p.updated_at else None
+                        ),
+                    )
+                    for p in providers
+                ],
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}获取用户 Provider 列表失败: {e}", exc_info=True
+            )
+            return UserModelPropertyListResponseType(
+                success=False, message=f"失败: {str(e)}", providers=[]
+            )
+
+    @strawberry.field(description="管理员：全局用量统计（按用户聚合，仅系统模型）")
+    async def admin_usage_stats(
+        self, info: strawberry.Info, days: int = 30
+    ) -> "AdminUsageStatsResponseType":
+        from x_models.id_x_010.src.middleware.x_admin import (
+            AdminRequiredError,
+            require_admin,
+        )
+        from x_models.id_x_010.src.schemas.x_schemas import AdminUserUsageType
+
+        try:
+            await require_admin(_get_info_request(info))
+        except AdminRequiredError as e:
+            return AdminUsageStatsResponseType(
+                success=False, message=e.message, users=[]
+            )
+
+        try:
+            days = max(1, min(days, 365))
+            start = datetime.now(timezone.utc) - timedelta(days=days)
+            month_start = datetime.now(timezone.utc).replace(
+                day=1, hour=0, minute=0, second=0, microsecond=0
+            )
+
+            results: list = []
+            async with get_session()() as session:
+                # 全部用户
+                user_rows = (
+                    await session.execute(
+                        select(User).order_by(User.id.asc())
+                    )
+                ).scalars().all()
+
+                for u in user_rows:
+                    # 本月系统模型花费
+                    month_cost = (
+                        await session.execute(
+                            select(func.coalesce(func.sum(UsageLog.cost_usd), 0.0)).where(
+                                UsageLog.user_id == u.id,
+                                UsageLog.is_system_model.is_(True),
+                                UsageLog.created_at >= month_start,
+                            )
+                        )
+                    ).scalar_one() or 0.0
+
+                    # 本月系统模型请求数
+                    month_req = (
+                        await session.execute(
+                            select(func.count()).where(
+                                UsageLog.user_id == u.id,
+                                UsageLog.is_system_model.is_(True),
+                                UsageLog.created_at >= month_start,
+                            )
+                        )
+                    ).scalar_one() or 0
+
+                    # 近 N 天总花费
+                    total_cost = (
+                        await session.execute(
+                            select(func.coalesce(func.sum(UsageLog.cost_usd), 0.0)).where(
+                                UsageLog.user_id == u.id,
+                                UsageLog.is_system_model.is_(True),
+                                UsageLog.created_at >= start,
+                            )
+                        )
+                    ).scalar_one() or 0.0
+
+                    results.append(
+                        AdminUserUsageType(
+                            user_id=u.id,
+                            email=u.email,
+                            display_name=u.display_name,
+                            system_model_quota_usd=getattr(u, "system_model_quota_usd", None),
+                            month_cost_usd=round(float(month_cost), 6),
+                            month_requests=int(month_req),
+                            total_cost_usd=round(float(total_cost), 6),
+                        )
+                    )
+
+            return AdminUsageStatsResponseType(
+                success=True,
+                message=f"查询到 {len(results)} 个用户",
+                users=results,
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}admin_usage_stats 失败: {e}", exc_info=True
+            )
+            return AdminUsageStatsResponseType(
+                success=False, message=f"失败: {str(e)}", users=[]
+            )
+
+    @strawberry.field(description="管理员：列出全部用户（含 role/is_admin/is_active）")
+    async def list_users(self, info: strawberry.Info) -> AdminUserListResponseType:
+        from x_models.id_x_010.src.middleware.x_admin import (
+            AdminRequiredError,
+            require_admin,
+        )
+
+        try:
+            await require_admin(_get_info_request(info))
+            async with get_session()() as session:
+                rows = (
+                    await session.execute(select(User).order_by(User.id.asc()))
+                ).scalars().all()
+            return AdminUserListResponseType(
+                success=True,
+                message=f"查询到 {len(rows)} 个用户",
+                users=[
+                    AdminUserType(
+                        id=u.id,
+                        email=u.email,
+                        display_name=u.display_name,
+                        is_active=bool(u.is_active),
+                        is_admin=bool(getattr(u, "is_admin", False)),
+                        role=getattr(u, "role", None)
+                        or ("admin" if getattr(u, "is_admin", False) else "user"),
+                        created_at=(
+                            u.created_at.isoformat() if u.created_at else None
+                        ),
+                        updated_at=(
+                            u.updated_at.isoformat() if u.updated_at else None
+                        ),
+                    )
+                    for u in rows
+                ],
+            )
+        except AdminRequiredError as e:
+            return AdminUserListResponseType(
+                success=False, message=e.message, users=[]
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}list_users 失败: {e}", exc_info=True
+            )
+            return AdminUserListResponseType(
+                success=False,
+                message=f"失败: {type(e).__name__}: {e}",
+                users=[],
             )
 
 
@@ -822,19 +1008,8 @@ class Mutation:
                 )
 
             if user is not None:
-                from x_models.id_x_010.src.utils.x_quota import check_user_quota
-
-                ok, msg = await check_user_quota(user.id)
-                if not ok:
-                    logger.warning(
-                        f"{get_request_id()}用户配额超限 user_id={user.id}: {msg}"
-                    )
-                    return ChatResponseType(
-                        success=False,
-                        message=msg,
-                        response="",
-                        thinking="",
-                    )
+                # 配额检查在模型解析后进行，仅当选用系统预置模型时检查
+                pass
 
             context = None
             if input.context:
@@ -861,6 +1036,29 @@ class Mutation:
                     input.model_name, user_settings, user.id if user else None
                 )
             )
+
+            # 系统模型配额检查：仅当选用系统预置模型时检查
+            # 注意：须用 resolve_model_endpoint 回填后的 effective_model_name 判断，
+            # 前端未传 model_name 时会回退到系统默认模型（is_default=True 行）。
+            _is_system_model = False
+            if effective_model_name:
+                _sys_model = await get_system_model_by_name(effective_model_name)
+                _is_system_model = _sys_model is not None and _sys_model.enabled
+
+            if user is not None and _is_system_model:
+                from x_models.id_x_010.src.utils.x_quota import check_user_quota
+
+                ok, msg = await check_user_quota(user.id)
+                if not ok:
+                    logger.warning(
+                        f"{get_request_id()}用户配额超限 user_id={user.id}: {msg}"
+                    )
+                    return ChatResponseType(
+                        success=False,
+                        message=msg,
+                        response="",
+                        thinking="",
+                    )
 
             if chat_api_key is not None and chat_base_url is not None:
                 orchestrator = LangGraphSupervisor(
@@ -965,6 +1163,40 @@ class Mutation:
                 if user.is_active is False:
                     return AuthResponseType(success=False, message="用户尚未激活")
 
+                # 角色校验：管理员登录页与用户登录页分离后，按 input.role 校验。
+                # role 为权威字段；老库无 role 时按 is_admin 回退推断，兼容存量数据。
+                user_role = getattr(user, "role", None) or (
+                    "admin" if getattr(user, "is_admin", False) else "user"
+                )
+                if input.role:
+                    requested = input.role.strip().lower()
+                    if requested not in ("admin", "user"):
+                        return AuthResponseType(
+                            success=False, message="无效的登录角色"
+                        )
+                    if requested == "admin" and user_role != "admin":
+                        logger.warning(
+                            f"{get_request_id()}非管理员尝试登录管理后台: "
+                            f"user_id={user.id}, email={user.email}"
+                        )
+                        return AuthResponseType(
+                            success=False, message="该账号无管理员权限"
+                        )
+                    if requested == "user" and user_role == "admin":
+                        # 管理员不应在用户登录页登录，提示改用管理后台入口
+                        return AuthResponseType(
+                            success=False,
+                            message="该账号为管理员，请前往管理后台登录",
+                        )
+
+                # role 与 is_admin 同步：老库 is_admin=True 但 role 缺失时补齐
+                if user_role == "admin" and not getattr(user, "is_admin", False):
+                    user.is_admin = True
+                if user_role != "admin" and getattr(user, "is_admin", False):
+                    user.is_admin = False
+                if not getattr(user, "role", None):
+                    user.role = user_role
+
                 token = await generate_token()
 
                 expires_at = datetime.utcnow() + timedelta(hours=24)
@@ -1021,6 +1253,8 @@ class Mutation:
                     password_hash=password_hash,
                     phone=input.phone,
                     is_active=False,
+                    role="user",
+                    is_admin=False,
                 )
                 session.add(new_user)
                 await session.commit()
@@ -1535,54 +1769,7 @@ class Mutation:
     # 后台运维（TASK-013）：管理员 mutation
     # ------------------------------------------------------------------
 
-    @strawberry.field(description="管理员：列出全部用户（含 is_admin/is_active）")
-    async def list_users(self, info: strawberry.Info) -> AdminUserListResponseType:
-        from x_models.id_x_010.src.middleware.x_admin import (
-            AdminRequiredError,
-            require_admin,
-        )
-
-        try:
-            await require_admin(_get_info_request(info))
-            async with get_session()() as session:
-                rows = (
-                    await session.execute(select(User).order_by(User.id.asc()))
-                ).scalars().all()
-            return AdminUserListResponseType(
-                success=True,
-                message=f"查询到 {len(rows)} 个用户",
-                users=[
-                    AdminUserType(
-                        id=u.id,
-                        email=u.email,
-                        display_name=u.display_name,
-                        is_active=bool(u.is_active),
-                        is_admin=bool(getattr(u, "is_admin", False)),
-                        created_at=(
-                            u.created_at.isoformat() if u.created_at else None
-                        ),
-                        updated_at=(
-                            u.updated_at.isoformat() if u.updated_at else None
-                        ),
-                    )
-                    for u in rows
-                ],
-            )
-        except AdminRequiredError as e:
-            return AdminUserListResponseType(
-                success=False, message=e.message, users=[]
-            )
-        except Exception as e:
-            logger.error(
-                f"{get_request_id()}list_users 失败: {e}", exc_info=True
-            )
-            return AdminUserListResponseType(
-                success=False,
-                message=f"失败: {type(e).__name__}: {e}",
-                users=[],
-            )
-
-    @strawberry.mutation(description="管理员：设置/取消用户管理员权限")
+    @strawberry.mutation(description="管理员：设置/取消用户管理员权限（同步 role 字段）")
     async def set_user_admin(
         self, info: strawberry.Info, user_id: int, is_admin: bool
     ) -> AdminMutationResponseType:
@@ -1602,6 +1789,7 @@ class Mutation:
                         success=False, message=f"用户不存在: id={user_id}"
                     )
                 u.is_admin = is_admin
+                u.role = "admin" if is_admin else "user"
                 await session.commit()
             return AdminMutationResponseType(
                 success=True,
@@ -1689,8 +1877,49 @@ class Mutation:
                 success=False, message=f"失败: {type(e).__name__}: {e}"
             )
 
-    # ------------------------------------------------------------------
-    # 数据导出与报告订阅（TASK-014）
+    @strawberry.mutation(description="管理员：设置用户的系统模型月度配额")
+    async def set_user_system_quota(
+        self, info: strawberry.Info, user_id: int, quota_usd: Optional[float]
+    ) -> AdminMutationResponseType:
+        from x_models.id_x_010.src.middleware.x_admin import (
+            AdminRequiredError,
+            require_admin,
+        )
+
+        try:
+            await require_admin(_get_info_request(info))
+        except AdminRequiredError as e:
+            return AdminMutationResponseType(success=False, message=e.message)
+
+        if quota_usd is not None and quota_usd < 0:
+            return AdminMutationResponseType(
+                success=False, message="配额须为非负数（留空表示不限额）"
+            )
+
+        try:
+            async with get_session()() as session:
+                u = (
+                    await session.execute(select(User).where(User.id == user_id))
+                ).scalar_one_or_none()
+                if u is None:
+                    return AdminMutationResponseType(
+                        success=False, message=f"用户不存在: id={user_id}"
+                    )
+                u.system_model_quota_usd = quota_usd
+                await session.commit()
+            return AdminMutationResponseType(
+                success=True,
+                message=f"配额已设置: ${quota_usd}" if quota_usd is not None else "配额已清除（不限额）",
+            )
+        except AdminRequiredError as e:
+            return AdminMutationResponseType(success=False, message=e.message)
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}set_user_system_quota 失败: {e}", exc_info=True
+            )
+            return AdminMutationResponseType(
+                success=False, message=f"失败: {type(e).__name__}: {e}"
+            )
     # ------------------------------------------------------------------
 
     @strawberry.mutation(description="管理员：保存 Prompt 模板新版本（自动激活）")
@@ -2382,48 +2611,6 @@ class Mutation:
     # 用户自定义模型 Provider（多 Provider，每 Provider 多模型）
     # ------------------------------------------------------------------
 
-    @strawberry.field(description="获取当前用户的全部自定义模型 Provider（多 Provider 多模型）")
-    async def my_model_providers(
-        self, info: strawberry.Info
-    ) -> UserModelPropertyListResponseType:
-        try:
-            request = _get_info_request(info)
-            user = await _get_bearer_user(request)
-            if user is None:
-                return UserModelPropertyListResponseType(
-                    success=False, message="未登录或登录已过期", providers=[]
-                )
-
-            providers = await list_user_model_providers(user.id)
-            return UserModelPropertyListResponseType(
-                success=True,
-                message=f"查询到 {len(providers)} 个 Provider",
-                providers=[
-                    UserModelPropertyType(
-                        id=p.id,
-                        provider=p.provider,
-                        base_url=p.base_url,
-                        api_key=p.api_key,
-                        model_name_list=list(p.model_name_list or []),
-                        sort_order=p.sort_order,
-                        created_at=(
-                            p.created_at.isoformat() if p.created_at else None
-                        ),
-                        updated_at=(
-                            p.updated_at.isoformat() if p.updated_at else None
-                        ),
-                    )
-                    for p in providers
-                ],
-            )
-        except Exception as e:
-            logger.error(
-                f"{get_request_id()}获取用户 Provider 列表失败: {e}", exc_info=True
-            )
-            return UserModelPropertyListResponseType(
-                success=False, message=f"失败: {str(e)}", providers=[]
-            )
-
     @strawberry.mutation(description="新增/更新用户自定义模型 Provider（含连通性检测）")
     async def save_model_provider(
         self, info: strawberry.Info, input: UserModelPropertyInput
@@ -2558,6 +2745,7 @@ class Mutation:
                     success=False, message="月度额度须为非负数",
                 )
 
+            # 默认模型名存入 user_model_settings
             settings = await upsert_user_model_settings(
                 user_id=user.id,
                 provider="",
@@ -2565,18 +2753,34 @@ class Mutation:
                 api_key="",
                 model_name=model_name,
                 model_name_list=[],
-                quota_limit_monthly_usd=quota,
+                quota_limit_monthly_usd=None,
             )
             if settings is None:
                 return SaveDefaultModelResponseType(
                     success=False, message="保存失败",
                 )
 
+            # 系统模型配额直接写入 users 表（不在 UI 展示）
+            try:
+                async with get_session()() as session:
+                    u = (
+                        await session.execute(
+                            select(User).where(User.id == user.id)
+                        )
+                    ).scalar_one_or_none()
+                    if u is not None:
+                        u.system_model_quota_usd = quota
+                        await session.commit()
+            except Exception as qe:
+                logger.warning(
+                    f"{get_request_id()}写入系统模型配额失败: {qe}"
+                )
+
             return SaveDefaultModelResponseType(
                 success=True,
                 message="默认模型已设置",
                 model_name=settings.model_name,
-                quota_limit_monthly_usd=settings.quota_limit_monthly_usd,
+                quota_limit_monthly_usd=quota,
             )
         except Exception as e:
             logger.error(
@@ -3213,15 +3417,8 @@ class Subscription:
                 return
 
             if rl_user is not None:
-                from x_models.id_x_010.src.utils.x_quota import check_user_quota
-
-                ok, msg = await check_user_quota(rl_user.id)
-                if not ok:
-                    logger.warning(
-                        f"{get_request_id()}用户配额超限 user_id={rl_user.id}: {msg}"
-                    )
-                    yield StreamChunkType(type="error", content=msg)
-                    return
+                # 系统模型配额检查：移到模型解析后执行
+                pass
 
             frontend_context = None
             if context:
@@ -3283,6 +3480,26 @@ class Subscription:
             )
             if resolved_model:
                 model_name = resolved_model
+
+            # 系统模型配额检查：仅当选用系统预置模型时检查
+            # 注意：必须在 resolve_model_endpoint 之后判断，因为前端未传 model_name 时
+            # 解析后会回填为系统默认模型名（is_default=True 行），否则 is_system_model
+            # 永远为 False，导致 usage_logs 不计费、usage_stats 查不到数据。
+            _is_system_model_stream = False
+            if model_name:
+                _sys_model_s = await get_system_model_by_name(model_name)
+                _is_system_model_stream = _sys_model_s is not None and _sys_model_s.enabled
+
+            if rl_user is not None and _is_system_model_stream:
+                from x_models.id_x_010.src.utils.x_quota import check_user_quota
+
+                ok, msg = await check_user_quota(rl_user.id)
+                if not ok:
+                    logger.warning(
+                        f"{get_request_id()}用户配额超限 user_id={rl_user.id}: {msg}"
+                    )
+                    yield StreamChunkType(type="error", content=msg)
+                    return
 
             if override_api_key is None and model_name:
                 # 兼容旧数据：未命中系统模型表时查 external_models
@@ -3424,6 +3641,7 @@ class Subscription:
                     model_name=model_used or model_name or "",
                     intent=intent or "",
                     usage=captured_usage,
+                    is_system_model=_is_system_model_stream,
                 )
             except Exception as e:
                 logger.error(f"{get_request_id()}保存用量日志失败: {e}", exc_info=True)

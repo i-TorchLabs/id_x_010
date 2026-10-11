@@ -11,7 +11,14 @@ import { redirectToAdfsAuthorize } from "@/utils/sso";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export default function LoginPage() {
+export type LoginMode = "user" | "admin";
+
+interface LoginPageProps {
+    /** 登录场景：user=普通用户登录页，admin=管理后台登录页 */
+    mode?: LoginMode;
+}
+
+export default function LoginPage({ mode = "user" }: LoginPageProps) {
     const router = useRouter();
     const searchParams = useSearchParams();
     const { theme } = useTheme();
@@ -27,6 +34,9 @@ export default function LoginPage() {
     const [emailError, setEmailError] = useState(false);
     const [passwordError, setPasswordError] = useState(false);
 
+    const isAdmin = mode === "admin";
+    const redirectTo = isAdmin ? "/admin" : "/f/home";
+
     // SSO 回调失败时通过 ?error= 携带原因回显到登录页
     useEffect(() => {
         const err = searchParams.get("error");
@@ -38,6 +48,25 @@ export default function LoginPage() {
             setErrorMsg(map[err] ?? err);
         }
     }, [searchParams]);
+
+    // 已登录且角色匹配时直接跳转目标页，避免重复登录
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        const token = localStorage.getItem("token");
+        const userRaw = localStorage.getItem("user");
+        if (!token || !userRaw) return;
+        try {
+            const u = JSON.parse(userRaw);
+            const role: string = u?.role ?? (u?.is_admin ? "admin" : "user");
+            if (isAdmin && role === "admin") {
+                router.replace("/admin");
+            } else if (!isAdmin && role === "user") {
+                router.replace("/f/home");
+            }
+        } catch {
+            // 本地 user 损坏，忽略让其重新登录
+        }
+    }, [isAdmin, router]);
 
     const handleSsoClick = useCallback(() => {
         setErrorMsg("");
@@ -71,6 +100,8 @@ export default function LoginPage() {
                 const result = await userGraphqlApi.login({
                     email: cleanEmail,
                     password: password,
+                    // 管理后台登录页仅允许管理员，用户登录页仅允许普通用户
+                    role: isAdmin ? "admin" : "user",
                 });
 
                 console.log("Login result:", result);
@@ -93,7 +124,7 @@ export default function LoginPage() {
                     );
                 }
 
-                router.push("/f/home");
+                router.push(redirectTo);
             } catch (error: any) {
                 console.error("Login failed:", error);
                 setErrorMsg(error.message || "Invalid email or password, please try again");
@@ -101,7 +132,7 @@ export default function LoginPage() {
                 setIsSubmitting(false);
             }
         },
-        [email, password],
+        [email, password, isAdmin, redirectTo],
     );
 
     return (
@@ -138,6 +169,7 @@ export default function LoginPage() {
                         emailError={emailError}
                         passwordError={passwordError}
                         onSsoClick={handleSsoClick}
+                        isAdmin={isAdmin}
                     />
                 </div>
             </div>

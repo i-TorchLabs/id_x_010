@@ -21,7 +21,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
 
       // 如果没有 token，重定向到登录页面
       if (!token) {
-        router.push("/f/login");
+        router.push("/f/user-login");
         return;
       }
 
@@ -44,13 +44,13 @@ export function AuthGuard({ children }: AuthGuardProps) {
       if (!user) {
         // 用户信息不存在，可能 token 无效
         localStorage.removeItem("token");
-        router.push("/f/login");
+        router.push("/f/user-login");
       }
     } catch (error) {
       console.error("Token validation failed:", error);
       localStorage.removeItem("token");
       localStorage.removeItem("user");
-      router.push("/f/login");
+      router.push("/f/user-login");
     }
   };
 

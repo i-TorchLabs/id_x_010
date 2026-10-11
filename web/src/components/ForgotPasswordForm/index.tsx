@@ -76,7 +76,7 @@ export default function ForgotPasswordForm({
                     variant="primary"
                     size="lg"
                     className="rounded-full font-semibold"
-                    onPress={() => (window.location.href = "/f/login")}
+                    onPress={() => (window.location.href = "/f/user-login")}
                 >
                     Back to Login
                 </Button>
@@ -200,7 +200,7 @@ export default function ForgotPasswordForm({
             <div className="text-center mt-8 text-[14px] text-muted">
                 Remember your password?{" "}
                 <a
-                    href="/f/login"
+                    href="/f/user-login"
                     className="no-underline hover:underline text-foreground font-semibold"
                 >
                     Log In

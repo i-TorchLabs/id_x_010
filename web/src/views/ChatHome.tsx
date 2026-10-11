@@ -577,6 +577,7 @@ export default function ChatHome() {
           phone: parsed.phone ?? null,
           displayName: parsed.displayName ?? null,
           avatarUrl: parsed.avatarUrl ?? null,
+          role: parsed.role ?? null,
           createdAt: parsed.createdAt ?? null,
         });
       }
@@ -607,7 +608,7 @@ export default function ChatHome() {
         localStorage.removeItem("token");
         localStorage.removeItem("user");
       }
-      router.push("/f/login");
+      router.push("/f/user-login");
     }
   };
 
