@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { useTheme } from "@/context/ThemeContext";
+import { useI18n } from "@/context/I18nContext";
 import { motion } from "framer-motion";
 import { Button, ListBox, Select } from "@heroui/react";
 import { modelGraphqlApi, ModelInfo, MarkdownPromptItem } from "@/api/graphql";
@@ -26,14 +27,15 @@ function ModelSelector({
 }) {
   const measureRef = useRef<HTMLSpanElement>(null);
   const [width, setWidth] = useState<number | null>(null);
+  const { t } = useI18n();
 
   const displayText = selectedModel
     ? selectedModel.isSystem
-      ? `${selectedModel.name} (${selectedModel.provider}) · SYS`
+      ? `${selectedModel.name} (${selectedModel.provider}) · ${t("chat.sysBadge")}`
       : `${selectedModel.name} (${selectedModel.provider})`
     : isLoadingModels
-      ? "Loading..."
-      : "No models available";
+      ? t("chat.modelLoading")
+      : t("chat.noModels");
 
   useLayoutEffect(() => {
     if (measureRef.current) {
@@ -50,7 +52,7 @@ function ModelSelector({
 
   return (
     <Select
-      aria-label="Model"
+      aria-label={t("sidebar.modelSelection")}
       value={selectedModel ? String(selectedModel.id) : null}
       onChange={(key) => {
         const model = models.find((m) => m.id === Number(key));
@@ -64,7 +66,7 @@ function ModelSelector({
             m.provider.includes("Under deployment"),
         )
         .map((m) => String(m.id))}
-      placeholder={isLoadingModels ? "Loading..." : "No models available"}
+      placeholder={isLoadingModels ? t("chat.modelLoading") : t("chat.noModels")}
       variant="secondary"
       className="w-auto"
       style={{ width: triggerWidth }}
@@ -79,8 +81,8 @@ function ModelSelector({
             <span className="block w-full text-center truncate">
               {isPlaceholder
                 ? isLoadingModels
-                  ? "Loading..."
-                  : "No models available"
+                  ? t("chat.modelLoading")
+                  : t("chat.noModels")
                 : selectedText}
             </span>
           )}
@@ -116,7 +118,7 @@ function ModelSelector({
                         color: "var(--accent, #3b82f6)",
                       }}
                     >
-                      SYS
+                      {t("chat.sysBadge")}
                     </span>
                   )}
                 </span>
@@ -189,6 +191,7 @@ export function MessageInput({
   const [internalIsLoadingModels, setInternalIsLoadingModels] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { theme } = useTheme();
+  const { t } = useI18n();
   const isDark = theme === "dark";
 
   const models =
@@ -326,7 +329,7 @@ export function MessageInput({
         <span className="truncate max-w-[200px]">
           {activePrompt.noteName ?? activePrompt.filename}
         </span>
-        <span style={{ color: "var(--fg4)" }} className="shrink-0">· injected</span>
+        <span style={{ color: "var(--fg4)" }} className="shrink-0">{t("chat.promptInjected")}</span>
       </div>
     ) : null;
 
@@ -337,7 +340,7 @@ export function MessageInput({
       size={isSmall ? "sm" : "md"}
       onPress={handleSend}
       isDisabled={!input.trim() || isStreaming}
-      aria-label="Send"
+      aria-label={t("chat.ariaSend")}
       className="rounded-full"
       style={{
         boxShadow:
@@ -388,7 +391,7 @@ export function MessageInput({
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Ask me anything..."
+                  placeholder={t("chat.placeholderHero")}
                   rows={1}
                   className="w-full h-full bg-transparent border-none outline-none resize-none font-text"
                   style={{
@@ -476,7 +479,7 @@ export function MessageInput({
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Type your message..."
+                placeholder={t("chat.placeholderFooter")}
                 rows={1}
                 className="w-full bg-transparent resize-none outline-none font-text"
                 style={{
@@ -536,7 +539,7 @@ export function MessageInput({
                 color: "var(--fg4)",
               }}
             >
-              Enter to send · Shift+Enter for new line
+              {t("chat.inputHelpText")}
             </p>
           </div>
         </div>
@@ -554,6 +557,7 @@ function ImageButton({
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const { t } = useI18n();
 
   const handleClick = () => {
     // 某些浏览器在 display:none 的 input 上 .click() 无效，
@@ -571,7 +575,7 @@ function ImageButton({
       if (res.success && res.image_id) {
         onUploaded(res.image_id, res.filename || file.name);
       } else {
-        alert(res.error || "Image upload failed");
+        alert(res.error || t("chat.errorImageUploadFailed"));
       }
     } catch (e) {
       alert(`Image upload error: ${(e as Error).message}`);
@@ -587,7 +591,7 @@ function ImageButton({
         type="button"
         onClick={handleClick}
         disabled={uploading}
-        title="Upload image for VL Agent analysis"
+        title={t("chat.tooltipUploadImage")}
         style={{
           width: 32,
           height: 32,

@@ -10,6 +10,16 @@ const nextConfig: NextConfig = {
                 destination: "/f/login",
                 permanent: false,
             },
+            {
+                source: "/admin",
+                destination: "/f/admin-home",
+                permanent: false,
+            },
+            {
+                source: "/f/home",
+                destination: "/f/user-home",
+                permanent: false,
+            },
         ];
     },
     allowedDevOrigins: ["*"],

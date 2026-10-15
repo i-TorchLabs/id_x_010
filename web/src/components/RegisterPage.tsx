@@ -3,7 +3,9 @@
 import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "@/context/ThemeContext";
+import { useI18n } from "@/context/I18nContext";
 import { ThemeToggle } from "./ThemeToggle";
+import { LangToggle } from "./LangToggle";
 import LeftPanel from "./LeftPanel";
 import RegisterForm from "./RegisterForm";
 import { userGraphqlApi } from "@/api/graphql";
@@ -13,6 +15,7 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export default function RegisterPage() {
     const router = useRouter();
     const { theme } = useTheme();
+    const { t } = useI18n();
     const isDark = theme === "dark";
     const [email, setEmail] = useState("");
     const [phone, setPhone] = useState("");
@@ -43,7 +46,7 @@ export default function RegisterPage() {
 
             if (!cleanEmail || !EMAIL_REGEX.test(cleanEmail)) {
                 setEmailError(true);
-                setErrorMsg("Please enter a valid email address.");
+                setErrorMsg(t("register.errorValidEmailRequired"));
                 return;
             }
 
@@ -52,20 +55,19 @@ export default function RegisterPage() {
                 (cleanPhone.length !== 11 || !/^\d{11}$/.test(cleanPhone))
             ) {
                 setPhoneError(true);
-                setErrorMsg("Phone number must be exactly 11 digits.");
+                setErrorMsg(t("register.errorPhoneInvalid"));
                 return;
             }
 
             if (!password || password.length < 6) {
                 setPasswordError(true);
-                setErrorMsg("Password must be at least 6 characters.");
+                setErrorMsg(t("register.errorPasswordMinLength"));
                 return;
             }
 
-            // 验证确认密码
             if (password !== confirmPassword) {
                 setConfirmPasswordError(true);
-                setErrorMsg("Passwords do not match.");
+                setErrorMsg(t("register.errorPasswordMismatch"));
                 return;
             }
 
@@ -84,7 +86,7 @@ export default function RegisterPage() {
 
                 // 检查是否注册成功
                 if (!result.register.success) {
-                    setErrorMsg(result.register.message || "Registration failed, please try again");
+                    setErrorMsg(result.register.message || t("register.errorRegistrationFailed"));
                     return;
                 }
 
@@ -92,7 +94,7 @@ export default function RegisterPage() {
                 router.push("/f/user-login?registered=true");
             } catch (error: any) {
                 console.error("Registration failed:", error);
-                setErrorMsg(error.message || "Registration failed, please try again");
+                setErrorMsg(error.message || t("register.errorRegistrationFailed"));
             } finally {
                 setIsSubmitting(false);
             }
@@ -102,7 +104,8 @@ export default function RegisterPage() {
 
     return (
         <div className="h-screen relative overflow-hidden">
-            <div className="absolute top-4 right-4 z-50">
+            <div className="absolute top-4 right-4 z-50 flex items-center gap-1">
+                <LangToggle />
                 <ThemeToggle />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 h-full">

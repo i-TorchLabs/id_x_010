@@ -5,17 +5,17 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE;
-COMMENT ON COLUMN users.is_admin IS '是否管理员（与 role 同步，role 为权威字段）';
+COMMENT ON COLUMN users.is_admin IS '是否管理员（admin ∈ role 的派生标志，兼容老校验）';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_algo VARCHAR(16) DEFAULT 'bcrypt';
 COMMENT ON COLUMN users.password_algo IS '密码哈希算法：bcrypt / sha256（老数据）';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS system_model_quota_usd DOUBLE PRECISION;
 COMMENT ON COLUMN users.system_model_quota_usd IS '系统预置模型月度配额上限（USD）；NULL 不限额，仅限系统模型';
--- 用户角色：admin=管理员 / user=普通用户。与 is_admin 同步，role 为权威字段。
-ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(16) NOT NULL DEFAULT 'user';
-COMMENT ON COLUMN users.role IS '用户角色：admin=管理员 / user=普通用户';
--- 老库迁移：已 is_admin=TRUE 的行回填 role='admin'（幂等）
-UPDATE users SET role = 'admin' WHERE is_admin = TRUE AND (role IS NULL OR role = 'user');
-UPDATE users SET is_admin = TRUE WHERE role = 'admin' AND is_admin IS NOT TRUE;
+-- 用户角色（多角色，逗号分隔）：user=普通用户, admin=管理员。同一用户可同时拥有多角色。
+ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(64) NOT NULL DEFAULT 'user';
+COMMENT ON COLUMN users.role IS '用户角色（逗号分隔多角色）：user / admin / user,admin';
+-- 老库迁移：已 is_admin=TRUE 的行回填 role='user,admin'（幂等，仅更新 role 仍为旧单值或 NULL 的行）
+UPDATE users SET role = 'user,admin' WHERE is_admin = TRUE AND (role IS NULL OR role = 'user' OR role = 'admin');
+UPDATE users SET is_admin = TRUE WHERE role LIKE '%admin%' AND is_admin IS NOT TRUE;
 
 -- usage_logs 增量字段：is_system_model
 ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS is_system_model BOOLEAN NOT NULL DEFAULT FALSE;

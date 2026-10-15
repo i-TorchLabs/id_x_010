@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Modal } from "@heroui/react";
 import { motion } from "framer-motion";
 import { useTheme } from "@/context/ThemeContext";
+import { useI18n } from "@/context/I18nContext";
 import {
   usageGraphqlApi,
   type UsageDailyItem,
@@ -25,9 +26,9 @@ import {
 type Metric = "tokens" | "cost";
 
 const RANGE_OPTIONS: { value: number; label: string }[] = [
-  { value: 7, label: "7d" },
-  { value: 30, label: "30d" },
-  { value: 90, label: "90d" },
+  { value: 7, label: "usage.range7d" },
+  { value: 30, label: "usage.range30d" },
+  { value: 90, label: "usage.range90d" },
 ];
 
 interface StatsData {
@@ -81,6 +82,7 @@ function BarChart({
   isDark: boolean;
 }) {
   const [hovered, setHovered] = useState<number | null>(null);
+  const { t } = useI18n();
 
   const values = useMemo(
     () =>
@@ -121,7 +123,7 @@ function BarChart({
         className="flex items-center justify-center"
         style={{ height: CHART_H, color: labelColor, fontSize: "13px" }}
       >
-        No usage data
+        {t("usage.emptyChart")}
       </div>
     );
   }
@@ -132,7 +134,7 @@ function BarChart({
       className="w-full"
       style={{ height: "auto", display: "block" }}
       role="img"
-      aria-label="Daily usage bar chart"
+      aria-label={t("usage.ariaBarChart")}
     >
       {/* 网格线 + Y 轴标签 */}
       {gridFractions.map((f) => {
@@ -321,6 +323,7 @@ interface UsageStatsDialogProps {
 
 export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps) {
   const { theme } = useTheme();
+  const { t } = useI18n();
   const isDark = theme === "dark";
 
   const [days, setDays] = useState(30);
@@ -349,7 +352,7 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
         });
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Load failed");
+      setError(e instanceof Error ? e.message : t("usage.errorLoadFailed"));
       setData(null);
     } finally {
       setLoading(false);
@@ -373,7 +376,7 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
         <Modal.Dialog className="sm:max-w-[1040px]">
           <Modal.CloseTrigger />
           <Modal.Header>
-            <Modal.Heading>Usage Statistics</Modal.Heading>
+            <Modal.Heading>{t("usage.modalTitle")}</Modal.Heading>
           </Modal.Header>
           <Modal.Body>
             {/* 时间范围 + 指标切换 */}
@@ -393,7 +396,7 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
                         border: "0.5px solid var(--divider)",
                       }}
                     >
-                      {opt.label}
+                      {t(opt.label)}
                     </button>
                   );
                 })}
@@ -419,7 +422,7 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
                         color: selected ? "var(--accent-fg)" : "var(--fg3)",
                       }}
                     >
-                      {m === "tokens" ? "Token Usage" : "Cost"}
+                      {m === "tokens" ? t("usage.metricTokens") : t("usage.metricCost")}
                     </button>
                   );
                 })}
@@ -429,7 +432,7 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
             {/* 汇总卡片 */}
             {loading && !data ? (
               <p className="text-sm py-8 text-center" style={{ color: "var(--fg3)" }}>
-                Loading...
+                {t("usage.loading")}
               </p>
             ) : error ? (
               <div
@@ -445,25 +448,27 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
               <>
                 <div className="grid grid-cols-3 gap-2.5">
                   <StatCard
-                    label="Requests"
+                    label={t("usage.cardRequests")}
                     value={formatTokens(data.totalRequests)}
-                    sub={`Last ${data.days} days`}
+                    sub={t("usage.cardRequestsSub", { days: data.days })}
                   />
                   <StatCard
-                    label="Token Usage"
+                    label={t("usage.cardTokenUsage")}
                     value={formatTokens(data.totalTokens)}
                     sub={
                       data.daily.length > 0
-                        ? `Daily avg ${formatTokens(
-                            Math.round(data.totalTokens / data.days),
-                          )}`
+                        ? t("usage.cardTokenUsageSub", {
+                            avg: formatTokens(
+                              Math.round(data.totalTokens / data.days),
+                            ),
+                          })
                         : undefined
                     }
                   />
                   <StatCard
-                    label="Cost"
+                    label={t("usage.cardCost")}
                     value={formatCost(data.totalCostUsd)}
-                    sub="USD"
+                    sub={t("usage.cardCostSub")}
                   />
                 </div>
 
@@ -486,7 +491,7 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
                       color: "var(--fg3)",
                     }}
                   >
-                    {metric === "tokens" ? "Daily Token Usage" : "Daily Cost"}
+                    {metric === "tokens" ? t("usage.chartTitleTokens") : t("usage.chartTitleCost")}
                   </div>
                   <BarChart daily={data.daily} metric={metric} isDark={isDark} />
                 </div>
@@ -503,14 +508,14 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
                       color: "var(--fg3)",
                     }}
                   >
-                    Model Breakdown
+                    {t("usage.modelBreakdownSection")}
                   </div>
                   {data.byModel.length === 0 ? (
                     <p
                       className="text-xs py-4 text-center"
                       style={{ color: "var(--fg3)" }}
                     >
-                      No model usage records
+                      {t("usage.noModelUsage")}
                     </p>
                   ) : (
                     <div
@@ -582,7 +587,7 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
           </Modal.Body>
           <Modal.Footer>
             <Button slot="close" variant="tertiary">
-              Close
+              {t("usage.close")}
             </Button>
           </Modal.Footer>
         </Modal.Dialog>

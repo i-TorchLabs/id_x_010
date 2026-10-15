@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { userGraphqlApi } from "@/api/graphql";
-import { OAUTH_STATE_KEY } from "@/utils/sso";
+import { OAUTH_STATE_KEY, setSsoLoginFlag } from "@/utils/sso";
 
 /**
  * ADFS 授权码授予流回调页：
@@ -47,10 +47,13 @@ export default function OAuthCallbackPage() {
         if (typeof window !== "undefined") {
           localStorage.setItem("token", resp.token);
           localStorage.setItem("user", JSON.stringify(resp.user));
+          // 标记当前会话由 SSO 建立，登出时一并退出 ADFS
+          setSsoLoginFlag();
         }
         // SSO 默认建立普通用户：管理员若经 SSO 登录则按 role 跳转
         const role: string = resp.user.role ?? "user";
-        router.push(role === "admin" ? "/admin" : "/f/home");
+        const hasAdmin = role.split(",").map((r: string) => r.trim()).includes("admin");
+        router.push(hasAdmin ? "/f/admin-home" : "/f/user-home");
       })
       .catch((error) => {
         console.error("SSO login failed:", error);

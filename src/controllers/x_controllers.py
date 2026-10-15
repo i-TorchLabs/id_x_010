@@ -46,6 +46,7 @@ from x_models.id_x_010.src.schemas.x_schemas import (
     SystemModelUserKeyMutationResponseType,
     SystemModelUserMappingListResponseType,
     SystemModelUserMappingType,
+    AdminSystemModelUserKeyInput,
     ForgotPasswordResponseType,
     HealthType,
     LoginInput,
@@ -816,9 +817,9 @@ class Query:
                         email=u.email,
                         display_name=u.display_name,
                         is_active=bool(u.is_active),
-                        is_admin=bool(getattr(u, "is_admin", False)),
-                        role=getattr(u, "role", None)
-                        or ("admin" if getattr(u, "is_admin", False) else "user"),
+                        is_admin=bool(getattr(u, "is_admin", False))
+                        or u.has_role("admin"),
+                        role=u.role or "user",
                         created_at=(
                             u.created_at.isoformat() if u.created_at else None
                         ),
@@ -1164,9 +1165,10 @@ class Mutation:
                     return AuthResponseType(success=False, message="用户尚未激活")
 
                 # 角色校验：管理员登录页与用户登录页分离后，按 input.role 校验。
-                # role 为权威字段；老库无 role 时按 is_admin 回退推断，兼容存量数据。
-                user_role = getattr(user, "role", None) or (
-                    "admin" if getattr(user, "is_admin", False) else "user"
+                # role 为多角色字段（逗号分隔），has_role("admin") 判定管理员。
+                # 管理员同时也是普通用户，可在用户登录页登录（跳转 user-home）。
+                user_has_admin = user.has_role("admin") or bool(
+                    getattr(user, "is_admin", False)
                 )
                 if input.role:
                     requested = input.role.strip().lower()
@@ -1174,7 +1176,7 @@ class Mutation:
                         return AuthResponseType(
                             success=False, message="无效的登录角色"
                         )
-                    if requested == "admin" and user_role != "admin":
+                    if requested == "admin" and not user_has_admin:
                         logger.warning(
                             f"{get_request_id()}非管理员尝试登录管理后台: "
                             f"user_id={user.id}, email={user.email}"
@@ -1182,20 +1184,11 @@ class Mutation:
                         return AuthResponseType(
                             success=False, message="该账号无管理员权限"
                         )
-                    if requested == "user" and user_role == "admin":
-                        # 管理员不应在用户登录页登录，提示改用管理后台入口
-                        return AuthResponseType(
-                            success=False,
-                            message="该账号为管理员，请前往管理后台登录",
-                        )
+                    # requested == "user"：管理员也是普通用户，允许登录用户页
 
-                # role 与 is_admin 同步：老库 is_admin=True 但 role 缺失时补齐
-                if user_role == "admin" and not getattr(user, "is_admin", False):
+                # is_admin 与 role 同步：admin ∈ role 但 is_admin 未置位时补齐
+                if user_has_admin and not getattr(user, "is_admin", False):
                     user.is_admin = True
-                if user_role != "admin" and getattr(user, "is_admin", False):
-                    user.is_admin = False
-                if not getattr(user, "role", None):
-                    user.role = user_role
 
                 token = await generate_token()
 
@@ -1769,7 +1762,7 @@ class Mutation:
     # 后台运维（TASK-013）：管理员 mutation
     # ------------------------------------------------------------------
 
-    @strawberry.mutation(description="管理员：设置/取消用户管理员权限（同步 role 字段）")
+    @strawberry.mutation(description="管理员：设置/取消用户管理员权限（多角色 role 字段增删 admin）")
     async def set_user_admin(
         self, info: strawberry.Info, user_id: int, is_admin: bool
     ) -> AdminMutationResponseType:
@@ -1788,8 +1781,10 @@ class Mutation:
                     return AdminMutationResponseType(
                         success=False, message=f"用户不存在: id={user_id}"
                     )
-                u.is_admin = is_admin
-                u.role = "admin" if is_admin else "user"
+                if is_admin:
+                    u.add_role("admin")
+                else:
+                    u.remove_role("admin")
                 await session.commit()
             return AdminMutationResponseType(
                 success=True,
@@ -3124,6 +3119,14 @@ class Mutation:
                     success=False, message="API Key 不能为空", mapping=None
                 )
 
+            systemModelBlockMsg = (
+                "系统预置模型 API Key 由管理员统一配置，禁止普通用户自助设置"
+            )
+            if not (user.has_role("admin") or bool(getattr(user, "is_admin", False))):
+                return SystemModelUserKeyMutationResponseType(
+                    success=False, message=systemModelBlockMsg, mapping=None
+                )
+
             # 校验 system_model_id 存在且 enabled
             sys_models = await list_system_models(enabled_only=True)
             sm = next((m for m in sys_models if m.id == input.system_model_id), None)
@@ -3193,6 +3196,13 @@ class Mutation:
                     success=False, message="未登录或登录已过期", mapping=None
                 )
 
+            if not (user.has_role("admin") or bool(getattr(user, "is_admin", False))):
+                return SystemModelUserKeyMutationResponseType(
+                    success=False,
+                    message="系统预置模型 API Key 由管理员统一配置，禁止普通用户自助删除",
+                    mapping=None,
+                )
+
             ok = await delete_user_system_model_mapping(user.id, system_model_id)
             if not ok:
                 return SystemModelUserKeyMutationResponseType(
@@ -3211,6 +3221,159 @@ class Mutation:
             )
             return SystemModelUserKeyMutationResponseType(
                 success=False, message=f"失败: {str(e)}", mapping=None
+            )
+
+    # ------------------------------------------------------------------
+    # 管理员：替指定用户管理系统预置模型的 API Key
+    # 普通用户不能自助配置系统模型 API Key，由管理员在后台逐用户配置。
+    # ------------------------------------------------------------------
+
+    @strawberry.field(description="管理员：列出指定用户对系统预置模型的 API Key 映射")
+    async def admin_list_user_system_model_keys(
+        self, info: strawberry.Info, user_id: int
+    ) -> SystemModelUserMappingListResponseType:
+        from x_models.id_x_010.src.middleware.x_admin import (
+            AdminRequiredError,
+            require_admin,
+        )
+
+        try:
+            await require_admin(_get_info_request(info))
+            mappings = await list_user_system_model_mappings(user_id)
+            sys_models = {m.id: m for m in await list_system_models(enabled_only=False)}
+            result = []
+            for mp in mappings:
+                sm = sys_models.get(mp.system_model_id)
+                result.append(
+                    SystemModelUserMappingType(
+                        id=mp.id,
+                        user_id=mp.user_id,
+                        system_model_id=mp.system_model_id,
+                        system_model_name=sm.name if sm else None,
+                        api_key=mp.api_key,
+                        created_at=mp.created_at.isoformat() if mp.created_at else None,
+                        updated_at=mp.updated_at.isoformat() if mp.updated_at else None,
+                    )
+                )
+            return SystemModelUserMappingListResponseType(
+                success=True,
+                message=f"查询到 {len(result)} 条映射",
+                mappings=result,
+            )
+        except AdminRequiredError as e:
+            return SystemModelUserMappingListResponseType(
+                success=False, message=e.message, mappings=[]
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}管理员查询用户系统模型映射失败: {e}",
+                exc_info=True,
+            )
+            return SystemModelUserMappingListResponseType(
+                success=False, message=f"失败: {str(e)}", mappings=[]
+            )
+
+    @strawberry.mutation(description="管理员：为指定用户保存系统预置模型的 API Key")
+    async def admin_save_user_system_model_key(
+        self, info: strawberry.Info, input: AdminSystemModelUserKeyInput
+    ) -> SystemModelUserKeyMutationResponseType:
+        from x_models.id_x_010.src.middleware.x_admin import (
+            AdminRequiredError,
+            require_admin,
+        )
+
+        try:
+            await require_admin(_get_info_request(info))
+
+            api_key = input.api_key.strip()
+            if not api_key:
+                return SystemModelUserKeyMutationResponseType(
+                    success=False, message="API Key 不能为空", mapping=None
+                )
+
+            sys_models = await list_system_models(enabled_only=False)
+            sm = next((m for m in sys_models if m.id == input.system_model_id), None)
+            if sm is None:
+                return SystemModelUserKeyMutationResponseType(
+                    success=False,
+                    message=f"系统预置模型不存在: id={input.system_model_id}",
+                    mapping=None,
+                )
+
+            if input.test_connection:
+                ok, msg = await test_model_connectivity(
+                    base_url=sm.base_url, api_key=api_key, model_name=sm.name
+                )
+                if not ok:
+                    return SystemModelUserKeyMutationResponseType(
+                        success=False,
+                        message=f"连通性检测未通过: {msg}",
+                        mapping=None,
+                    )
+
+            mapping = await upsert_user_system_model_mapping(
+                user_id=input.user_id,
+                system_model_id=input.system_model_id,
+                api_key=api_key,
+            )
+            if mapping is None:
+                return SystemModelUserKeyMutationResponseType(
+                    success=False, message="保存失败", mapping=None
+                )
+            return SystemModelUserKeyMutationResponseType(
+                success=True,
+                message="已保存该用户的系统模型 API Key",
+                mapping=SystemModelUserMappingType(
+                    id=mapping.id,
+                    user_id=mapping.user_id,
+                    system_model_id=mapping.system_model_id,
+                    system_model_name=sm.name,
+                    api_key=mapping.api_key,
+                    created_at=mapping.created_at.isoformat() if mapping.created_at else None,
+                    updated_at=mapping.updated_at.isoformat() if mapping.updated_at else None,
+                ),
+            )
+        except AdminRequiredError as e:
+            return SystemModelUserKeyMutationResponseType(
+                success=False, message=e.message, mapping=None
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}管理员保存用户系统模型映射失败: {e}",
+                exc_info=True,
+            )
+            return SystemModelUserKeyMutationResponseType(
+                success=False, message=f"失败: {str(e)}", mapping=None
+            )
+
+    @strawberry.mutation(description="管理员：删除指定用户对系统预置模型的个人 API Key")
+    async def admin_delete_user_system_model_key(
+        self, info: strawberry.Info, user_id: int, system_model_id: int
+    ) -> AdminMutationResponseType:
+        from x_models.id_x_010.src.middleware.x_admin import (
+            AdminRequiredError,
+            require_admin,
+        )
+
+        try:
+            await require_admin(_get_info_request(info))
+            ok = await delete_user_system_model_mapping(user_id, system_model_id)
+            if not ok:
+                return AdminMutationResponseType(
+                    success=False, message="映射不存在或已被删除"
+                )
+            return AdminMutationResponseType(
+                success=True, message="已删除该用户的个人 Key"
+            )
+        except AdminRequiredError as e:
+            return AdminMutationResponseType(success=False, message=e.message)
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}管理员删除用户系统模型映射失败: {e}",
+                exc_info=True,
+            )
+            return AdminMutationResponseType(
+                success=False, message=f"失败: {type(e).__name__}: {e}"
             )
 
     async def logout(self) -> AuthResponseType:

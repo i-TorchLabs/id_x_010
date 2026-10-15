@@ -106,8 +106,8 @@ def _select_subprotocol(socket: WebSocket) -> Optional[str]:
 def _user_channels(user: User) -> list[str]:
     """根据是否 admin 返回该用户应订阅的频道列表。"""
     channels = [f"user:{user.id}"]
-    # is_admin 字段在 TASK-013 加上；向后兼容： getattr 取不到则视为非 admin
-    if getattr(user, "is_admin", False):
+    # role 多角色字段权威，is_admin 兼容兜底
+    if user.has_role("admin") or getattr(user, "is_admin", False):
         channels.append("__admin__")
     return channels
 

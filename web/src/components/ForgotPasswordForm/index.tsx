@@ -11,6 +11,7 @@ import {
     Label,
     TextField,
 } from "@heroui/react";
+import { useI18n } from "@/context/I18nContext";
 
 interface ForgotPasswordFormProps {
     email: string;
@@ -41,6 +42,7 @@ export default function ForgotPasswordForm({
     setAgreedToTerms,
     termsError,
 }: ForgotPasswordFormProps) {
+    const { t } = useI18n();
     if (isSuccess) {
         return (
             <div className="w-full max-w-100">
@@ -64,10 +66,10 @@ export default function ForgotPasswordForm({
 
                 <div className="text-center mb-9">
                     <h1 className="text-[28px] font-semibold mb-1.5 leading-[1.14] tracking-[-0.28px] text-foreground">
-                        Check your email
+                        {t("forgotPassword.successTitle")}
                     </h1>
                     <p className="text-[14px] text-muted">
-                        We have sent password reset instructions to {email}
+                        {t("forgotPassword.successBody", { email })}
                     </p>
                 </div>
 
@@ -78,7 +80,7 @@ export default function ForgotPasswordForm({
                     className="rounded-full font-semibold"
                     onPress={() => (window.location.href = "/f/user-login")}
                 >
-                    Back to Login
+                    {t("forgotPassword.backToLogin")}
                 </Button>
             </div>
         );
@@ -108,10 +110,10 @@ export default function ForgotPasswordForm({
 
             <div className="text-center mb-9">
                 <h1 className="text-[28px] font-semibold mb-1.5 leading-[1.14] tracking-[-0.28px] text-foreground">
-                    Reset your password
+                    {t("forgotPassword.title")}
                 </h1>
                 <p className="text-[14px] text-muted">
-                    Enter your email to receive reset instructions
+                    {t("forgotPassword.subtitle")}
                 </p>
             </div>
 
@@ -127,7 +129,7 @@ export default function ForgotPasswordForm({
                         validationBehavior="aria"
                     >
                         <Label htmlFor="email" className="text-sm font-semibold">
-                            Email
+                            {t("forgotPassword.emailLabel")}
                         </Label>
                         <Input
                             id="email"
@@ -137,11 +139,11 @@ export default function ForgotPasswordForm({
                             onChange={(e) => setEmail(e.target.value)}
                             onFocus={() => setIsTyping(true)}
                             onBlur={() => setIsTyping(false)}
-                            placeholder="you@example.com"
+                            placeholder={t("forgotPassword.emailPlaceholder")}
                             autoComplete="off"
                         />
                         {emailError && (
-                            <FieldError>Invalid email address</FieldError>
+                            <FieldError>{t("forgotPassword.errorValidEmailRequired")}</FieldError>
                         )}
                     </TextField>
                 </div>
@@ -159,19 +161,13 @@ export default function ForgotPasswordForm({
                                 <Checkbox.Indicator />
                             </Checkbox.Control>
                             <span className="text-sm text-muted">
-                                I agree to the{" "}
-                                <a
-                                    href="/terms"
-                                    className="no-underline hover:underline text-foreground font-medium"
-                                >
-                                    Terms of Service
-                                </a>
+                                {t("forgotPassword.termsLabel")}
                             </span>
                         </Checkbox.Content>
                     </Checkbox>
                     {termsError && (
                         <p className="text-[12px] mt-1 text-danger">
-                            You must agree to the Terms of Service
+                            {t("forgotPassword.errorTermsRequired")}
                         </p>
                     )}
                 </div>
@@ -193,17 +189,17 @@ export default function ForgotPasswordForm({
                     isDisabled={isSubmitting}
                     className="rounded-full font-semibold mb-3.5"
                 >
-                    {isSubmitting ? "Sending..." : "Send Reset Link"}
+                    {isSubmitting ? t("forgotPassword.submitting") : t("forgotPassword.submitButton")}
                 </Button>
             </form>
 
             <div className="text-center mt-8 text-[14px] text-muted">
-                Remember your password?{" "}
+                {t("forgotPassword.rememberPassword")}{" "}
                 <a
                     href="/f/user-login"
                     className="no-underline hover:underline text-foreground font-semibold"
                 >
-                    Log In
+                    {t("login.signInLink")}
                 </a>
             </div>
         </div>

@@ -11,6 +11,7 @@ import {
   Label,
   TextField,
 } from "@heroui/react";
+import { useI18n } from "@/context/I18nContext";
 
 interface LoginFormProps {
   email: string;
@@ -51,6 +52,7 @@ export default function LoginForm({
   onSsoClick,
   isAdmin = false,
 }: LoginFormProps) {
+  const { t } = useI18n();
   const eyeIcon = showPassword ? (
     <svg
       className="w-5 h-5"
@@ -113,10 +115,10 @@ export default function LoginForm({
       {/* Header */}
       <div className="text-center mb-9">
         <h1 className="text-[28px] font-semibold mb-1.5 leading-[1.14] tracking-[-0.28px] text-foreground">
-          {isAdmin ? "Admin Console" : "Welcome to SME AI Lab"}
+          {isAdmin ? t("login.adminTitle") : t("login.welcomeTitle")}
         </h1>
         <p className="text-[14px] text-muted">
-          {isAdmin ? "Administrator sign-in" : "Please enter your details"}
+          {isAdmin ? t("login.adminSubtitle") : t("login.userSubtitle")}
         </p>
       </div>
 
@@ -133,7 +135,7 @@ export default function LoginForm({
             validationBehavior="aria"
           >
             <Label htmlFor="email" className="text-sm font-semibold">
-              Email
+              {t("login.emailLabel")}
             </Label>
             <Input
               id="email"
@@ -143,10 +145,10 @@ export default function LoginForm({
               onChange={(e) => setEmail(e.target.value)}
               onFocus={() => setIsTyping(true)}
               onBlur={() => setIsTyping(false)}
-              placeholder="you@example.com"
+              placeholder={t("login.emailPlaceholder")}
               autoComplete="off"
             />
-            {emailError && <FieldError>Invalid email address</FieldError>}
+            {emailError && <FieldError>{t("login.errorInvalidEmail")}</FieldError>}
           </TextField>
         </div>
 
@@ -158,7 +160,7 @@ export default function LoginForm({
             validationBehavior="aria"
           >
             <Label htmlFor="password" className="text-sm font-semibold">
-              Password
+              {t("login.passwordLabel")}
             </Label>
             <div className="relative">
               <Input
@@ -169,20 +171,20 @@ export default function LoginForm({
                 onChange={(e) => setPassword(e.target.value)}
                 onFocus={() => setIsPasswordFocused(true)}
                 onBlur={() => setIsPasswordFocused(false)}
-                placeholder="********"
+                placeholder={t("login.passwordPlaceholder")}
                 className="pr-11"
               />
               <button
                 type="button"
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-foreground transition-colors z-10"
                 onClick={() => setShowPassword(!showPassword)}
-                aria-label={showPassword ? "Hide password" : "Show password"}
+                aria-label={showPassword ? t("login.ariaHidePassword") : t("login.ariaShowPassword")}
               >
                 {eyeIcon}
               </button>
             </div>
             {passwordError && (
-              <FieldError>Password must be at least 6 characters</FieldError>
+              <FieldError>{t("login.errorPasswordTooShort")}</FieldError>
             )}
           </TextField>
         </div>
@@ -194,14 +196,14 @@ export default function LoginForm({
               <Checkbox.Control>
                 <Checkbox.Indicator />
               </Checkbox.Control>
-              <span className="text-sm">Remember for 30 days</span>
+              <span className="text-sm">{t("login.rememberMe")}</span>
             </Checkbox.Content>
           </Checkbox>
           <a
             href="/f/forgot-password"
             className="text-[14px] no-underline hover:underline text-foreground font-medium"
           >
-            Forgot password?
+            {t("login.forgotPassword")}
           </a>
         </div>
 
@@ -225,10 +227,10 @@ export default function LoginForm({
           className="rounded-full font-semibold"
         >
           {isSubmitting
-            ? "Signing in..."
+            ? t("login.signingIn")
             : isAdmin
-              ? "Admin Sign In"
-              : "Log In"}
+              ? t("login.adminSignIn")
+              : t("login.logIn")}
         </Button>
 
         {/* SSO 分隔与入口（仅普通用户登录页展示，管理后台不提供 SSO） */}
@@ -236,7 +238,7 @@ export default function LoginForm({
           <>
             <div className="flex items-center gap-3 my-5">
               <span className="flex-1 h-px bg-border" />
-              <span className="text-xs text-muted">or</span>
+              <span className="text-xs text-muted">{t("login.or")}</span>
               <span className="flex-1 h-px bg-border" />
             </div>
             <Button
@@ -247,7 +249,7 @@ export default function LoginForm({
               className="rounded-full font-semibold"
               onClick={onSsoClick}
             >
-              Sign in with CUHK SSO
+              {t("login.signInWithSso")}
             </Button>
           </>
         )}
@@ -257,30 +259,33 @@ export default function LoginForm({
       <div className="text-center mt-8 text-[14px] text-muted">
         {isAdmin ? (
           <>
-            Are you a regular user?{" "}
+            {t("login.adminFooterPrompt")}{" "}
             <a
               href="/f/user-login"
               className="no-underline hover:underline text-foreground font-semibold"
             >
-              User Sign In
+              {t("login.userSignInLink")}
             </a>
           </>
         ) : (
           <>
-            Don&apos;t have an account?{" "}
-            <a
-              href="/f/user-register"
-              className="no-underline hover:underline text-foreground font-semibold"
-            >
-              Sign Up
-            </a>
-            <span className="mx-2 text-muted/60">·</span>
-            <a
-              href="/f/admin-login"
-              className="no-underline hover:underline text-foreground font-semibold"
-            >
-              Admin Login
-            </a>
+            <div>
+              {t("login.noAccountPrompt")}{" "}
+              <a
+                href="/f/user-register"
+                className="no-underline hover:underline text-foreground font-semibold"
+              >
+                {t("login.signUpLink")}
+              </a>
+            </div>
+            <div className="mt-2">
+              <a
+                href="/f/admin-login"
+                className="no-underline hover:underline text-foreground font-semibold"
+              >
+                {t("login.adminLoginLink")}
+              </a>
+            </div>
           </>
         )}
       </div>

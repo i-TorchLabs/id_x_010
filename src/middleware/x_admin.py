@@ -4,6 +4,7 @@
 addSqlExample 升级版 / savePromptTemplate 等）调用，统一鉴权。
 非管理员抛 403；调用方在 strawberry mutation 内部应 try/except 后返回
 结构化错误响应（避免 HTTPException 直接转 GraphQL error）。
+role 字段为多角色（逗号分隔），has_role("admin") 判定管理员权限。
 """
 
 from typing import Optional
@@ -23,8 +24,8 @@ class AdminRequiredError(Exception):
 async def require_admin(request) -> Optional[User]:
     """鉴权：返回当前登录管理员 User；非管理员或不登录抛 AdminRequiredError。
 
-    role 为权威字段（admin=管理员 / user=普通用户），is_admin 作为兼容兜底；
-    二者任一为管理员即放行，适配老库未回填 role 的过渡期。
+    role 字段为多角色（逗号分隔，如 "user,admin"），has_role("admin") 为权威判断，
+    is_admin 作为兼容兜底；二者任一为管理员即放行，适配老库未回填 role 的过渡期。
 
     Args:
         request: Litestar Request 对象（由 _get_info_request(info) 拿到）。
@@ -42,20 +43,17 @@ async def require_admin(request) -> Optional[User]:
     if user is None:
         raise AdminRequiredError("未登录")
 
-    # role 权威，is_admin 兼容兜底；老库 role 缺失视为 "user"
-    role = getattr(user, "role", None) or (
-        "admin" if getattr(user, "is_admin", False) else "user"
-    )
-    is_admin_flag = role == "admin" or bool(getattr(user, "is_admin", False))
+    # has_role("admin") 权威，is_admin 兼容兜底
+    is_admin_flag = user.has_role("admin") or bool(getattr(user, "is_admin", False))
     if not is_admin_flag:
         logger.warning(
             f"{get_request_id()}require_admin 拒绝非管理员: "
-            f"user_id={user.id}, email={user.email}, role={role}"
+            f"user_id={user.id}, email={user.email}, role={user.role}"
         )
         raise AdminRequiredError("需要管理员权限")
 
-    # role 与 is_admin 不一致时回填同步（老库过渡期）
-    if role == "admin" and not getattr(user, "is_admin", False):
+    # is_admin 未置位但 role 含 admin 时回填同步（老库过渡期）
+    if user.has_role("admin") and not getattr(user, "is_admin", False):
         try:
             user.is_admin = True
         except Exception:

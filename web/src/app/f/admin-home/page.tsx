@@ -1,10 +1,11 @@
 "use client";
 
 /**
- * /admin 路由入口（TASK-013）
+ * /f/admin-home 路由入口（TASK-013）
  *
- * 客户端路由守卫：未登录跳 /f/admin-login，非 admin 跳 /。
+ * 客户端路由守卫：未登录跳 /f/admin-login，非 admin 跳 /f/user-home。
  * 服务端 require_admin 在每个 mutation 内同样守护，绕过客户端会被 403。
+ * role 为多角色字段（逗号分隔），含 admin 角色即可访问。
  */
 
 import { useEffect, useState } from "react";
@@ -35,12 +36,13 @@ export default function AdminPage() {
         router.replace("/f/admin-login");
         return;
       }
-      // role 为权威字段，is_admin 兼容兜底
-      const role: string =
-        user.role ?? (user.is_admin ? "admin" : "user");
-      if (role !== "admin") {
-        // 普通用户重定向到首页
-        router.replace("/");
+      // role 多角色（逗号分隔）权威，is_admin 兼容兜底
+      const hasAdmin = !!user.role
+        ? user.role.split(",").map((r: string) => r.trim()).includes("admin")
+        : !!user.is_admin;
+      if (!hasAdmin) {
+        // 普通用户重定向到用户首页
+        router.replace("/f/user-home");
         return;
       }
       setReady(true);

@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS users (
     avatar BYTEA,
     is_active BOOLEAN DEFAULT TRUE,
     is_admin BOOLEAN DEFAULT FALSE,
-    role VARCHAR(16) NOT NULL DEFAULT 'user',
+    role VARCHAR(64) NOT NULL DEFAULT 'user',
     password_algo VARCHAR(16) DEFAULT 'bcrypt',
     system_model_quota_usd DOUBLE PRECISION,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS users (
 ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name VARCHAR(64);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar BYTEA;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(16) NOT NULL DEFAULT 'user';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(64) NOT NULL DEFAULT 'user';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_algo VARCHAR(16) DEFAULT 'bcrypt';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS system_model_quota_usd DOUBLE PRECISION;
 
@@ -45,8 +45,8 @@ COMMENT ON COLUMN users.password_hash IS '密码哈希';
 COMMENT ON COLUMN users.display_name IS '显示名称（用户可自定义，空则回退 email 本地名）';
 COMMENT ON COLUMN users.avatar IS '头像图片二进制（BYTEA），通过 /avatar/<user_id> 端点按需输出';
 COMMENT ON COLUMN users.is_active IS '是否激活';
-COMMENT ON COLUMN users.is_admin IS '是否管理员（与 role 同步，role 为权威字段）';
-COMMENT ON COLUMN users.role IS '用户角色：admin=管理员 / user=普通用户';
+COMMENT ON COLUMN users.is_admin IS '是否管理员（admin ∈ role 的派生标志，兼容老校验）';
+COMMENT ON COLUMN users.role IS '用户角色（逗号分隔多角色）：user / admin / user,admin';
 COMMENT ON COLUMN users.password_algo IS '密码哈希算法：bcrypt / sha256（老数据）';
 COMMENT ON COLUMN users.system_model_quota_usd IS '系统预置模型月度配额上限（USD）；NULL 不限额，仅限系统模型';
 COMMENT ON COLUMN users.created_at IS '创建时间';
@@ -189,7 +189,7 @@ COMMENT ON COLUMN local_models.api_key IS 'API-KEY';
 
 -- ============================================
 -- 7. 用户模型设置表 (user_model_settings)
---    /home 设置弹窗保存的用户级模型配置，每用户一行
+--    /user-home 设置弹窗保存的用户级模型配置，每用户一行
 -- ============================================
 CREATE TABLE IF NOT EXISTS user_model_settings (
     id SERIAL PRIMARY KEY,

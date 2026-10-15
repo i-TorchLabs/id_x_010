@@ -11,6 +11,7 @@ import {
   Label,
   TextField,
 } from "@heroui/react";
+import { useI18n } from "@/context/I18nContext";
 
 interface RegisterFormProps {
   email: string;
@@ -59,6 +60,7 @@ export default function RegisterForm({
   passwordError,
   confirmPasswordError,
 }: RegisterFormProps) {
+  const { t } = useI18n();
   const eyeIcon = showPassword ? (
     <svg
       className="w-5 h-5"
@@ -119,9 +121,9 @@ export default function RegisterForm({
 
       <div className="text-center mb-9">
         <h1 className="text-[28px] font-semibold mb-1.5 leading-[1.14] tracking-[-0.28px] text-foreground">
-          Create your account
+          {t("register.title")}
         </h1>
-        <p className="text-[14px] text-muted">Get started with your account</p>
+        <p className="text-[14px] text-muted">{t("register.subtitle")}</p>
       </div>
 
       <form
@@ -137,7 +139,7 @@ export default function RegisterForm({
             validationBehavior="aria"
           >
             <Label htmlFor="email" className="text-sm font-semibold">
-              Email
+              {t("login.emailLabel")}
             </Label>
             <Input
               id="email"
@@ -147,10 +149,10 @@ export default function RegisterForm({
               onChange={(e) => setEmail(e.target.value)}
               onFocus={() => setIsTyping(true)}
               onBlur={() => setIsTyping(false)}
-              placeholder="you@example.com"
+              placeholder={t("login.emailPlaceholder")}
               autoComplete="off"
             />
-            {emailError && <FieldError>Invalid email address</FieldError>}
+            {emailError && <FieldError>{t("login.errorInvalidEmail")}</FieldError>}
           </TextField>
         </div>
 
@@ -162,8 +164,8 @@ export default function RegisterForm({
             validationBehavior="aria"
           >
             <Label htmlFor="phone" className="text-sm font-semibold">
-              Phone{" "}
-              <span className="font-normal text-muted">(Optional)</span>
+              {t("register.phoneLabel")}{" "}
+              <span className="font-normal text-muted">({t("register.phoneOptional")})</span>
             </Label>
             <Input
               id="phone"
@@ -173,11 +175,11 @@ export default function RegisterForm({
               onChange={(e) => setPhone(e.target.value)}
               onFocus={() => setIsTyping(true)}
               onBlur={() => setIsTyping(false)}
-              placeholder="***********"
+              placeholder={t("register.phonePlaceholder")}
               autoComplete="off"
             />
             {phoneError && (
-              <FieldError>Phone number must be 11 digits</FieldError>
+              <FieldError>{t("register.errorPhoneInvalid")}</FieldError>
             )}
           </TextField>
         </div>
@@ -190,7 +192,7 @@ export default function RegisterForm({
             validationBehavior="aria"
           >
             <Label htmlFor="password" className="text-sm font-semibold">
-              Password
+              {t("login.passwordLabel")}
             </Label>
             <div className="relative">
               <Input
@@ -201,19 +203,19 @@ export default function RegisterForm({
                 onChange={(e) => setPassword(e.target.value)}
                 onFocus={() => setIsPasswordFocused(true)}
                 onBlur={() => setIsPasswordFocused(false)}
-                placeholder="********"
+                placeholder={t("login.passwordPlaceholder")}
                 className="pr-11"
               />
               <button
                 type="button"
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-foreground transition-colors z-10"
                 onClick={() => setShowPassword(!showPassword)}
-                aria-label={showPassword ? "Hide password" : "Show password"}
+                aria-label={showPassword ? t("login.ariaHidePassword") : t("login.ariaShowPassword")}
               >
                 {eyeIcon}
               </button>
             </div>
-            {passwordError && <FieldError>Invalid password</FieldError>}
+            {passwordError && <FieldError>{t("login.errorPasswordTooShort")}</FieldError>}
           </TextField>
         </div>
 
@@ -225,7 +227,7 @@ export default function RegisterForm({
             validationBehavior="aria"
           >
             <Label htmlFor="confirmPassword" className="text-sm font-semibold">
-              Confirm Password
+              {t("register.confirmPasswordLabel")}
             </Label>
             <Input
               id="confirmPassword"
@@ -233,10 +235,10 @@ export default function RegisterForm({
               fullWidth
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="********"
+              placeholder={t("login.passwordPlaceholder")}
             />
             {confirmPasswordError && (
-              <FieldError>Passwords do not match</FieldError>
+              <FieldError>{t("register.errorPasswordMismatch")}</FieldError>
             )}
           </TextField>
         </div>
@@ -249,7 +251,7 @@ export default function RegisterForm({
                 <Checkbox.Indicator />
               </Checkbox.Control>
               <span className="text-sm">
-                I agree to the Terms of Service
+                {t("forgotPassword.termsLabel")}
               </span>
             </Checkbox.Content>
           </Checkbox>
@@ -273,17 +275,17 @@ export default function RegisterForm({
           isDisabled={isSubmitting}
           className="rounded-full font-semibold"
         >
-          {isSubmitting ? "Creating account..." : "Sign Up"}
+          {isSubmitting ? t("register.signingUp") : t("register.signUpButton")}
         </Button>
       </form>
 
       <div className="text-center mt-8 text-[14px] text-muted">
-        Already have an account?{" "}
+        {t("register.hasAccountPrompt")}{" "}
         <a
           href="/f/user-login"
           className="no-underline hover:underline text-foreground font-semibold"
         >
-          Log In
+          {t("login.signInLink")}
         </a>
       </div>
     </div>

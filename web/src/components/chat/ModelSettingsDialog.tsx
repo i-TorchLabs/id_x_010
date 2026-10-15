@@ -19,6 +19,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Button, Input, Label, Modal, TextField } from "@heroui/react";
+import { useI18n } from "@/context/I18nContext";
 import {
   settingsGraphqlApi,
   type ModelSettings,
@@ -83,6 +84,7 @@ export function ModelSettingsDialog({
   onOpenChange,
   onSaved,
 }: ModelSettingsDialogProps) {
+  const { t } = useI18n();
   // ── Provider drafts (multi-provider) ──
   const [providerDrafts, setProviderDrafts] = useState<ProviderDraft[]>([]);
   const [expandedProvider, setExpandedProvider] = useState<number | null>(null);
@@ -98,13 +100,10 @@ export function ModelSettingsDialog({
   const [userKeyMappings, setUserKeyMappings] = useState<
     Map<number, SystemModelUserMappingItem>
   >(new Map());
-  const [editingKeyId, setEditingKeyId] = useState<number | null>(null);
-  const [editingKeyValue, setEditingKeyValue] = useState<string>("");
 
   const [isLoading, setIsLoading] = useState(false);
   const [isSavingProvider, setIsSavingProvider] = useState(false);
   const [isSavingDefault, setIsSavingDefault] = useState(false);
-  const [isSavingKey, setIsSavingKey] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>(null);
 
   const loadSettings = useCallback(async () => {
@@ -147,7 +146,7 @@ export function ModelSettingsDialog({
         text:
           err instanceof Error
             ? err.message
-            : "Failed to load settings, please try again later",
+            : t("settings.errorLoadFailed"),
       });
     } finally {
       setIsLoading(false);
@@ -193,7 +192,7 @@ export function ModelSettingsDialog({
           setFeedback({
             type: "error",
             text:
-              err instanceof Error ? err.message : "Failed to delete provider",
+              err instanceof Error ? err.message : t("settings.errorDeleteProviderFailed"),
           });
           return;
         }
@@ -216,14 +215,14 @@ export function ModelSettingsDialog({
       if (!draft.provider.trim() || !draft.baseUrl.trim() || !draft.apiKey.trim()) {
         setFeedback({
           type: "error",
-          text: "Provider name, endpoint and API key are required",
+          text: t("settings.errorProviderFieldsRequired"),
         });
         return;
       }
       if (draft.modelNameList.length === 0) {
         setFeedback({
           type: "error",
-          text: "Add at least one model name",
+          text: t("settings.errorModelNameRequired"),
         });
         return;
       }
@@ -249,7 +248,7 @@ export function ModelSettingsDialog({
               return next;
             });
           }
-          setFeedback({ type: "success", text: "Provider saved" });
+          setFeedback({ type: "success", text: t("settings.providerSaved") });
           onSaved?.();
         } else {
           setFeedback({
@@ -260,7 +259,7 @@ export function ModelSettingsDialog({
       } catch (err) {
         setFeedback({
           type: "error",
-          text: err instanceof Error ? err.message : "Save failed",
+          text: err instanceof Error ? err.message : t("settings.errorSaveFailed"),
         });
       } finally {
         setIsSavingProvider(false);
@@ -326,14 +325,14 @@ export function ModelSettingsDialog({
   const handleSaveDefault = useCallback(async () => {
     if (isSavingDefault) return;
     if (!defaultModel.trim()) {
-      setFeedback({ type: "error", text: "Default model name is required" });
+      setFeedback({ type: "error", text: t("settings.errorDefaultModelRequired") });
       return;
     }
     const quotaNum = quotaLimit.trim() === "" ? null : Number(quotaLimit);
     if (quotaNum != null && (Number.isNaN(quotaNum) || quotaNum < 0)) {
       setFeedback({
         type: "error",
-        text: "Monthly quota must be a non-negative number",
+        text: t("settings.errorQuotaInvalid"),
       });
       return;
     }
@@ -346,7 +345,7 @@ export function ModelSettingsDialog({
         quotaLimitMonthlyUsd: quotaNum,
       });
       if (res.saveDefaultModel.success) {
-        setFeedback({ type: "success", text: "Default model saved" });
+        setFeedback({ type: "success", text: t("settings.defaultModelSaved") });
         onSaved?.();
       } else {
         setFeedback({ type: "error", text: res.saveDefaultModel.message });
@@ -361,79 +360,18 @@ export function ModelSettingsDialog({
     }
   }, [defaultModel, quotaLimit, isSavingDefault, onSaved]);
 
-  // ── System model key handlers ──
-
-  const handleSaveSystemKey = useCallback(
-    async (sm: SystemModelItem) => {
-      if (!editingKeyValue.trim()) return;
-      setIsSavingKey(true);
-      setFeedback(null);
-      try {
-        const r = await systemModelUserKeyGraphqlApi.saveSystemModelUserKey({
-          systemModelId: sm.id,
-          apiKey: editingKeyValue.trim(),
-          testConnection: true,
-        });
-        if (r.saveSystemModelUserKey.success) {
-          const mapping = r.saveSystemModelUserKey.mapping;
-          if (mapping) {
-            const next = new Map(userKeyMappings);
-            next.set(sm.id, mapping);
-            setUserKeyMappings(next);
-          }
-          setEditingKeyId(null);
-          setEditingKeyValue("");
-        } else {
-          setFeedback({ type: "error", text: r.saveSystemModelUserKey.message });
-        }
-      } catch (err) {
-        setFeedback({
-          type: "error",
-          text: err instanceof Error ? err.message : "Save failed",
-        });
-      } finally {
-        setIsSavingKey(false);
-      }
-    },
-    [editingKeyValue, userKeyMappings],
-  );
-
-  const handleDeleteSystemKey = useCallback(
-    async (sm: SystemModelItem) => {
-      setIsSavingKey(true);
-      try {
-        const r = await systemModelUserKeyGraphqlApi.deleteSystemModelUserKey(sm.id);
-        if (r.deleteSystemModelUserKey.success) {
-          const next = new Map(userKeyMappings);
-          next.delete(sm.id);
-          setUserKeyMappings(next);
-        } else {
-          setFeedback({ type: "error", text: r.deleteSystemModelUserKey.message });
-        }
-      } catch (err) {
-        setFeedback({
-          type: "error",
-          text: err instanceof Error ? err.message : "Remove failed",
-        });
-      } finally {
-        setIsSavingKey(false);
-      }
-    },
-    [userKeyMappings],
-  );
-
   return (
     <Modal.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>
       <Modal.Container>
         <Modal.Dialog className="sm:max-w-[760px]">
           <Modal.CloseTrigger />
           <Modal.Header>
-            <Modal.Heading>Model Settings</Modal.Heading>
+            <Modal.Heading>{t("settings.modalTitle")}</Modal.Heading>
           </Modal.Header>
           <Modal.Body>
             {isLoading ? (
               <p className="text-sm" style={{ color: "var(--fg3)" }}>
-                Loading...
+                {t("settings.loading")}
               </p>
             ) : (
               <div className="flex flex-col gap-5">
@@ -441,19 +379,18 @@ export function ModelSettingsDialog({
                 {systemModels.length > 0 && (
                   <div className="flex flex-col gap-2">
                     <div className="flex items-center justify-between">
-                      <p className="label-section">System Models</p>
+                      <p className="label-section">{t("settings.systemModelsSection")}</p>
                       <span
                         className="font-text"
                         style={{ fontSize: "11px", color: "var(--fg4)" }}
                       >
-                        {systemModels.filter((s) => s.enabled).length} available
+                        {systemModels.filter((s) => s.enabled).length} {t("settings.availableCount")}
                       </span>
                     </div>
                     <div className="flex flex-col gap-1.5">
                       {systemModels.map((sm) => {
                         const userMapping = userKeyMappings.get(sm.id);
                         const hasUserKey = userMapping != null;
-                        const isEditing = editingKeyId === sm.id;
                         return (
                           <div
                             key={sm.id}
@@ -490,7 +427,7 @@ export function ModelSettingsDialog({
                                       color: "var(--accent, #3b82f6)",
                                     }}
                                   >
-                                    SYSTEM
+                                    {t("settings.systemBadge")}
                                   </span>
                                   {sm.isDefault && (
                                     <span
@@ -500,7 +437,7 @@ export function ModelSettingsDialog({
                                         color: "var(--accent, #3b82f6)",
                                       }}
                                     >
-                                      default
+                                      {t("settings.defaultBadge")}
                                     </span>
                                   )}
                                   {hasUserKey && (
@@ -511,7 +448,7 @@ export function ModelSettingsDialog({
                                         color: "var(--accent, #3b82f6)",
                                       }}
                                     >
-                                      personal key
+                                      {t("settings.keyConfigured")}
                                     </span>
                                   )}
                                 </div>
@@ -520,83 +457,10 @@ export function ModelSettingsDialog({
                                   style={{ fontSize: "11px", color: "var(--fg4)" }}
                                 >
                                   {sm.provider} · {sm.modelType}
-                                  {!sm.enabled ? " · disabled" : ""}
+                                  {!sm.enabled ? t("settings.disabledSuffix") : ""}
                                 </span>
                               </div>
-                              {sm.enabled && !isEditing && !hasUserKey && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onPress={() => {
-                                    setEditingKeyId(sm.id);
-                                    setEditingKeyValue("");
-                                  }}
-                                  className="text-xs shrink-0"
-                                  isDisabled={isSavingKey}
-                                >
-                                  Set my key
-                                </Button>
-                              )}
-                              {sm.enabled && !isEditing && hasUserKey && (
-                                <div className="flex items-center gap-1 shrink-0">
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onPress={() => {
-                                      setEditingKeyId(sm.id);
-                                      setEditingKeyValue(userMapping.apiKey);
-                                    }}
-                                    className="text-xs"
-                                    isDisabled={isSavingKey}
-                                  >
-                                    Edit key
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onPress={() => void handleDeleteSystemKey(sm)}
-                                    className="text-xs"
-                                    isDisabled={isSavingKey}
-                                  >
-                                    Remove
-                                  </Button>
-                                </div>
-                              )}
                             </div>
-                            {isEditing && (
-                              <div className="flex items-center gap-2 mt-2">
-                                <Input
-                                  type="password"
-                                  placeholder="Your personal API Key (sk-...)"
-                                  value={editingKeyValue}
-                                  onChange={(e) =>
-                                    setEditingKeyValue(e.target.value)
-                                  }
-                                  className="flex-1"
-                                />
-                                <Button
-                                  variant="primary"
-                                  size="sm"
-                                  isDisabled={
-                                    !editingKeyValue.trim() || isSavingKey
-                                  }
-                                  onPress={() => void handleSaveSystemKey(sm)}
-                                >
-                                  {isSavingKey ? "Saving..." : "Save"}
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onPress={() => {
-                                    setEditingKeyId(null);
-                                    setEditingKeyValue("");
-                                  }}
-                                  isDisabled={isSavingKey}
-                                >
-                                  Cancel
-                                </Button>
-                              </div>
-                            )}
                           </div>
                         );
                       })}
@@ -605,8 +469,7 @@ export function ModelSettingsDialog({
                       className="font-text"
                       style={{ fontSize: "11px", color: "var(--fg4)" }}
                     >
-                      System models are shared preset models. You can set your
-                      own API Key to track personal usage and cost.
+                      {t("settings.systemModelsHelpText")}
                     </p>
                   </div>
                 )}
@@ -614,14 +477,14 @@ export function ModelSettingsDialog({
                 {/* ── Custom Providers (multi-provider) ── */}
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between">
-                    <p className="label-section">Custom Providers</p>
+                    <p className="label-section">{t("settings.customProvidersSection")}</p>
                     <Button
                       variant="ghost"
                       size="sm"
                       onPress={addProvider}
                       className="text-xs"
                     >
-                      + Add Provider
+                      {t("settings.addProvider")}
                     </Button>
                   </div>
 
@@ -637,8 +500,7 @@ export function ModelSettingsDialog({
                         className="font-text"
                         style={{ fontSize: "13px", color: "var(--fg3)" }}
                       >
-                        No custom providers yet — click "Add Provider" to
-                        configure your first endpoint
+                        {t("settings.noProvidersEmpty")}
                       </p>
                     </div>
                   )}
@@ -703,7 +565,7 @@ export function ModelSettingsDialog({
                             }}
                             className="text-xs shrink-0"
                           >
-                            Delete
+                            {t("settings.deleteProvider")}
                           </Button>
                         </div>
 
@@ -715,11 +577,11 @@ export function ModelSettingsDialog({
                           >
                             <TextField fullWidth className="flex flex-col gap-1.5">
                               <Label className="text-sm font-medium">
-                                Provider Name
+                                {t("settings.fieldProviderName")}
                               </Label>
                               <Input
                                 list="model-provider-suggestions"
-                                placeholder="e.g. SiliconFlow, OpenAI"
+                                placeholder={t("settings.providerNamePlaceholder")}
                                 value={draft.provider}
                                 onChange={(e) =>
                                   handleProviderNameInput(idx, e.target.value)
@@ -736,10 +598,10 @@ export function ModelSettingsDialog({
 
                             <TextField fullWidth className="flex flex-col gap-1.5">
                               <Label className="text-sm font-medium">
-                                Endpoint (base_url)
+                                {t("settings.fieldEndpoint")}
                               </Label>
                               <Input
-                                placeholder="https://api.example.com/v1"
+                                placeholder={t("settings.endpointPlaceholder")}
                                 value={draft.baseUrl}
                                 onChange={(e) => {
                                   setProviderDrafts((prev) => {
@@ -755,10 +617,10 @@ export function ModelSettingsDialog({
                             </TextField>
 
                             <TextField fullWidth className="flex flex-col gap-1.5">
-                              <Label className="text-sm font-medium">API-KEY</Label>
+                              <Label className="text-sm font-medium">{t("settings.fieldApiKey")}</Label>
                               <Input
                                 type="text"
-                                placeholder="sk-..."
+                                placeholder={t("settings.apiKeyPlaceholder")}
                                 value={draft.apiKey}
                                 onChange={(e) => {
                                   setProviderDrafts((prev) => {
@@ -776,7 +638,7 @@ export function ModelSettingsDialog({
                             {/* Model list for this provider */}
                             <div className="flex flex-col gap-1.5">
                               <Label className="text-sm font-medium">
-                                Models in this Provider
+                                {t("settings.fieldModelsInProvider")}
                               </Label>
                               {draft.modelNameList.length === 0 ? (
                                 <p
@@ -786,7 +648,7 @@ export function ModelSettingsDialog({
                                     color: "var(--fg4)",
                                   }}
                                 >
-                                  No models yet — add below
+                                  {t("settings.noModelsEmpty")}
                                 </p>
                               ) : (
                                 <div className="flex flex-wrap gap-1.5">
@@ -818,7 +680,7 @@ export function ModelSettingsDialog({
                                           cursor: "pointer",
                                           lineHeight: 1,
                                         }}
-                                        aria-label={`Remove ${name}`}
+                                        aria-label={t("settings.ariaRemoveModel", { name })}
                                       >
                                         ×
                                       </button>
@@ -828,7 +690,7 @@ export function ModelSettingsDialog({
                               )}
                               <div className="flex items-center gap-2">
                                 <Input
-                                  placeholder="e.g. zai-org/GLM-5.2"
+                                  placeholder={t("settings.modelNamePlaceholder")}
                                   value={newModelInputs[idx] ?? ""}
                                   onChange={(e) =>
                                     setNewModelInputs((prev) => ({
@@ -850,7 +712,7 @@ export function ModelSettingsDialog({
                                   isDisabled={!(newModelInputs[idx] ?? "").trim()}
                                   className="shrink-0"
                                 >
-                                  Add
+                                  {t("settings.addModel")}
                                 </Button>
                               </div>
                             </div>
@@ -862,8 +724,8 @@ export function ModelSettingsDialog({
                               isDisabled={isSavingProvider}
                             >
                               {isSavingProvider
-                                ? "Testing & Saving..."
-                                : "Save Provider"}
+                                ? t("settings.testingAndSaving")
+                                : t("settings.saveProvider")}
                             </Button>
                           </div>
                         )}
@@ -880,15 +742,15 @@ export function ModelSettingsDialog({
                     border: "0.5px solid var(--divider)",
                   }}
                 >
-                  <p className="label-section">Default Model & Quota</p>
+                  <p className="label-section">{t("settings.defaultModelQuotaSection")}</p>
 
                   <TextField fullWidth className="flex flex-col gap-1.5">
                     <Label className="text-sm font-medium">
-                      Default Model
+                      {t("settings.fieldDefaultModel")}
                     </Label>
                     <Input
                       list="all-model-names"
-                      placeholder="Select or type a model name"
+                      placeholder={t("settings.defaultModelPlaceholder")}
                       value={defaultModel}
                       onChange={(e) => setDefaultModel(e.target.value)}
                     />
@@ -911,24 +773,23 @@ export function ModelSettingsDialog({
                   </TextField>
 
                   <TextField fullWidth className="flex flex-col gap-1.5">
-                    <Label className="text-sm font-medium">
-                      Monthly Quota (USD)
-                    </Label>
-                    <Input
-                      type="number"
-                      inputMode="decimal"
-                      min="0"
-                      step="0.01"
-                      placeholder="Leave empty for unlimited"
-                      value={quotaLimit}
-                      onChange={(e) => setQuotaLimit(e.target.value)}
-                    />
+                      <Label className="text-sm font-medium">
+                        {t("settings.fieldMonthlyQuota")}
+                      </Label>
+                      <Input
+                        type="number"
+                        inputMode="decimal"
+                        min="0"
+                        step="0.01"
+                        placeholder={t("settings.quotaPlaceholder")}
+                        value={quotaLimit}
+                        onChange={(e) => setQuotaLimit(e.target.value)}
+                      />
                     <p
                       className="font-text"
                       style={{ fontSize: "11px", color: "var(--fg4)" }}
                     >
-                      Total cost across all your models, reset on the 1st of each
-                      month. Empty = unlimited.
+                      {t("settings.quotaHelpText")}
                     </p>
                   </TextField>
 
@@ -938,7 +799,7 @@ export function ModelSettingsDialog({
                     onPress={() => void handleSaveDefault()}
                     isDisabled={isSavingDefault}
                   >
-                    {isSavingDefault ? "Saving..." : "Save Default & Quota"}
+                    {isSavingDefault ? t("settings.saving") : t("settings.saveDefaultAndQuota")}
                   </Button>
                 </div>
 
@@ -967,9 +828,9 @@ export function ModelSettingsDialog({
             <Button
               slot="close"
               variant="tertiary"
-              isDisabled={isSavingProvider || isSavingDefault || isSavingKey}
+              isDisabled={isSavingProvider || isSavingDefault}
             >
-              Close
+              {t("settings.close")}
             </Button>
           </Modal.Footer>
         </Modal.Dialog>

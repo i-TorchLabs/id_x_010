@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
     avatar BYTEA,
     is_active BOOLEAN DEFAULT TRUE,
     is_admin BOOLEAN DEFAULT FALSE,
-    role VARCHAR(16) NOT NULL DEFAULT 'user',
+    role VARCHAR(64) NOT NULL DEFAULT 'user',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -29,19 +29,19 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name VARCHAR(64);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar BYTEA;
 -- TASK-013：管理员标志位；旧库通过 ALTER 兼容，新库由 create_all 自动建
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE;
-COMMENT ON COLUMN users.is_admin IS '是否管理员（控制 /admin 路由与 admin mutation 访问）';
+COMMENT ON COLUMN users.is_admin IS '是否管理员（admin ∈ role 的派生标志，兼容老校验）';
 -- TASK-019：密码哈希算法；老数据 null 视为 sha256，登录时自动升级为 bcrypt
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_algo VARCHAR(16) DEFAULT 'bcrypt';
 COMMENT ON COLUMN users.password_algo IS '密码哈希算法：bcrypt / sha256（老数据）';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS system_model_quota_usd DOUBLE PRECISION;
 COMMENT ON COLUMN users.system_model_quota_usd IS '系统预置模型月度配额上限（USD）；NULL 不限额，仅限系统模型';
--- 用户角色：admin=管理员 / user=普通用户。与 is_admin 同步，role 为权威字段。
-ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(16) NOT NULL DEFAULT 'user';
-COMMENT ON COLUMN users.role IS '用户角色：admin=管理员 / user=普通用户';
--- 老库迁移：已 is_admin=TRUE 的行回填 role='admin'（幂等，仅更新 role 仍为默认值或 NULL 的行）
-UPDATE users SET role = 'admin' WHERE is_admin = TRUE AND (role IS NULL OR role = 'user');
--- 同步反向：role='admin' 但 is_admin 未置位的行补齐（防御性，正常不会触发）
-UPDATE users SET is_admin = TRUE WHERE role = 'admin' AND is_admin IS NOT TRUE;
+-- 用户角色（多角色，逗号分隔）：user=普通用户, admin=管理员。同一用户可同时拥有多角色。
+ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(64) NOT NULL DEFAULT 'user';
+COMMENT ON COLUMN users.role IS '用户角色（逗号分隔多角色）：user / admin / user,admin';
+-- 老库迁移：已 is_admin=TRUE 的行回填 role='user,admin'（幂等，仅更新 role 仍为旧单值或 NULL 的行）
+UPDATE users SET role = 'user,admin' WHERE is_admin = TRUE AND (role IS NULL OR role = 'user' OR role = 'admin');
+-- 同步反向：role 含 admin 但 is_admin 未置位的行补齐（防御性）
+UPDATE users SET is_admin = TRUE WHERE role LIKE '%admin%' AND is_admin IS NOT TRUE;
 
 -- usage_logs 增量字段：is_system_model（区分系统模型与用户自定义模型调用）
 ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS is_system_model BOOLEAN NOT NULL DEFAULT FALSE;
@@ -60,8 +60,8 @@ COMMENT ON COLUMN users.password_hash IS '密码哈希';
 COMMENT ON COLUMN users.display_name IS '显示名称（可由用户自定义，空则回退到 email 本地名）';
 COMMENT ON COLUMN users.avatar IS '头像图片二进制（BYTEA），通过 /avatar/<user_id> 端点按需输出';
 COMMENT ON COLUMN users.is_active IS '是否激活';
-COMMENT ON COLUMN users.is_admin IS '是否管理员（与 role 同步，role 为权威字段）';
-COMMENT ON COLUMN users.role IS '用户角色：admin=管理员 / user=普通用户';
+COMMENT ON COLUMN users.is_admin IS '是否管理员（admin ∈ role 的派生标志，兼容老校验）';
+COMMENT ON COLUMN users.role IS '用户角色（逗号分隔多角色）：user / admin / user,admin';
 COMMENT ON COLUMN users.created_at IS '创建时间';
 COMMENT ON COLUMN users.updated_at IS '更新时间';
 
@@ -195,7 +195,7 @@ COMMENT ON COLUMN local_models.api_key IS 'API-KEY';
 
 -- ============================================
 -- 7. 用户模型设置表 (user_model_settings)
---    /home 设置弹窗保存的用户级模型配置，每用户一行
+--    /user-home 设置弹窗保存的用户级模型配置，每用户一行
 -- ============================================
 CREATE TABLE IF NOT EXISTS user_model_settings (
     id SERIAL PRIMARY KEY,

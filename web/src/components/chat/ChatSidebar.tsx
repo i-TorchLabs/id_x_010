@@ -4,12 +4,13 @@ import { Avatar, Button, Separator } from "@heroui/react";
 import { motion } from "framer-motion";
 import { PromptPanel } from "./PromptPanel";
 import type { MarkdownPromptItem } from "@/api/graphql";
+import { useI18n } from "@/context/I18nContext";
 
 export type ModelType = "local" | "external";
 
 const MODEL_OPTIONS: { value: ModelType; label: string }[] = [
-    { value: "local", label: "Local Model" },
-    { value: "external", label: "External Model" },
+    { value: "local", label: "sidebar.modelLocal" },
+    { value: "external", label: "sidebar.modelExternal" },
 ];
 
 const EXPANDED_WIDTH = 288;
@@ -102,8 +103,8 @@ export function ChatSidebar({
     onNewChat,
     modelType,
     onModelChange,
-    userName = "Guest",
-    userEmail = "guest@sme-ai.local",
+    userName: userNameProp,
+    userEmail: userEmailProp,
     avatarUrl,
     onLogout,
     onSettings,
@@ -113,6 +114,9 @@ export function ChatSidebar({
     isCollapsed = false,
     onToggleCollapse,
 }: ChatSidebarProps) {
+    const { t } = useI18n();
+    const userName = userNameProp ?? t("sidebar.defaultUserName");
+    const userEmail = userEmailProp ?? t("sidebar.defaultUserEmail");
     const showModelSection = modelType !== undefined && onModelChange;
     const width = isCollapsed ? COLLAPSED_WIDTH : EXPANDED_WIDTH;
 
@@ -157,8 +161,8 @@ export function ChatSidebar({
                         <button
                             type="button"
                             onClick={onToggleCollapse}
-                            aria-label="Expand sidebar"
-                            title="Expand"
+                            aria-label={t("sidebar.ariaExpand")}
+                            title={t("sidebar.tooltipExpand")}
                             style={{ ...iconBtnBase, width: "36px", height: "36px" }}
                             onMouseEnter={handleHover}
                             onMouseLeave={handleLeave}
@@ -178,7 +182,7 @@ export function ChatSidebar({
                     <div className="w-7 my-0.5" style={{ borderTop: "0.5px solid var(--divider)" }} />
 
                     {/* ── New Chat ── */}
-                    <button type="button" onClick={onNewChat} aria-label="New chat" title="New Chat" style={{ ...iconBtnBase, width: "36px", height: "36px" }} onMouseEnter={handleHover} onMouseLeave={handleLeave}>
+                    <button type="button" onClick={onNewChat} aria-label={t("sidebar.ariaNewChat")} title={t("sidebar.tooltipNewChat")} style={{ ...iconBtnBase, width: "36px", height: "36px" }} onMouseEnter={handleHover} onMouseLeave={handleLeave}>
                         <NewChatIcon className="w-[18px] h-[18px]" />
                     </button>
 
@@ -187,8 +191,8 @@ export function ChatSidebar({
                         <button
                             type="button"
                             onClick={() => onModelChange?.(modelType === "external" ? "local" : "external")}
-                            aria-label="Toggle model"
-                            title={`Model: ${modelType}`}
+                            aria-label={t("sidebar.tooltipModel", { name: modelType })}
+                            title={t("sidebar.tooltipModel", { name: modelType })}
                             style={{ ...iconBtnBase, width: "36px", height: "36px", background: "var(--surface-1)" }}
                             onMouseEnter={handleHover}
                             onMouseLeave={handleLeave}
@@ -198,7 +202,7 @@ export function ChatSidebar({
                     )}
 
                     {/* ── Prompts ── */}
-                    <button type="button" onClick={onActivePromptChange?.bind(null, null)} aria-label="Prompt library" title="Prompt Library" style={{ ...iconBtnBase, width: "36px", height: "36px" }} onMouseEnter={handleHover} onMouseLeave={handleLeave}>
+                    <button type="button" onClick={onActivePromptChange?.bind(null, null)} aria-label={t("sidebar.ariaPromptLibrary")} title={t("sidebar.tooltipPromptLibrary")} style={{ ...iconBtnBase, width: "36px", height: "36px" }} onMouseEnter={handleHover} onMouseLeave={handleLeave}>
                         <PromptIcon className="w-[18px] h-[18px]" />
                     </button>
 
@@ -207,7 +211,7 @@ export function ChatSidebar({
                     <div className="w-7 my-0.5" style={{ borderTop: "0.5px solid var(--divider)" }} />
 
                     {/* ── User avatar ── */}
-                    <button type="button" onClick={onEditProfile} disabled={!onEditProfile} aria-label="Edit profile" title={userName} className="rounded-full transition-transform hover:scale-105 mb-1">
+                    <button type="button" onClick={onEditProfile} disabled={!onEditProfile} aria-label={t("sidebar.ariaEditProfile")} title={userName} className="rounded-full transition-transform hover:scale-105 mb-1">
                         <Avatar size="sm" style={{ width: "28px", height: "28px" }}>
                             {avatarUrl && <Avatar.Image src={avatarUrl} alt={userName} />}
                             <Avatar.Fallback className="text-xs font-semibold" style={{ background: "var(--accent)", color: "var(--accent-fg)" }}>
@@ -217,17 +221,17 @@ export function ChatSidebar({
                     </button>
 
                     {onUsageStats && (
-                        <button type="button" onClick={onUsageStats} aria-label="Usage statistics" title="Usage" style={{ ...iconBtnBase, width: "36px", height: "36px" }} onMouseEnter={handleHover} onMouseLeave={handleLeave}>
+                        <button type="button" onClick={onUsageStats} aria-label={t("sidebar.ariaUsage")} title={t("sidebar.tooltipUsage")} style={{ ...iconBtnBase, width: "36px", height: "36px" }} onMouseEnter={handleHover} onMouseLeave={handleLeave}>
                             <UsageIcon className="w-[18px] h-[18px]" />
                         </button>
                     )}
                     {onSettings && (
-                        <button type="button" onClick={onSettings} aria-label="Settings" title="Settings" style={{ ...iconBtnBase, width: "36px", height: "36px" }} onMouseEnter={handleHover} onMouseLeave={handleLeave}>
+                        <button type="button" onClick={onSettings} aria-label={t("sidebar.ariaSettings")} title={t("sidebar.tooltipSettings")} style={{ ...iconBtnBase, width: "36px", height: "36px" }} onMouseEnter={handleHover} onMouseLeave={handleLeave}>
                             <GearIcon className="w-[18px] h-[18px]" />
                         </button>
                     )}
                     {onLogout && (
-                        <button type="button" onClick={onLogout} aria-label="Log out" title="Log Out" style={{ ...iconBtnBase, width: "36px", height: "36px" }} onMouseEnter={handleHover} onMouseLeave={handleLeave}>
+                        <button type="button" onClick={onLogout} aria-label={t("sidebar.ariaLogout")} title={t("sidebar.tooltipLogout")} style={{ ...iconBtnBase, width: "36px", height: "36px" }} onMouseEnter={handleHover} onMouseLeave={handleLeave}>
                             <LogoutIcon className="w-[18px] h-[18px]" />
                         </button>
                     )}
@@ -259,10 +263,10 @@ export function ChatSidebar({
                     </div>
                     <div className="flex-1 flex flex-col">
                         <span className="font-display leading-tight" style={{ fontSize: "16px", fontWeight: 600, letterSpacing: "-0.32px", color: "var(--fg1)" }}>
-                          Data Agent
+                          {t("sidebar.brandName")}
                         </span>
                         <span className="font-text leading-tight" style={{ fontSize: "11px", fontWeight: 500, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--fg3)" }}>
-                            Intelligent Query System
+                            {t("sidebar.brandSubtitle")}
                         </span>
                     </div>
                     {/* Independent collapse toggle button — upper right corner */}
@@ -270,8 +274,8 @@ export function ChatSidebar({
                         <button
                             type="button"
                             onClick={onToggleCollapse}
-                            aria-label="Collapse sidebar"
-                            title="Collapse"
+                            aria-label={t("sidebar.ariaCollapse")}
+                            title={t("sidebar.tooltipCollapse")}
                             style={{ ...iconBtnBase, width: "28px", height: "28px" }}
                             onMouseEnter={handleHover}
                             onMouseLeave={handleLeave}
@@ -293,7 +297,7 @@ export function ChatSidebar({
                         style={{ boxShadow: "var(--shadow-inset), var(--shadow-sm)", letterSpacing: "-0.01em", transition: "box-shadow 180ms ease, transform 180ms ease" }}
                     >
                         <NewChatIcon className="w-4 h-4" />
-                        New Chat
+                        {t("sidebar.newChat")}
                     </Button>
                 </div>
 
@@ -302,7 +306,7 @@ export function ChatSidebar({
                     <div className="px-4 shrink-0">
                         <p className="label-section mb-2 px-1 flex items-center gap-1.5">
                             <ModelIcon className="w-3.5 h-3.5" style={{ color: "var(--fg4)" }} />
-                            Model Selection
+                            {t("sidebar.modelSelection")}
                         </p>
                         <div className="flex flex-col gap-1">
                             {MODEL_OPTIONS.map((option) => {
@@ -321,7 +325,7 @@ export function ChatSidebar({
                                         }}
                                     >
                                         <span className="flex-1 text-left" style={{ fontSize: "13px", fontWeight: isSelected ? 600 : 500, color: isSelected ? "var(--fg1)" : "var(--fg2)" }}>
-                                            {option.label}
+                                            {t(option.label)}
                                         </span>
                                         {isSelected && (
                                             <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20" style={{ color: "var(--fg1)" }}>
@@ -353,7 +357,7 @@ export function ChatSidebar({
                         type="button"
                         onClick={onEditProfile}
                         disabled={!onEditProfile}
-                        aria-label="Edit profile"
+                        aria-label={t("sidebar.ariaEditProfile")}
                         className="shrink-0 rounded-full transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2"
                         style={{ outlineOffset: 2, cursor: onEditProfile ? "pointer" : "default" }}
                     >
@@ -373,17 +377,17 @@ export function ChatSidebar({
                         </p>
                     </div>
                     {onUsageStats && (
-                        <Button isIconOnly variant="ghost" size="sm" onPress={onUsageStats} aria-label="Usage statistics" className="icon-btn">
+                        <Button isIconOnly variant="ghost" size="sm" onPress={onUsageStats} aria-label={t("sidebar.ariaUsage")} className="icon-btn">
                             <UsageIcon className="w-[18px] h-[18px]" />
                         </Button>
                     )}
                     {onSettings && (
-                        <Button isIconOnly variant="ghost" size="sm" onPress={onSettings} aria-label="Settings" className="icon-btn">
+                        <Button isIconOnly variant="ghost" size="sm" onPress={onSettings} aria-label={t("sidebar.ariaSettings")} className="icon-btn">
                             <GearIcon className="w-[18px] h-[18px]" />
                         </Button>
                     )}
                     {onLogout && (
-                        <Button isIconOnly variant="ghost" size="sm" onPress={onLogout} aria-label="Log out" className="icon-btn">
+                        <Button isIconOnly variant="ghost" size="sm" onPress={onLogout} aria-label={t("sidebar.ariaLogout")} className="icon-btn">
                             <LogoutIcon className="w-[18px] h-[18px]" />
                         </Button>
                     )}

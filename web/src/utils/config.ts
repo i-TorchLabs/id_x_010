@@ -23,6 +23,10 @@ export const ADFS_BASE_URL =
     "https://sts.cuhk.edu.cn/adfs/oauth2";
 export const ADFS_AUTHORIZE_URL = `${ADFS_BASE_URL}/authorize`;
 export const ADFS_LOGOUT_URL = `${ADFS_BASE_URL}/logout`;
+/** ADFS 登出后回跳地址（回到用户登录页）；需在 ADFS 依赖方信任中注册 */
+export const ADFS_POST_LOGOUT_REDIRECT_URI =
+    process.env.NEXT_PUBLIC_ADFS_POST_LOGOUT_REDIRECT_URI ||
+    `${SITE_URL}/f/user-login`;
 
 /** ADFS 应用公开标识（client_secret 仅服务端持有） */
 export const ADFS_CLIENT_ID =

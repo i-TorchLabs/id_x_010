@@ -7,6 +7,7 @@ import { CenterHero } from "@/components/chat/CenterHero";
 import { ChatSidebar, ModelType } from "@/components/chat/ChatSidebar";
 import { useTheme } from "@/context/ThemeContext";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { LangToggle } from "@/components/LangToggle";
 import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "@heroui/react";
 
@@ -128,7 +129,8 @@ export default function IntelligentQueryHome() {
       <main className="flex-1 flex flex-col relative min-w-0">
         {isEmpty ? (
           <>
-            <div className="absolute top-4 right-4 z-50">
+            <div className="absolute top-4 right-4 z-50 flex items-center gap-1">
+              <LangToggle />
               <ThemeToggle />
             </div>
             <CenterHero
@@ -216,6 +218,7 @@ export default function IntelligentQueryHome() {
                       <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                     </svg>
                   </Button>
+                  <LangToggle />
                   <ThemeToggle />
                 </div>
               </div>

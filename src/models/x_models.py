@@ -271,7 +271,9 @@ class UserToken(Base):
 class User(Base):
     """用户主表：邮箱、密码哈希、显示名、头像、激活/管理员标志、角色。
 
-    role 为权威角色字段（admin=管理员 / user=普通用户），与 is_admin 同步；
+    role 为多角色字段（逗号分隔，如 "user,admin"），同一用户可同时拥有
+    普通用户与管理员角色；is_admin 为派生标志（"admin" ∈ role），
+    保留兼容老的 require_admin 校验与 AdminPanel 复选框。
     password_algo 标识哈希算法：新数据 bcrypt，老数据 sha256（登录时自动升级）。
     """
 
@@ -297,17 +299,16 @@ class User(Base):
     is_active: Mapped[Optional[bool]] = mapped_column(
         Boolean, default=True, comment="是否激活"
     )
-    # TASK-013：管理员标志位；create_all 在新库自动建字段，已有库需 init.sql ALTER 兼容
     is_admin: Mapped[Optional[bool]] = mapped_column(
-        Boolean, default=False, comment="是否管理员（控制 /admin 路由与 admin mutation 访问）"
+        Boolean, default=False, comment="是否管理员（admin ∈ role 的派生标志，兼容老校验）"
     )
-    # 用户角色：admin=管理员 / user=普通用户。与 is_admin 同步，role 为权威字段；
-    # is_admin 保留兼容老的 require_admin 校验与 AdminPanel 复选框。
+    # 用户角色（多角色，逗号分隔）：如 "user" / "user,admin"。
+    # 同一用户可同时拥有普通用户与管理员角色；is_admin 由 "admin" ∈ role 派生。
     role: Mapped[str] = mapped_column(
-        String(16),
+        String(64),
         default="user",
         nullable=False,
-        comment="用户角色：admin=管理员 / user=普通用户",
+        comment="用户角色（逗号分隔多角色）：user=普通用户, admin=管理员",
     )
     # TASK-019：密码哈希算法标识；老数据 null 视为 sha256，登录时自动升级为 bcrypt
     password_algo: Mapped[Optional[str]] = mapped_column(
@@ -338,6 +339,36 @@ class User(Base):
     )
 
     tokens: Mapped[List["UserToken"]] = relationship("UserToken", back_populates="user")
+
+    @property
+    def roles(self) -> set:
+        """解析 role 字段为角色集合（逗号分隔）。恒含 "user"。"""
+        raw = (self.role or "").strip()
+        if not raw:
+            return {"user"}
+        parts = {r.strip() for r in raw.split(",") if r.strip()}
+        parts.add("user")
+        return parts
+
+    def has_role(self, role_name: str) -> bool:
+        """判断用户是否拥有指定角色。"""
+        return role_name in self.roles
+
+    def add_role(self, role_name: str) -> None:
+        """添加角色并同步 is_admin。始终保留 "user"。"""
+        parts = self.roles
+        parts.add(role_name)
+        parts.add("user")
+        self.role = ",".join(sorted(parts))
+        self.is_admin = "admin" in parts
+
+    def remove_role(self, role_name: str) -> None:
+        """移除角色并同步 is_admin。始终保留 "user"。"""
+        parts = self.roles
+        parts.discard(role_name)
+        parts.add("user")
+        self.role = ",".join(sorted(parts))
+        self.is_admin = "admin" in parts
 
     def to_dict(self):
         return {
@@ -437,7 +468,7 @@ class ExternalModel(Base):
 
 
 class UserModelSettings(Base):
-    """用户级默认模型设置（每用户一行），由 /home 设置弹窗保存。
+    """用户级默认模型设置（每用户一行），由 /user-home 设置弹窗保存。
 
     字段语义：
     - ``provider`` / ``base_url`` / ``api_key``：列表内全部模型共享同一接入点

@@ -159,7 +159,7 @@ class UserInfoType:
         default=None, description="头像 URL（已设置头像时为 /b/id_x_010/avatar/<user_id>?v=<ts>）"
     )
     role: Optional[str] = strawberry.field(
-        default=None, description="用户角色：admin=管理员 / user=普通用户"
+        default=None, description="用户角色（逗号分隔多角色）：user / admin / user,admin"
     )
     created_at: Optional[str] = strawberry.field(default=None, description="创建时间")
 
@@ -604,8 +604,8 @@ class AdminUserType:
     email: str = strawberry.field(description="邮箱")
     display_name: Optional[str] = strawberry.field(default=None, description="显示名称")
     is_active: bool = strawberry.field(description="是否激活")
-    is_admin: bool = strawberry.field(description="是否管理员（与 role 同步）")
-    role: str = strawberry.field(description="用户角色：admin=管理员 / user=普通用户")
+    is_admin: bool = strawberry.field(description="是否管理员（admin ∈ role 的派生标志）")
+    role: str = strawberry.field(description="用户角色（逗号分隔多角色）：user / admin / user,admin")
     created_at: Optional[str] = strawberry.field(default=None, description="创建时间 ISO")
     updated_at: Optional[str] = strawberry.field(default=None, description="更新时间 ISO")
 
@@ -886,6 +886,17 @@ class SystemModelUserKeyMutationResponseType:
     message: str = strawberry.field(description="消息")
     mapping: Optional[SystemModelUserMappingType] = strawberry.field(
         default=None, description="保存后的映射记录"
+    )
+
+
+@strawberry.input
+class AdminSystemModelUserKeyInput:
+    """管理员为指定用户保存系统预置模型 API Key 的入参。"""
+    user_id: int = strawberry.field(description="目标用户 ID")
+    system_model_id: int = strawberry.field(description="系统预置模型 ID")
+    api_key: str = strawberry.field(description="该用户的个人 API Key")
+    test_connection: bool = strawberry.field(
+        default=True, description="保存前是否做连通性检测"
     )
 
 

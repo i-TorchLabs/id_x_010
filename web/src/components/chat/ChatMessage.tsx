@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo, useEffect } from "react";
 import { useTheme } from "@/context/ThemeContext";
+import { useI18n } from "@/context/I18nContext";
 import { motion, AnimatePresence } from "framer-motion";
 import { SqlApprovalPanel } from "@/components/chat/SqlApprovalPanel";
 import { SqlExplanationBubble } from "@/components/chat/SqlExplanationBubble";
@@ -201,6 +202,7 @@ export function ChatMessage({
 }: ChatMessageProps) {
   const isUser = message.type === "user";
   const { theme } = useTheme();
+  const { t } = useI18n();
   const isDark = theme === "dark";
   const [copied, setCopied] = useState(false);
   const [isThinkingExpanded, setIsThinkingExpanded] = useState(true);
@@ -355,7 +357,7 @@ export function ChatMessage({
                               : "rgba(0,0,0,0.4)",
                           }}
                         >
-                          Thinking
+                          {t("chat.message.thinkingLabel")}
                         </span>
                         {message.thinkingTime != null && (
                           <span
@@ -447,7 +449,7 @@ export function ChatMessage({
               {!parsedContent.mainContent ? (
                 isStreaming ? (
                   <div style={{ padding: "12px 16px 12px 16px" }}>
-                    <ThinkingDots visible label="Thinking" />
+                    <ThinkingDots visible label={t("chat.message.thinkingLabel")} />
                   </div>
                 ) : null
               ) : message.contentType === "sql" ? (
@@ -457,7 +459,7 @@ export function ChatMessage({
                       className="font-text"
                       style={{ ...subBubbleTitleStyle, marginBottom: 6 }}
                     >
-                      SQL Content
+                      {t("chat.message.sqlContentTitle")}
                     </div>
                     <div style={codeBlockStyle}>
                       <pre
@@ -467,7 +469,7 @@ export function ChatMessage({
                         {parsedContent.mainContent}
                       </pre>
                     </div>
-                    <ThinkingDots visible={!!isStreaming} label="Thinking" />
+                    <ThinkingDots visible={!!isStreaming} label={t("chat.message.thinkingLabel")} />
                   </div>
                 </div>
               ) : (
@@ -477,7 +479,7 @@ export function ChatMessage({
                       className="font-text"
                       style={{ ...subBubbleTitleStyle, marginBottom: 6 }}
                     >
-                      Answer
+                      {t("chat.message.answerTitle")}
                     </div>
                     <div
                       className="font-text leading-relaxed whitespace-pre-wrap"
@@ -598,7 +600,7 @@ export function ChatMessage({
                       marginBottom: 4,
                     }}
                   >
-                    SQL Blocked by Security Mechanism
+                    {t("chat.message.securityBlockTitle")}
                   </div>
                   {/* 原因文字：红色（较标题稍弱），便于阅读 */}
                   <div
@@ -664,7 +666,7 @@ export function ChatMessage({
                 <button
                   type="button"
                   onClick={handleCopy}
-                  aria-label={copied ? "Copied" : "Copy"}
+                  aria-label={copied ? t("chat.message.ariaCopied") : t("chat.message.ariaCopy")}
                   className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all duration-200"
                   style={{
                     background: copied ? "var(--surface-1)" : "transparent",
@@ -725,7 +727,7 @@ export function ChatMessage({
                       <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
                     </svg>
                   )}
-                  <span>{copied ? "Copied" : "Copy"}</span>
+                  <span>{copied ? t("chat.message.copied") : t("chat.message.copy")}</span>
                 </button>
               </div>
             )}
@@ -821,7 +823,7 @@ export function ChatMessage({
                 <button
                   type="button"
                   onClick={onRegenerate}
-                  aria-label="Regenerate"
+                  aria-label={t("chat.message.ariaRegenerate")}
                   className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all duration-200"
                   style={{
                     background: "transparent",
@@ -861,7 +863,7 @@ export function ChatMessage({
                   >
                     <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                   </svg>
-                  <span>Regenerate</span>
+                  <span>{t("chat.message.regenerate")}</span>
                 </button>
               )}
 
@@ -869,7 +871,7 @@ export function ChatMessage({
                 <button
                   type="button"
                   onClick={handleCopy}
-                  aria-label={copied ? "Copied" : "Copy"}
+                  aria-label={copied ? t("chat.message.ariaCopied") : t("chat.message.ariaCopy")}
                   className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all duration-200"
                   style={{
                     background: copied ? "var(--surface-1)" : "transparent",
@@ -932,7 +934,7 @@ export function ChatMessage({
                       <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
                     </svg>
                   )}
-                  <span>{copied ? "Copied" : "Copy"}</span>
+                  <span>{copied ? t("chat.message.copied") : t("chat.message.copy")}</span>
                 </button>
               )}
             </div>
@@ -955,6 +957,7 @@ function FeedbackBar({
   const [showFeedbackInput, setShowFeedbackInput] = useState(false);
   const [feedbackText, setFeedbackText] = useState("");
   const [_, setLastRating] = useState<1 | -1 | null>(null);
+  const { t } = useI18n();
 
   if (!conversationId || messageIndex === undefined) {
     return null; // 缺少定位信息时不显示
@@ -1008,7 +1011,7 @@ function FeedbackBar({
       <button
         type="button"
         onClick={() => handleSubmit(1)}
-        title="Helpful"
+        title={t("chat.feedback.tooltipHelpful")}
         style={{
           background: submitted === "up" ? "var(--surface-2)" : "transparent",
           border: "0.5px solid var(--divider)",
@@ -1026,7 +1029,7 @@ function FeedbackBar({
           setShowFeedbackInput((s) => !s);
           setLastRating(-1);
         }}
-        title="Needs improvement"
+        title={t("chat.feedback.tooltipNeedsImprovement")}
         style={{
           background: submitted === "down" ? "var(--surface-2)" : "transparent",
           border: "0.5px solid var(--divider)",
@@ -1039,7 +1042,7 @@ function FeedbackBar({
         👎
       </button>
       {submitted && !showFeedbackInput && (
-        <span style={{ fontSize: 10 }}>Feedback submitted</span>
+        <span style={{ fontSize: 10 }}>{t("chat.feedback.submitted")}</span>
       )}
       {showFeedbackInput && (
         <div style={{ display: "flex", gap: 4, alignItems: "center", flex: 1 }}>
@@ -1047,7 +1050,7 @@ function FeedbackBar({
             type="text"
             value={feedbackText}
             onChange={(e) => setFeedbackText(e.target.value)}
-            placeholder="Additional comments (optional)"
+            placeholder={t("chat.feedback.commentsPlaceholder")}
             style={{
               flex: 1,
               fontSize: 11,
@@ -1070,7 +1073,7 @@ function FeedbackBar({
               cursor: "pointer",
             }}
           >
-            Submit
+            {t("chat.feedback.submit")}
           </button>
         </div>
       )}

@@ -1074,6 +1074,113 @@ export const systemModelUserKeyGraphqlApi = {
   },
 };
 
+// ── 管理员：替指定用户管理系统预置模型的 API Key ──
+
+export interface AdminUserSystemModelKeyListPayload {
+  adminListUserSystemModelKeys: {
+    success: boolean;
+    message: string;
+    mappings: SystemModelUserMappingItem[];
+  };
+}
+
+export interface AdminSystemModelUserKeySaveInput {
+  userId: number;
+  systemModelId: number;
+  apiKey: string;
+  testConnection?: boolean;
+}
+
+export interface AdminSaveUserSystemModelKeyPayload {
+  adminSaveUserSystemModelKey: {
+    success: boolean;
+    message: string;
+    mapping: SystemModelUserMappingItem | null;
+  };
+}
+
+export interface AdminDeleteUserSystemModelKeyPayload {
+  adminDeleteUserSystemModelKey: {
+    success: boolean;
+    message: string;
+  };
+}
+
+export const adminSystemModelUserKeyGraphqlApi = {
+  /** 管理员：列出指定用户对系统预置模型的 API Key 映射 */
+  adminListUserSystemModelKeys: async (
+    userId: number,
+  ): Promise<AdminUserSystemModelKeyListPayload> => {
+    const query = `
+      query AdminListUserSystemModelKeys($userId: Int!) {
+        adminListUserSystemModelKeys(userId: $userId) {
+          success
+          message
+          mappings {
+            id
+            userId
+            systemModelId
+            systemModelName
+            apiKey
+            createdAt
+            updatedAt
+          }
+        }
+      }
+    `;
+    return graphqlClient.request<AdminUserSystemModelKeyListPayload>({
+      query,
+      variables: { userId },
+    });
+  },
+
+  /** 管理员：为指定用户保存系统预置模型的个人 API Key */
+  adminSaveUserSystemModelKey: async (
+    input: AdminSystemModelUserKeySaveInput,
+  ): Promise<AdminSaveUserSystemModelKeyPayload> => {
+    const mutation = `
+      mutation AdminSaveUserSystemModelKey($input: AdminSystemModelUserKeyInput!) {
+        adminSaveUserSystemModelKey(input: $input) {
+          success
+          message
+          mapping {
+            id
+            userId
+            systemModelId
+            systemModelName
+            apiKey
+            createdAt
+            updatedAt
+          }
+        }
+      }
+    `;
+    return graphqlClient.request<AdminSaveUserSystemModelKeyPayload>({
+      query: mutation,
+      variables: { input },
+    });
+  },
+
+  /** 管理员：删除指定用户对系统预置模型的个人 API Key */
+  adminDeleteUserSystemModelKey: async (
+    userId: number,
+    systemModelId: number,
+  ): Promise<AdminDeleteUserSystemModelKeyPayload> => {
+    const mutation = `
+      mutation AdminDeleteUserSystemModelKey($userId: Int!, $systemModelId: Int!) {
+        adminDeleteUserSystemModelKey(userId: $userId, systemModelId: $systemModelId) {
+          success
+          message
+        }
+      }
+    `;
+    return graphqlClient.request<AdminDeleteUserSystemModelKeyPayload>({
+      query: mutation,
+      variables: { userId, systemModelId },
+    });
+  },
+};
+
 // 数据库信息类型
 export interface DatabaseInfo {
   key: string;

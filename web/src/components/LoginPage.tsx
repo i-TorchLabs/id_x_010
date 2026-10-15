@@ -3,11 +3,13 @@
 import { useState, useCallback, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTheme } from "@/context/ThemeContext";
+import { useI18n } from "@/context/I18nContext";
 import { ThemeToggle } from "./ThemeToggle";
+import { LangToggle } from "./LangToggle";
 import LeftPanel from "./LeftPanel";
 import LoginForm from "./LoginForm";
 import { userGraphqlApi } from "@/api/graphql";
-import { redirectToAdfsAuthorize } from "@/utils/sso";
+import { clearSsoLoginFlag, redirectToAdfsAuthorize } from "@/utils/sso";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -22,6 +24,7 @@ export default function LoginPage({ mode = "user" }: LoginPageProps) {
     const router = useRouter();
     const searchParams = useSearchParams();
     const { theme } = useTheme();
+    const { t } = useI18n();
     const isDark = theme === "dark";
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
@@ -35,15 +38,15 @@ export default function LoginPage({ mode = "user" }: LoginPageProps) {
     const [passwordError, setPasswordError] = useState(false);
 
     const isAdmin = mode === "admin";
-    const redirectTo = isAdmin ? "/admin" : "/f/home";
+    const redirectTo = isAdmin ? "/f/admin-home" : "/f/user-home";
 
     // SSO 回调失败时通过 ?error= 携带原因回显到登录页
     useEffect(() => {
         const err = searchParams.get("error");
         if (err) {
             const map: Record<string, string> = {
-                sso_missing_code: "SSO callback missing authorization code",
-                sso_state_mismatch: "SSO state validation failed (possible CSRF attack)",
+                sso_missing_code: t("login.errorSsoMissingCode"),
+                sso_state_mismatch: t("login.errorSsoStateMismatch"),
             };
             setErrorMsg(map[err] ?? err);
         }
@@ -57,11 +60,13 @@ export default function LoginPage({ mode = "user" }: LoginPageProps) {
         if (!token || !userRaw) return;
         try {
             const u = JSON.parse(userRaw);
-            const role: string = u?.role ?? (u?.is_admin ? "admin" : "user");
-            if (isAdmin && role === "admin") {
-                router.replace("/admin");
-            } else if (!isAdmin && role === "user") {
-                router.replace("/f/home");
+            const hasAdmin = !!u?.role
+                ? u.role.split(",").map((r: string) => r.trim()).includes("admin")
+                : !!u?.is_admin;
+            if (isAdmin && hasAdmin) {
+                router.replace("/f/admin-home");
+            } else if (!isAdmin) {
+                router.replace("/f/user-home");
             }
         } catch {
             // 本地 user 损坏，忽略让其重新登录
@@ -84,13 +89,13 @@ export default function LoginPage({ mode = "user" }: LoginPageProps) {
 
             if (!cleanEmail || !EMAIL_REGEX.test(cleanEmail)) {
                 setEmailError(true);
-                setErrorMsg("Please enter a valid email address.");
+                setErrorMsg(t("login.errorValidEmailRequired"));
                 return;
             }
 
             if (!password || password.length < 6) {
                 setPasswordError(true);
-                setErrorMsg("Password must be at least 6 characters.");
+                setErrorMsg(t("login.errorPasswordMinLength"));
                 return;
             }
 
@@ -107,12 +112,12 @@ export default function LoginPage({ mode = "user" }: LoginPageProps) {
                 console.log("Login result:", result);
 
                 if (!result.login.success) {
-                    setErrorMsg(result.login.message || "Invalid email or password");
+                    setErrorMsg(result.login.message || t("login.errorInvalidCredentials"));
                     return;
                 }
 
                 if (!result.login.user) {
-                    setErrorMsg("Sign-in failed, please try again");
+                    setErrorMsg(t("login.errorSignInFailed"));
                     return;
                 }
 
@@ -122,12 +127,14 @@ export default function LoginPage({ mode = "user" }: LoginPageProps) {
                         "user",
                         JSON.stringify(result.login.user),
                     );
+                    // 密码登录清除 SSO 标记（当前会话不再由 SSO 建立）
+                    clearSsoLoginFlag();
                 }
 
                 router.push(redirectTo);
             } catch (error: any) {
                 console.error("Login failed:", error);
-                setErrorMsg(error.message || "Invalid email or password, please try again");
+                setErrorMsg(error.message || t("login.errorInvalidCredentialsRetry"));
             } finally {
                 setIsSubmitting(false);
             }
@@ -137,7 +144,8 @@ export default function LoginPage({ mode = "user" }: LoginPageProps) {
 
     return (
         <div className="h-screen relative overflow-hidden">
-            <div className="absolute top-4 right-4 z-50">
+            <div className="absolute top-4 right-4 z-50 flex items-center gap-1">
+                <LangToggle />
                 <ThemeToggle />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 h-full">

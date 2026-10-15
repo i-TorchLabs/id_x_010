@@ -2,7 +2,9 @@
 
 import { useState, useCallback } from "react";
 import { useTheme } from "@/context/ThemeContext";
+import { useI18n } from "@/context/I18nContext";
 import { ThemeToggle } from "./ThemeToggle";
+import { LangToggle } from "./LangToggle";
 import LeftPanel from "./LeftPanel";
 import ForgotPasswordForm from "./ForgotPasswordForm";
 import { userGraphqlApi } from "@/api/graphql";
@@ -11,6 +13,7 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function ForgotPasswordPage() {
     const { theme } = useTheme();
+    const { t } = useI18n();
     const isDark = theme === "dark";
     const [email, setEmail] = useState("");
     const [isTyping, setIsTyping] = useState(false);
@@ -33,13 +36,13 @@ export default function ForgotPasswordPage() {
 
             if (!cleanEmail || !EMAIL_REGEX.test(cleanEmail)) {
                 setEmailError(true);
-                setErrorMsg("Please enter a valid email address.");
+                setErrorMsg(t("forgotPassword.errorValidEmailRequired"));
                 return;
             }
 
             if (!agreedToTerms) {
                 setTermsError(true);
-                setErrorMsg("You must agree to the Terms of Service.");
+                setErrorMsg(t("forgotPassword.errorTermsRequired"));
                 return;
             }
 
@@ -55,7 +58,7 @@ export default function ForgotPasswordPage() {
                 // 检查是否成功
                 if (!result.forgotPassword.success) {
                     setErrorMsg(
-                        result.forgotPassword.message || "Operation failed, please try again",
+                        result.forgotPassword.message || t("forgotPassword.errorOperationFailed"),
                     );
                     return;
                 }
@@ -63,7 +66,7 @@ export default function ForgotPasswordPage() {
                 setIsSuccess(true);
             } catch (error: any) {
                 console.error("Forgot password failed:", error);
-                setErrorMsg(error.message || "Operation failed, please try again");
+                setErrorMsg(error.message || t("forgotPassword.errorOperationFailed"));
             } finally {
                 setIsSubmitting(false);
             }
@@ -73,7 +76,8 @@ export default function ForgotPasswordPage() {
 
     return (
         <div className="h-screen relative overflow-hidden">
-            <div className="absolute top-4 right-4 z-50">
+            <div className="absolute top-4 right-4 z-50 flex items-center gap-1">
+                <LangToggle />
                 <ThemeToggle />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 h-full">

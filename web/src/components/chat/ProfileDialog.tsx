@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Input, Label, Modal, TextField } from "@heroui/react";
 import { useTheme } from "@/context/ThemeContext";
+import { useI18n } from "@/context/I18nContext";
 import { userGraphqlApi, type User } from "@/api/graphql";
 import { uploadAvatar, prevalidateAvatarFile } from "@/api/upload";
 
@@ -41,6 +42,7 @@ export function ProfileDialog({
   onSaved,
 }: ProfileDialogProps) {
   const { theme } = useTheme();
+  const { t } = useI18n();
   const isDark = theme === "dark";
 
   const [displayName, setDisplayName] = useState<string>("");
@@ -81,16 +83,16 @@ export function ProfileDialog({
       });
       const { success, message, user: updated } = res.updateProfile;
       if (success && updated) {
-        setFeedback({ type: "success", text: message || "Name updated" });
+        setFeedback({ type: "success", text: message || t("profile.nameUpdated") });
         syncLocalStorage(updated);
         onSaved?.(updated);
       } else {
-        setFeedback({ type: "error", text: message || "Save failed" });
+        setFeedback({ type: "error", text: message || t("profile.errorSaveFailed") });
       }
     } catch (err) {
       setFeedback({
         type: "error",
-        text: err instanceof Error ? err.message : "Save failed, please try again later",
+        text: err instanceof Error ? err.message : t("profile.errorSaveFailedRetry"),
       });
     } finally {
       setIsSavingName(false);
@@ -116,13 +118,13 @@ export function ProfileDialog({
         const result = await uploadAvatar(file);
         if (result.success && result.user) {
           setAvatarUrl(result.avatarUrl ?? result.user.avatarUrl);
-          setFeedback({ type: "success", text: "Avatar updated" });
+          setFeedback({ type: "success", text: t("profile.avatarUpdated") });
           syncLocalStorage(result.user);
           onSaved?.(result.user);
         } else {
           setFeedback({
             type: "error",
-            text: result.error || "Avatar upload failed",
+            text: result.error || t("profile.errorAvatarUploadFailed"),
           });
         }
       } finally {
@@ -138,7 +140,7 @@ export function ProfileDialog({
         <Modal.Dialog className="sm:max-w-[480px]">
           <Modal.CloseTrigger />
           <Modal.Header>
-            <Modal.Heading>Profile</Modal.Heading>
+            <Modal.Heading>{t("profile.modalTitle")}</Modal.Heading>
           </Modal.Header>
           <Modal.Body>
             <div className="flex flex-col items-center gap-4">
@@ -147,14 +149,14 @@ export function ProfileDialog({
                 <div
                   className="relative group cursor-pointer"
                   onClick={() => fileInputRef.current?.click()}
-                  aria-label="Click to change avatar"
+                  aria-label={t("profile.ariaChangeAvatar")}
                   role="button"
                 >
                   {avatarUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={avatarUrl}
-                      alt="Avatar"
+                      alt={t("profile.avatarAlt")}
                       className="w-24 h-24 rounded-full object-cover"
                       style={{
                         border: "0.5px solid var(--divider)",
@@ -234,7 +236,7 @@ export function ProfileDialog({
                   isDisabled={isUploading}
                   className="text-xs"
                 >
-                  {isUploading ? "Uploading..." : "Change Avatar"}
+                  {isUploading ? t("profile.uploading") : t("profile.changeAvatar")}
                 </Button>
                 <p
                   className="font-text"
@@ -243,28 +245,28 @@ export function ProfileDialog({
                     color: "var(--fg3)",
                   }}
                 >
-                  Supports JPEG / PNG / WebP / GIF, ≤ 8MB
+                  {t("profile.avatarFormatHelp")}
                 </p>
               </div>
 
               {/* 显示名称 */}
               <TextField fullWidth className="flex flex-col gap-1.5 mt-2">
-                <Label className="text-sm font-medium">Display Name</Label>
+                <Label className="text-sm font-medium">{t("profile.fieldDisplayName")}</Label>
                 <Input
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="Leave empty to use email local-part"
+                  placeholder={t("profile.displayNamePlaceholder")}
                   maxLength={64}
                 />
               </TextField>
 
               {/* 邮箱（只读展示） */}
               <TextField fullWidth className="flex flex-col gap-1.5" isDisabled>
-                <Label className="text-sm font-medium">Email</Label>
+                <Label className="text-sm font-medium">{t("profile.fieldEmail")}</Label>
                 <Input
                   value={user?.email ?? ""}
                   readOnly
-                  aria-label="Email (read-only)"
+                  aria-label={t("profile.ariaEmailReadonly")}
                 />
               </TextField>
 
@@ -291,14 +293,14 @@ export function ProfileDialog({
           </Modal.Body>
           <Modal.Footer>
             <Button slot="close" variant="tertiary" isDisabled={isSavingName}>
-              Close
+              {t("profile.close")}
             </Button>
             <Button
               variant="primary"
               onPress={handleSaveName}
               isDisabled={isSavingName || isUploading}
             >
-              {isSavingName ? "Saving..." : "Save Name"}
+              {isSavingName ? t("profile.saving") : t("profile.saveName")}
             </Button>
           </Modal.Footer>
         </Modal.Dialog>

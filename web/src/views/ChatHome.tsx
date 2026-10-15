@@ -11,6 +11,8 @@ import { UsageStatsDialog } from "@/components/chat/UsageStatsDialog";
 import { ProfileDialog } from "@/components/chat/ProfileDialog";
 import { useTheme } from "@/context/ThemeContext";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { LangToggle } from "@/components/LangToggle";
+import { useI18n } from "@/context/I18nContext";
 import { motion } from "framer-motion";
 import { streamChatClient, StreamChunk } from "@/api/streamChat";
 import { AgentType } from "@/components/chat/AgentSelector";
@@ -22,6 +24,11 @@ import {
   type User,
 } from "@/api/graphql";
 import { AlertDialog, Button } from "@heroui/react";
+import {
+  clearSsoLoginFlag,
+  isSsoLogin,
+  redirectToAdfsLogout,
+} from "@/utils/sso";
 
 type ChatMessage = {
   id: string;
@@ -452,7 +459,7 @@ export default function ChatHome() {
                         ...msg,
                         sqlApprovalStatus: "cancelled" as const,
                         pendingSql: undefined,
-                        content: chunk.content || "Query cancelled",
+                        content: chunk.content || t("chat.messageQueryCancelled"),
                       }
                     : msg,
                 ),
@@ -507,7 +514,7 @@ export default function ChatHome() {
                     ? {
                         ...msg,
                         securityBlock: {
-                          reason: chunk.content || "SQL blocked by security mechanism",
+                          reason: chunk.content || t("chat.errorSqlBlocked"),
                           sql: chunk.sql || undefined,
                         },
                       }
@@ -526,7 +533,7 @@ export default function ChatHome() {
                         ...msg,
                         content:
                           chunk.content ||
-                          "Sorry, an error occurred. Please try again later.",
+                          t("chat.errorGeneric"),
                       }
                     : msg,
                 ),
@@ -543,7 +550,7 @@ export default function ChatHome() {
                 ? {
                     ...msg,
                     content:
-                      "Sorry, connection failed. Please try again later.",
+                      t("chat.errorConnectionFailed"),
                   }
                 : msg,
             ),
@@ -558,6 +565,7 @@ export default function ChatHome() {
   );
 
   const router = useRouter();
+  const { t } = useI18n();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showUsageStats, setShowUsageStats] = useState(false);
@@ -597,18 +605,25 @@ export default function ChatHome() {
 
   const handleLogout = async () => {
     setShowLogoutConfirm(false);
+    const ssoSession = isSsoLogin();
     try {
       // 调用后端登出接口
       await userGraphqlApi.logout();
     } catch (error) {
       console.error("Logout API error:", error);
     } finally {
-      // 无论接口是否成功，都清除本地存储并跳转
+      // 无论接口是否成功，都清除本地存储
       if (typeof window !== "undefined") {
         localStorage.removeItem("token");
         localStorage.removeItem("user");
+        clearSsoLoginFlag();
       }
-      router.push("/f/user-login");
+      // SSO 登录的用户：连同 ADFS 一起登出（跳转 ADFS 登出端点后回跳登录页）
+      if (ssoSession) {
+        redirectToAdfsLogout();
+      } else {
+        router.push("/f/user-login");
+      }
     }
   };
 
@@ -728,7 +743,7 @@ export default function ChatHome() {
                     ? {
                         ...msg,
                         securityBlock: {
-                          reason: chunk.content || "SQL blocked by security mechanism",
+                          reason: chunk.content || t("chat.errorSqlBlocked"),
                           sql: chunk.sql || undefined,
                         },
                       }
@@ -743,7 +758,7 @@ export default function ChatHome() {
                   msg.id === messageId
                     ? {
                         ...msg,
-                        content: chunk.content || "Execution failed",
+                        content: chunk.content || t("chat.errorExecutionFailed"),
                         pendingSql: undefined,
                         sqlApprovalStatus: undefined,
                       }
@@ -784,7 +799,7 @@ export default function ChatHome() {
             ? {
                 ...msg,
                 sqlApprovalStatus: "rejected" as const,
-                content: "Regenerating SQL...",
+                content: t("chat.messageRegeneratingSql"),
                 thinking: "",
                 pendingSql: undefined,
               }
@@ -898,7 +913,7 @@ export default function ChatHome() {
                     ? {
                         ...msg,
                         securityBlock: {
-                          reason: chunk.content || "SQL blocked by security mechanism",
+                          reason: chunk.content || t("chat.errorSqlBlocked"),
                           sql: chunk.sql || undefined,
                         },
                       }
@@ -913,7 +928,7 @@ export default function ChatHome() {
                   msg.id === messageId
                     ? {
                         ...msg,
-                        content: chunk.content || "Regeneration failed",
+                        content: chunk.content || t("chat.errorRegenerationFailed"),
                         pendingSql: undefined,
                         sqlApprovalStatus: undefined,
                       }
@@ -1037,7 +1052,8 @@ export default function ChatHome() {
         {/* Chat Content */}
         {isEmpty ? (
           <>
-            <div className="absolute top-4 right-4 z-50">
+            <div className="absolute top-4 right-4 z-50 flex items-center gap-1">
+              <LangToggle />
               <ThemeToggle />
             </div>
             <CenterHero
@@ -1091,7 +1107,7 @@ export default function ChatHome() {
                         color: "var(--fg1)",
                       }}
                     >
-                      AI Assistant
+                      {t("chat.headerTitle")}
                     </h2>
                     <p
                       className="font-text leading-tight"
@@ -1100,7 +1116,7 @@ export default function ChatHome() {
                         color: "var(--fg3)",
                       }}
                     >
-                      {isTyping ? "Typing..." : "Online"}
+                      {isTyping ? t("chat.statusTyping") : t("chat.statusOnline")}
                     </p>
                   </div>
                 </div>
@@ -1111,7 +1127,7 @@ export default function ChatHome() {
                     variant="ghost"
                     size="sm"
                     onPress={handleNewChat}
-                    aria-label="Clear conversation"
+                    aria-label={t("chat.ariaClearConversation")}
                     className="icon-btn"
                   >
                     <svg
@@ -1126,6 +1142,7 @@ export default function ChatHome() {
                       <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                     </svg>
                   </Button>
+                  <LangToggle />
                   <ThemeToggle />
                 </div>
               </div>
@@ -1198,17 +1215,17 @@ export default function ChatHome() {
             <AlertDialog.CloseTrigger />
             <AlertDialog.Header>
               <AlertDialog.Icon status="warning" />
-              <AlertDialog.Heading>Confirm Log Out</AlertDialog.Heading>
+              <AlertDialog.Heading>{t("chat.logoutConfirmTitle")}</AlertDialog.Heading>
             </AlertDialog.Header>
             <AlertDialog.Body>
-              <p>Are you sure you want to log out? You'll need to sign in again to continue.</p>
+              <p>{t("chat.logoutConfirmBody")}</p>
             </AlertDialog.Body>
             <AlertDialog.Footer>
               <Button slot="close" variant="tertiary">
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button slot="close" variant="danger" onPress={handleLogout}>
-                Confirm
+                {t("common.confirm")}
               </Button>
             </AlertDialog.Footer>
           </AlertDialog.Dialog>

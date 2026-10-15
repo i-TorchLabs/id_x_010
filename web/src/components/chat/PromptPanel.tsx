@@ -9,6 +9,7 @@ import {
 } from "@/api/graphql";
 import { uploadMarkdown } from "@/api/upload";
 import { useTheme } from "@/context/ThemeContext";
+import { useI18n } from "@/context/I18nContext";
 
 interface PromptPanelProps {
   /** 当前选中的提示词变化时通知父组件（用于在输入框附近显示徽标等） */
@@ -49,6 +50,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
   const editContentRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { theme } = useTheme();
+  const { t } = useI18n();
   const isDark = theme === "dark";
 
   // 加载提示词列表
@@ -66,7 +68,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
         setError(result.listMarkdownPrompts.message);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load prompt list");
+      setError(err instanceof Error ? err.message : t("prompt.errorLoadFailed"));
     } finally {
       setIsLoading(false);
     }
@@ -112,7 +114,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
     try {
       const result = await uploadMarkdown(file);
       if (!result.success || !result.prompt) {
-        setError(result.error || "Upload failed, please try again");
+        setError(result.error || t("prompt.errorUploadFailed"));
         return;
       }
       await loadPrompts();
@@ -139,7 +141,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
         setError(result.selectMarkdownPrompt.message);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to switch prompt");
+      setError(err instanceof Error ? err.message : t("prompt.errorSwitchFailed"));
     }
   };
 
@@ -160,7 +162,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
         setError(result.deleteMarkdownPrompt.message);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete prompt");
+      setError(err instanceof Error ? err.message : t("prompt.errorDeleteFailed"));
     }
   };
 
@@ -212,10 +214,10 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
         }
         cancelEditing();
       } else {
-        setError(result.renameMarkdownPrompt.message || "Save failed");
+        setError(result.renameMarkdownPrompt.message || t("prompt.errorSaveFailed"));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save note name");
+      setError(err instanceof Error ? err.message : t("prompt.errorSaveNameFailed"));
     } finally {
       setIsSaving(false);
     }
@@ -256,7 +258,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
   const saveContentEditing = async () => {
     if (editingPrompt === null) return;
     if (!editContentValue.trim()) {
-      setError("Content cannot be empty");
+      setError(t("prompt.errorContentEmpty"));
       return;
     }
 
@@ -281,10 +283,10 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
         setEditingPrompt(null);
         setEditContentValue("");
       } else {
-        setError(result.updateMarkdownContent.message || "Save failed");
+        setError(result.updateMarkdownContent.message || t("prompt.errorSaveFailed"));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save content");
+      setError(err instanceof Error ? err.message : t("prompt.errorSaveContentFailed"));
     } finally {
       setIsSavingContent(false);
     }
@@ -309,7 +311,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
           isIconOnly
           variant="ghost"
           size="sm"
-          aria-label="Upload Markdown prompt"
+          aria-label={t("prompt.ariaUpload")}
           onPress={() => fileInputRef.current?.click()}
           isDisabled={isUploading || isLoading}
           className="icon-btn !h-6 !w-6"
@@ -376,7 +378,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                 type="button"
                 onClick={() => setError(null)}
                 className="shrink-0 opacity-60 hover:opacity-100"
-                aria-label="Close error"
+                aria-label={t("prompt.ariaCloseError")}
               >
                 <svg
                   className="w-3 h-3"
@@ -498,7 +500,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                       aria-label={
                         prompt.isActive
                           ? "Selected"
-                          : "Set as active prompt"
+                          : t("prompt.setAsActive")
                       }
                       style={{ width: "16px", height: "16px" }}
                     >
@@ -558,7 +560,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                           }}
                           disabled={isSaving}
                           className="shrink-0 opacity-70 hover:opacity-100 transition-opacity"
-                          aria-label="Save note name"
+                          aria-label={t("prompt.ariaSaveName")}
                         >
                           <svg
                             className="w-3.5 h-3.5"
@@ -578,7 +580,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                           }}
                           disabled={isSaving}
                           className="shrink-0 opacity-50 hover:opacity-100 transition-opacity"
-                          aria-label="Cancel editing"
+                          aria-label={t("prompt.ariaCancelEdit")}
                         >
                           <svg
                             className="w-3.5 h-3.5"
@@ -642,7 +644,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                           type="button"
                           onClick={() => handleDownload(prompt)}
                           className="shrink-0 opacity-50 hover:opacity-100 transition-opacity"
-                          aria-label="Download Markdown file"
+                          aria-label={t("prompt.ariaDownload")}
                         >
                           <svg
                             className="w-3.5 h-3.5"
@@ -664,7 +666,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                           type="button"
                           onClick={() => startEditing(prompt)}
                           className="shrink-0 opacity-50 hover:opacity-100 transition-opacity"
-                          aria-label="Edit note name"
+                          aria-label={t("prompt.ariaEditName")}
                         >
                           <svg
                             className="w-3.5 h-3.5"
@@ -686,7 +688,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                           type="button"
                           onClick={() => openContentEditor(prompt)}
                           className="shrink-0 opacity-50 hover:opacity-100 transition-opacity"
-                          aria-label="Edit content"
+                          aria-label={t("prompt.ariaEditContent")}
                         >
                           <svg
                             className="w-3.5 h-3.5"
@@ -707,7 +709,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                           type="button"
                           onClick={() => setPromptToDelete(prompt)}
                           className="shrink-0 opacity-50 hover:opacity-100 transition-opacity"
-                          aria-label="Delete prompt"
+                          aria-label={t("prompt.ariaDelete")}
                         >
                           <svg
                             className="w-3.5 h-3.5"
@@ -790,17 +792,17 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
             />
             <AlertDialog.Header>
               <AlertDialog.Icon status="warning" />
-              <AlertDialog.Heading>Confirm Delete Prompt</AlertDialog.Heading>
+              <AlertDialog.Heading>{t("prompt.confirmDeleteTitle")}</AlertDialog.Heading>
             </AlertDialog.Header>
             <AlertDialog.Body>
               <p>
-                Are you sure you want to delete prompt
+                {t("prompt.confirmDeleteBody")}
                 <strong
                   style={{ margin: "0 4px" }}
                 >
                   {promptToDelete?.noteName ?? promptToDelete?.filename}
                 </strong>
-                ? This action cannot be undone.
+                {t("prompt.confirmDeleteSuffix")}
               </p>
               {promptToDelete?.isActive && (
                 <p
@@ -810,7 +812,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                     color: isDark ? "#ffb84d" : "#a86800",
                   }}
                 >
-                  Note: This is the active prompt. After deletion, the system will automatically use the most recent one.
+                  {t("prompt.activeDeleteWarning")}
                 </p>
               )}
             </AlertDialog.Body>
@@ -820,14 +822,14 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                 variant="tertiary"
                 onPress={() => setPromptToDelete(null)}
               >
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button
                 slot="close"
                 variant="danger"
                 onPress={confirmDelete}
               >
-                Delete
+                {t("common.delete")}
               </Button>
             </AlertDialog.Footer>
           </AlertDialog.Dialog>

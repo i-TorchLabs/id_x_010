@@ -5,6 +5,7 @@ import { useTheme } from "@/context/ThemeContext";
 import { motion } from "framer-motion";
 import { AgentType } from "./AgentSelector";
 import { ModelInfo, MarkdownPromptItem } from "@/api/graphql";
+import { useI18n } from "@/context/I18nContext";
 
 interface CenterHeroProps {
     onSubmit: (
@@ -37,6 +38,7 @@ export function CenterHero({
     activePrompt,
 }: CenterHeroProps) {
     const { theme } = useTheme();
+    const { t } = useI18n();
     const isDark = theme === "dark";
 
     return (
@@ -133,7 +135,7 @@ export function CenterHero({
                                     padding: "5px 14px",
                                 }}
                             >
-                                AI-Powered
+                                {t("hero.badgeAiPowered")}
                             </span>
                         </div>
 
@@ -147,7 +149,7 @@ export function CenterHero({
                                 color: "var(--fg1)",
                             }}
                         >
-                          Data Agent
+                          {t("hero.title")}
                         </h1>
                         <motion.p
                             className="font-text"
@@ -164,7 +166,7 @@ export function CenterHero({
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ delay: 0.5 }}
                         >
-                            Natural language Q&A, database retrieval, executable code generation
+                            {t("hero.subtitle")}
                         </motion.p>
                     </motion.div>
 
@@ -209,8 +211,7 @@ export function CenterHero({
                                 color: "var(--fg4)",
                             }}
                         >
-                            Local / external model switching · Built on LangGraph +
-                            Semantic Router
+                            {t("hero.footerText")}
                         </motion.p>
                     </div>
                 </motion.div>
