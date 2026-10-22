@@ -18,3 +18,4 @@ WHERE NOT EXISTS (SELECT 1 FROM agent_db_settings WHERE db_name = 'ex_factset');
 INSERT INTO agent_db_settings (db_name, db_label, db_host, db_port, db_username, db_password)
 SELECT 'ex_rating_express', 'RatingExpress数据库', '10.20.217.87', 15432, 'i', 'P@ssmickey233!'
 WHERE NOT EXISTS (SELECT 1 FROM agent_db_settings WHERE db_name = 'ex_rating_express');
+

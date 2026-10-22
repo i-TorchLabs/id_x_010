@@ -11,3 +11,4 @@ SELECT 'ollama',
        'http://host.containers.internal:11434',
        'http://host.containers.internal:11434'
 WHERE NOT EXISTS (SELECT 1 FROM local_provider);
+

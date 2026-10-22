@@ -92,3 +92,4 @@ COMMENT ON TABLE system_model_user_mappings IS '用户对系统预置模型的 A
 COMMENT ON COLUMN system_model_user_mappings.user_id IS '用户 ID';
 COMMENT ON COLUMN system_model_user_mappings.system_model_id IS '系统预置模型 ID';
 COMMENT ON COLUMN system_model_user_mappings.api_key IS '用户个人 API Key（覆盖系统模型全局 key）';
+

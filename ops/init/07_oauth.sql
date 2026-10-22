@@ -8,3 +8,4 @@ SELECT '373d4823-7c0b-4375-a16c-e902f979ee34',
        'xKczBbxvKZ2kELoUiuEfkLPkmYF2yN2V0jAHpgD0',
        'https://sme-tx-studio.cuhk.edu.cn/f/010/oauth2'
 WHERE NOT EXISTS (SELECT 1 FROM sso_settings);
+
