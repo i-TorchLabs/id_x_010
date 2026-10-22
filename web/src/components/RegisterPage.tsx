@@ -118,7 +118,8 @@ export default function RegisterPage() {
                 />
 
                 <div
-                    className={`flex items-center justify-center p-8 md:p-10 ${isDark ? "bg-[#000000]" : "bg-[#f5f5f7]"}`}
+                    className="flex items-center justify-center p-8 md:p-10 theme-transition"
+                    style={{ background: "var(--bg)" }}
                 >
                     <RegisterForm
                         email={email}

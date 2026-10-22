@@ -17,11 +17,11 @@ interface CenterHeroProps {
     selectedDb?: string | null;
     onDbChange?: (dbName: string | null) => void;
     selectedModel?: ModelInfo | null;
-    onModelChange?: (model: ModelInfo | null) => void;
     selectedAgent?: AgentType;
     onAgentChange?: (agent: AgentType) => void;
     models?: ModelInfo[];
     isLoadingModels?: boolean;
+    onModelChange?: (m: ModelInfo | null) => void;
     activePrompt?: MarkdownPromptItem | null;
 }
 
@@ -30,11 +30,11 @@ export function CenterHero({
     selectedDb,
     onDbChange,
     selectedModel,
-    onModelChange,
     selectedAgent,
     onAgentChange,
     models,
     isLoadingModels,
+    onModelChange,
     activePrompt,
 }: CenterHeroProps) {
     const { theme } = useTheme();
@@ -189,11 +189,11 @@ export function CenterHero({
                                 selectedDb={selectedDb}
                                 onDbChange={onDbChange}
                                 selectedModel={selectedModel}
-                                onModelChange={onModelChange}
                                 selectedAgent={selectedAgent}
                                 onAgentChange={onAgentChange}
                                 models={models}
                                 isLoadingModels={isLoadingModels}
+                                onModelChange={onModelChange}
                                 activePrompt={activePrompt}
                             />
                         </motion.div>

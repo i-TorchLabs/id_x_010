@@ -176,7 +176,7 @@ export default function LoginForm({
               />
               <button
                 type="button"
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-foreground transition-colors z-10"
+                className="icon-btn-sm absolute right-2 top-1/2 -translate-y-1/2 z-10"
                 onClick={() => setShowPassword(!showPassword)}
                 aria-label={showPassword ? t("login.ariaHidePassword") : t("login.ariaShowPassword")}
               >
@@ -237,9 +237,9 @@ export default function LoginForm({
         {!isAdmin && (
           <>
             <div className="flex items-center gap-3 my-5">
-              <span className="flex-1 h-px bg-border" />
+              <span className="flex-1 h-px" style={{ background: "var(--divider)" }} />
               <span className="text-xs text-muted">{t("login.or")}</span>
-              <span className="flex-1 h-px bg-border" />
+              <span className="flex-1 h-px" style={{ background: "var(--divider)" }} />
             </div>
             <Button
               type="button"

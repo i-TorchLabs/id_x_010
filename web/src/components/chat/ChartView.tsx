@@ -205,10 +205,10 @@ function BarChart({
             y={hover.y - 4}
             width={130}
             height={32}
-            rx={3}
-            fill={isDark ? "#000" : "#fff"}
+            rx={6}
+            fill="var(--card)"
             opacity={0.92}
-            stroke={isDark ? "#444" : "#ccc"}
+            stroke="var(--divider-strong)"
             strokeWidth={0.5}
           />
           <text x={Math.min(hover.x - 55, W - PAD_R - 125)} y={hover.y + 9} fontSize={10} fill={axisColor}>
@@ -653,10 +653,10 @@ function ScatterChart({
             y={hover.y - 18}
             width={Math.max(80, hover.label.length * 6 + 12)}
             height={20}
-            rx={3}
-            fill={isDark ? "#000" : "#fff"}
+            rx={6}
+            fill="var(--card)"
             opacity={0.92}
-            stroke={isDark ? "#444" : "#ccc"}
+            stroke="var(--divider-strong)"
             strokeWidth={0.5}
           />
           <text x={hover.x + 14} y={hover.y - 4} fontSize={10} fill={axisColor}>
@@ -845,17 +845,12 @@ export function ChartView({
                 key={t}
                 type="button"
                 onClick={() => onTypeChange!(t)}
+                className={`chip-btn${active ? " chip-btn-active" : ""}`}
                 style={{
                   fontSize: "10px",
                   fontWeight: 500,
-                  padding: "2px 8px",
-                  borderRadius: 4,
-                  border: "0.5px solid var(--divider-strong)",
-                  background: active ? "var(--surface-2)" : "transparent",
-                  color: active ? "var(--fg1)" : "var(--fg4)",
-                  boxShadow: active ? "var(--shadow-inset)" : "none",
-                  cursor: "pointer",
-                  transition: "all 0.15s",
+                  padding: "3px 10px",
+                  borderRadius: 980,
                 }}
               >
                 {typeLabels[t]}

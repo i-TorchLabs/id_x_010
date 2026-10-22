@@ -184,8 +184,10 @@ export function ApprovalCenter() {
               width: 8,
               height: 8,
               borderRadius: "50%",
-              background: connected ? "#16a34a" : "#dc2626",
+              background: connected ? "var(--accent)" : "var(--error)",
+              boxShadow: connected ? "0 0 0 3px var(--badge-bg)" : "0 0 0 3px var(--error-bg)",
               display: "inline-block",
+              transition: "background-color 200ms ease, box-shadow 200ms ease",
             }}
           />
           <span style={{ color: "var(--fg3)" }}>
@@ -220,10 +222,11 @@ export function ApprovalCenter() {
             >
               <div
                 style={{
-                  background: "var(--surface-1)",
+                  background: "var(--surface-2)",
                   border: "0.5px solid var(--divider)",
-                  borderRadius: 12,
+                  borderRadius: 14,
                   padding: 16,
+                  boxShadow: "var(--shadow-inset), var(--shadow-sm)",
                 }}
               >
                   <div style={{ fontSize: 12, color: "var(--fg3)", marginBottom: 6 }}>
@@ -245,8 +248,9 @@ export function ApprovalCenter() {
                   <pre
                     style={{
                       background: "var(--surface-1)",
+                      border: "0.5px solid var(--divider)",
                       padding: 10,
-                      borderRadius: 6,
+                      borderRadius: 10,
                       fontSize: 12,
                       overflowX: "auto",
                       margin: 0,

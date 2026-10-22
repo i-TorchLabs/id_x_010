@@ -115,10 +115,17 @@ export function AdminPanel() {
             onClick={() => { setTab(t.key); setFeedback(null); }}
             style={{
               padding: "10px 20px", fontSize: 13, fontWeight: tab === t.key ? 600 : 500,
-              color: tab === t.key ? "var(--accent, #3b82f6)" : "var(--fg3)",
-              borderBottom: tab === t.key ? "2px solid var(--accent, #3b82f6)" : "2px solid transparent",
+              color: tab === t.key ? "var(--fg1)" : "var(--fg3)",
               background: "transparent", border: "none", cursor: "pointer",
-              transition: "color 150ms ease, border-color 150ms ease",
+              borderBottom: tab === t.key ? "2px solid var(--accent)" : "2px solid transparent",
+              borderRadius: "8px 8px 0 0",
+              transition: "color 180ms ease, border-color 180ms ease, background-color 180ms ease",
+            }}
+            onMouseEnter={(e) => {
+              if (tab !== t.key) e.currentTarget.style.backgroundColor = "var(--hover-bg)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = "transparent";
             }}
           >
             {t.label}
@@ -129,9 +136,11 @@ export function AdminPanel() {
       {/* Feedback */}
       {feedback && (
         <div style={{
-          margin: "12px 24px", padding: "8px 12px", borderRadius: 8, fontSize: 13,
-          background: feedback.kind === "ok" ? "rgba(22,163,74,0.1)" : "rgba(220,38,38,0.1)",
-          border: `1px solid ${feedback.kind === "ok" ? "rgba(22,163,74,0.3)" : "rgba(220,38,38,0.3)"}`,
+          margin: "12px 24px", padding: "8px 12px", borderRadius: 10, fontSize: 13,
+          background: feedback.kind === "ok" ? "var(--badge-bg)" : "var(--error-bg)",
+          border: `0.5px solid ${feedback.kind === "ok" ? "var(--divider-strong)" : "var(--error-border)"}`,
+          color: feedback.kind === "ok" ? "var(--fg1)" : "var(--error)",
+          boxShadow: "var(--shadow-xs)",
         }}>
           {feedback.text}
         </div>
@@ -389,8 +398,9 @@ function UsersTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) {
                 <td style={{ padding: "8px 12px" }}>
                   <span style={{
                     fontSize: 12, padding: "2px 8px", borderRadius: 999,
-                    background: u.role.split(",").map(r => r.trim()).includes("admin") ? "rgba(59,130,246,0.15)" : "var(--surface-2)",
-                    color: u.role.split(",").map(r => r.trim()).includes("admin") ? "var(--accent, #3b82f6)" : "var(--fg3)",
+                    border: "0.5px solid var(--divider)",
+                    background: u.role.split(",").map(r => r.trim()).includes("admin") ? "var(--badge-bg)" : "var(--surface-2)",
+                    color: u.role.split(",").map(r => r.trim()).includes("admin") ? "var(--fg1)" : "var(--fg3)",
                   }}>
                     {u.role.split(",").map(r => r.trim()).includes("admin") ? t("admin.users.roleAdmin") : t("admin.users.roleUser")}
                   </span>
@@ -583,13 +593,13 @@ function ModelKeysModal({
                   const hasKey = mp != null;
                   const draft = editing[sm.id] ?? (hasKey ? mp!.apiKey : "");
                   return (
-                    <div key={sm.id} style={{ padding: 12, borderRadius: 8, background: "var(--surface-2)", border: `0.5px solid ${hasKey ? "var(--accent, #3b82f6)" : "var(--divider)"}` }}>
+                    <div key={sm.id} style={{ padding: 12, borderRadius: 12, background: "var(--surface-2)", border: `0.5px solid ${hasKey ? "var(--divider-strong)" : "var(--divider)"}`, boxShadow: hasKey ? "var(--shadow-inset), var(--shadow-xs)" : "none" }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                         <div>
                           <span style={{ fontSize: 13, fontWeight: 600 }}>{sm.name}</span>
                           <span style={{ fontSize: 11, color: "var(--fg4)", marginLeft: 6 }}>{sm.provider}{!sm.enabled ? t("admin.users.disabledSuffix") : ""}</span>
                         </div>
-                        {hasKey && <span style={{ fontSize: 11, color: "var(--accent, #3b82f6)" }}>{t("admin.users.configured")}</span>}
+                        {hasKey && <span style={{ fontSize: 11, color: "var(--fg3)" }}>{t("admin.users.configured")}</span>}
                       </div>
                       <div style={{ display: "flex", gap: 6 }}>
                         <Input
@@ -690,8 +700,8 @@ function BillingTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) {
                 <div style={{
                   width: `${(u.monthCostUsd / maxCost) * 100}%`, height: "100%",
                   background: u.systemModelQuotaUsd != null && u.monthCostUsd >= u.systemModelQuotaUsd
-                    ? "rgba(220,38,38,0.7)"
-                    : "var(--accent, #3b82f6)",
+                    ? "var(--error)"
+                    : "var(--accent)",
                   borderRadius: 6, transition: "width 300ms ease",
                 }} />
               </div>
@@ -733,7 +743,8 @@ function BillingTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) {
                       <div style={{ width: 100, height: 8, background: "var(--surface-2)", borderRadius: 4, overflow: "hidden" }}>
                         <div style={{
                           width: `${usagePct}%`, height: "100%",
-                          background: usagePct >= 100 ? "rgba(220,38,38,0.7)" : "var(--accent, #3b82f6)",
+                          background: usagePct >= 100 ? "var(--error)" : "var(--accent)",
+                          transition: "width 300ms ease",
                         }} />
                       </div>
                     ) : "—"}

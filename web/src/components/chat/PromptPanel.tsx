@@ -366,10 +366,9 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
             exit={{ opacity: 0, height: 0 }}
             className="mb-2 px-2.5 py-1.5 rounded-md text-xs font-medium"
             style={{
-              background: isDark
-                ? "rgba(255,80,80,0.10)"
-                : "rgba(200,30,30,0.06)",
-              color: isDark ? "#ff8a8a" : "#b32020",
+              background: "var(--error-bg)",
+              border: "0.5px solid var(--error-border)",
+              color: "var(--error)",
             }}
           >
             <div className="flex items-start gap-1.5">
@@ -377,7 +376,8 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
               <button
                 type="button"
                 onClick={() => setError(null)}
-                className="shrink-0 opacity-60 hover:opacity-100"
+                className="icon-btn-sm shrink-0"
+                style={{ color: "inherit" }}
                 aria-label={t("prompt.ariaCloseError")}
               >
                 <svg
@@ -496,25 +496,31 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                     <button
                       type="button"
                       onClick={() => handleSelect(prompt.id)}
-                      className="shrink-0 flex items-center justify-center"
+                      className="icon-btn-sm shrink-0 flex items-center justify-center"
                       aria-label={
                         prompt.isActive
                           ? "Selected"
                           : t("prompt.setAsActive")
                       }
-                      style={{ width: "16px", height: "16px" }}
+                      style={{ width: "22px", height: "22px", padding: 0 }}
                     >
                       <span
-                        className="rounded-full border-2 transition-colors"
+                        className="rounded-full"
                         style={{
                           width: "14px",
                           height: "14px",
-                          borderColor: prompt.isActive
-                            ? "var(--fg)"
-                            : "var(--fg3)",
+                          border: prompt.isActive
+                            ? "1.5px solid var(--accent)"
+                            : "1.5px solid var(--fg4)",
                           background: prompt.isActive
-                            ? "var(--fg)"
+                            ? "var(--accent)"
                             : "transparent",
+                          // 选中时用卡片色内圈模拟「圆点」效果，更精致
+                          boxShadow: prompt.isActive
+                            ? "inset 0 0 0 2.5px var(--card)"
+                            : "none",
+                          transition:
+                            "border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease",
                         }}
                       />
                     </button>
@@ -539,15 +545,11 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                           onBlur={saveEditing}
                           disabled={isSaving}
                           placeholder={prompt.filename}
-                          className="flex-1 min-w-0 font-text px-1.5 py-0.5 rounded outline-none"
+                          className="field-input flex-1 min-w-0 font-text px-1.5 py-0.5"
                           style={{
                             fontSize: "12px",
                             fontWeight: prompt.isActive ? 600 : 400,
-                            color: "var(--fg)",
-                            background: isDark
-                              ? "rgba(0,0,0,0.3)"
-                              : "rgba(0,0,0,0.04)",
-                            border: "1px solid var(--fg)",
+                            borderRadius: 7,
                           }}
                           maxLength={256}
                         />
@@ -559,7 +561,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                             saveEditing();
                           }}
                           disabled={isSaving}
-                          className="shrink-0 opacity-70 hover:opacity-100 transition-opacity"
+                          className="icon-btn-sm"
                           aria-label={t("prompt.ariaSaveName")}
                         >
                           <svg
@@ -579,7 +581,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                             cancelEditing();
                           }}
                           disabled={isSaving}
-                          className="shrink-0 opacity-50 hover:opacity-100 transition-opacity"
+                          className="icon-btn-sm"
                           aria-label={t("prompt.ariaCancelEdit")}
                         >
                           <svg
@@ -643,7 +645,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                         <button
                           type="button"
                           onClick={() => handleDownload(prompt)}
-                          className="shrink-0 opacity-50 hover:opacity-100 transition-opacity"
+                          className="icon-btn-sm"
                           aria-label={t("prompt.ariaDownload")}
                         >
                           <svg
@@ -665,7 +667,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                         <button
                           type="button"
                           onClick={() => startEditing(prompt)}
-                          className="shrink-0 opacity-50 hover:opacity-100 transition-opacity"
+                          className="icon-btn-sm"
                           aria-label={t("prompt.ariaEditName")}
                         >
                           <svg
@@ -687,7 +689,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                         <button
                           type="button"
                           onClick={() => openContentEditor(prompt)}
-                          className="shrink-0 opacity-50 hover:opacity-100 transition-opacity"
+                          className="icon-btn-sm"
                           aria-label={t("prompt.ariaEditContent")}
                         >
                           <svg
@@ -708,7 +710,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                         <button
                           type="button"
                           onClick={() => setPromptToDelete(prompt)}
-                          className="shrink-0 opacity-50 hover:opacity-100 transition-opacity"
+                          className="icon-btn-sm"
                           aria-label={t("prompt.ariaDelete")}
                         >
                           <svg
@@ -739,19 +741,16 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                         className="overflow-hidden"
                       >
                         <pre
-                          className="font-text mx-1.5 mb-1.5 p-2 rounded overflow-auto"
+                          className="font-text mx-1.5 mb-1.5 p-2 rounded-lg overflow-auto"
                           style={{
                             fontSize: "11px",
                             lineHeight: "1.5",
                             maxHeight: "160px",
                             whiteSpace: "pre-wrap",
                             wordBreak: "break-word",
-                            background: isDark
-                              ? "rgba(0,0,0,0.3)"
-                              : "rgba(0,0,0,0.03)",
-                            color: isDark
-                              ? "rgba(255,255,255,0.7)"
-                              : "rgba(0,0,0,0.65)",
+                            background: "var(--surface-1)",
+                            border: "0.5px solid var(--divider)",
+                            color: "var(--fg2)",
                           }}
                         >
                           {prompt.content}
@@ -867,7 +866,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                   }
                 }}
                 disabled={isSavingContent}
-                className="font-text w-full p-3 rounded outline-none resize-y"
+                className="field-input font-text w-full p-3 resize-y"
                 style={{
                   fontSize: "13px",
                   lineHeight: "1.6",
@@ -875,13 +874,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                   maxHeight: "60vh",
                   whiteSpace: "pre-wrap",
                   wordBreak: "break-word",
-                  background: isDark
-                    ? "rgba(0,0,0,0.3)"
-                    : "rgba(0,0,0,0.03)",
-                  color: isDark
-                    ? "rgba(255,255,255,0.9)"
-                    : "rgba(0,0,0,0.85)",
-                  border: "1px solid var(--divider)",
+                  borderRadius: 12,
                   boxSizing: "border-box",
                   fontFamily:
                     "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",

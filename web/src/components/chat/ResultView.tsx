@@ -14,7 +14,6 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { useTheme } from "@/context/ThemeContext";
 import { ChartView, type ChartConfig } from "@/components/chat/ChartView";
 
 interface ResultViewProps {
@@ -46,15 +45,13 @@ function formatCell(v: unknown, maxLen = 60): string {
 function ResultTable({
   columns,
   rows,
-  isDark,
 }: {
   columns: string[];
   rows: Record<string, unknown>[];
-  isDark: boolean;
 }) {
   const headerColor = "var(--fg2)";
-  const borderColor = isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)";
-  const hoverBg = isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)";
+  const borderColor = "var(--divider)";
+  const hoverBg = "var(--hover-bg)";
   const cellColor = "var(--fg2)";
   const mutedColor = "var(--fg4)";
 
@@ -99,7 +96,7 @@ function ResultTable({
                   color: headerColor,
                   fontWeight: 600,
                   borderBottom: `0.5px solid ${borderColor}`,
-                  background: isDark ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.02)",
+                  background: "var(--surface-1)",
                   width: colWidths[i],
                   whiteSpace: "nowrap",
                   position: "sticky",
@@ -161,6 +158,8 @@ function ResultTable({
 }
 
 // ── 切换按钮 ──
+// 外观统一走 globals.css 的 .chip-btn / .chip-btn-active:
+// 细描边 + 内高光 + 悬停加深 + 按压回缩,选中态 accent 反转。
 function ModeSwitch({
   mode,
   onChange,
@@ -174,20 +173,8 @@ function ModeSwitch({
     fontSize: "10px",
     fontWeight: 500,
     padding: "3px 10px",
-    borderRadius: 6,
-    border: "0.5px solid var(--divider-strong)",
-    transition: "all 0.15s",
-    cursor: "pointer",
+    borderRadius: 980,
     letterSpacing: "0.01em",
-  };
-  const activeStyle: React.CSSProperties = {
-    background: "var(--surface-2)",
-    color: "var(--fg1)",
-    boxShadow: "var(--shadow-inset)",
-  };
-  const inactiveStyle: React.CSSProperties = {
-    background: "transparent",
-    color: "var(--fg4)",
   };
   // chart disabled when no chart_config
   const chartDisabled = !hasChart;
@@ -196,18 +183,16 @@ function ModeSwitch({
     <div className="inline-flex gap-1" role="group" aria-label="view mode">
       <button
         type="button"
-        style={{ ...baseStyle, ...(mode === "table" ? activeStyle : inactiveStyle) }}
+        className={`chip-btn${mode === "table" ? " chip-btn-active" : ""}`}
+        style={baseStyle}
         onClick={() => onChange("table")}
       >
         Table
       </button>
       <button
         type="button"
-        style={{
-          ...baseStyle,
-          ...(mode === "chart" ? activeStyle : inactiveStyle),
-          ...(chartDisabled ? { opacity: 0.4, cursor: "not-allowed" } : {}),
-        }}
+        className={`chip-btn${mode === "chart" ? " chip-btn-active" : ""}`}
+        style={baseStyle}
         disabled={chartDisabled}
         onClick={() => onChange("chart")}
         title={chartDisabled ? "No available chart configuration for current data" : ""}
@@ -225,9 +210,6 @@ export function ResultView({
   chartConfig,
   defaultMode = "auto",
 }: ResultViewProps) {
-  const { theme } = useTheme();
-  const isDark = theme === "dark";
-
   const rows = data || [];
   const cols = columns || [];
   const hasChart = !!chartConfig && rows.length > 0;
@@ -313,14 +295,11 @@ export function ResultView({
             type="button"
             onClick={() => exportLocalCsv(cols, rows)}
             title="Export current result as CSV (only loaded rows; for full export use the export button in the query panel)"
+            className="chip-btn"
             style={{
               fontSize: "11px",
-              padding: "2px 8px",
-              borderRadius: 6,
-              background: "var(--surface-1)",
-              border: "0.5px solid var(--divider)",
-              color: "var(--fg2)",
-              cursor: "pointer",
+              padding: "3px 10px",
+              borderRadius: 980,
             }}
           >
             Export CSV
@@ -331,7 +310,7 @@ export function ResultView({
 
       {/* 视图内容 */}
       {mode === "table" ? (
-        <ResultTable columns={cols} rows={rows} isDark={isDark} />
+        <ResultTable columns={cols} rows={rows} />
       ) : effectiveChartConfig ? (
         <ChartView
           config={effectiveChartConfig}
@@ -342,7 +321,7 @@ export function ResultView({
           switchableTypes={switchableTypes}
         />
       ) : (
-        <ResultTable columns={cols} rows={rows} isDark={isDark} />
+        <ResultTable columns={cols} rows={rows} />
       )}
     </div>
   );

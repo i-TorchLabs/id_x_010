@@ -9,6 +9,8 @@ import { API_BASE_URL } from "@/utils/config";
 interface GraphQLRequestConfig {
   query: string;
   variables?: Record<string, any>;
+  /** 超时（毫秒）。不传则不限时，由浏览器/网关决定。 */
+  timeoutMs?: number;
 }
 
 // GraphQL 响应类型
@@ -53,31 +55,68 @@ class GraphQLClient {
     config: GraphQLRequestConfig,
     signal?: AbortSignal,
   ): Promise<T> {
-    const response = await fetch(this.baseUrl, {
-      method: "POST",
-      headers: this.getDefaultHeaders(),
-      body: JSON.stringify({
-        query: config.query,
-        variables: config.variables,
-      }),
-      signal,
-    });
+    // 超时保护：避免后端长耗时任务（如连通性检测）挂住时，
+    // 调用方的 loading 状态永远无法复位、按钮持续禁用。
+    const { timeoutMs } = config;
+    let controller: AbortController | null = null;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let timedOut = false;
+    let requestSignal = signal;
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    if (timeoutMs != null && timeoutMs > 0) {
+      controller = new AbortController();
+      timeoutId = setTimeout(() => {
+        timedOut = true;
+        controller?.abort();
+      }, timeoutMs);
+      if (signal) {
+        if (signal.aborted) {
+          controller.abort();
+        } else {
+          signal.addEventListener("abort", () => controller?.abort(), {
+            once: true,
+          });
+        }
+      }
+      requestSignal = controller.signal;
     }
 
-    const result: GraphQLResponse<T> = await response.json();
+    try {
+      const response = await fetch(this.baseUrl, {
+        method: "POST",
+        headers: this.getDefaultHeaders(),
+        body: JSON.stringify({
+          query: config.query,
+          variables: config.variables,
+        }),
+        signal: requestSignal,
+      });
 
-    if (result.errors && result.errors.length > 0) {
-      throw new Error(result.errors[0].message);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const result: GraphQLResponse<T> = await response.json();
+
+      if (result.errors && result.errors.length > 0) {
+        throw new Error(result.errors[0].message);
+      }
+
+      if (result.data === undefined || result.data === null) {
+        throw new Error("GraphQL response missing data field");
+      }
+
+      return result.data;
+    } catch (err) {
+      if (timedOut) {
+        throw new Error(
+          `请求超时（${Math.round((timeoutMs ?? 0) / 1000)}s），请稍后重试`,
+        );
+      }
+      throw err;
+    } finally {
+      if (timeoutId != null) clearTimeout(timeoutId);
     }
-
-    if (result.data === undefined || result.data === null) {
-      throw new Error("GraphQL response missing data field");
-    }
-
-    return result.data;
   }
 }
 
@@ -447,14 +486,13 @@ export interface SaveModelSettingsPayload {
   };
 }
 
-// 模型设置输入类型
+// 模型设置输入类型（配额由管理员在管理后台设置，不再由用户提交）
 export interface ModelSettingsInput {
   provider: string;
   baseUrl: string;
   apiKey: string;
   modelName: string;
   modelNameList: string[];
-  quotaLimitMonthlyUsd?: number | null;
 }
 
 // 连通性测试输入类型
@@ -600,7 +638,6 @@ export interface DeleteModelProviderPayload {
 
 export interface SaveDefaultModelInput {
   modelName: string;
-  quotaLimitMonthlyUsd?: number | null;
 }
 
 export interface SaveDefaultModelPayload {
@@ -608,7 +645,6 @@ export interface SaveDefaultModelPayload {
     success: boolean;
     message: string;
     modelName: string | null;
-    quotaLimitMonthlyUsd: number | null;
   };
 }
 
@@ -661,6 +697,9 @@ export const userModelProviderGraphqlApi = {
     return graphqlClient.request<SaveModelProviderPayload>({
       query: mutation,
       variables: { input },
+      // 后端保存前会对第一个模型做连通性检测（含重试最长约 40s），
+      // 这里留足余量；超时后抛错，避免保存按钮永久卡在禁用态。
+      timeoutMs: 60_000,
     });
   },
 
@@ -682,7 +721,7 @@ export const userModelProviderGraphqlApi = {
     });
   },
 
-  /** 设置默认模型名与月度配额 */
+  /** 设置默认模型名（配额由管理员在管理后台设置） */
   saveDefaultModel: async (
     input: SaveDefaultModelInput,
   ): Promise<SaveDefaultModelPayload> => {
@@ -692,7 +731,6 @@ export const userModelProviderGraphqlApi = {
           success
           message
           modelName
-          quotaLimitMonthlyUsd
         }
       }
     `;

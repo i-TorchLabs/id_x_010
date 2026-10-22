@@ -9,7 +9,6 @@ import { ChatSidebar } from "@/components/chat/ChatSidebar";
 import { ModelSettingsDialog } from "@/components/chat/ModelSettingsDialog";
 import { UsageStatsDialog } from "@/components/chat/UsageStatsDialog";
 import { ProfileDialog } from "@/components/chat/ProfileDialog";
-import { useTheme } from "@/context/ThemeContext";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { LangToggle } from "@/components/LangToggle";
 import { useI18n } from "@/context/I18nContext";
@@ -132,7 +131,6 @@ export default function ChatHome() {
     null,
   );
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const { theme } = useTheme();
 
   // 加载模型列表（应用级别，初次加载 + 设置保存后刷新复用）
   const reloadModels = useCallback(
@@ -1021,11 +1019,11 @@ export default function ChatHome() {
   );
 
   const isEmpty = messages.length === 0;
-  const isDark = theme === "dark";
 
   return (
     <div
-      className={`flex h-screen ${isDark ? "bg-[#000000]" : "bg-[#f5f5f7]"}`}
+      className="flex h-screen theme-transition"
+      style={{ background: "var(--bg)" }}
     >
       {/* ── Left Panel: Sidebar (always mounted, collapse to rail) ── */}
       <ChatSidebar
@@ -1061,11 +1059,11 @@ export default function ChatHome() {
               selectedDb={selectedDb}
               onDbChange={setSelectedDb}
               selectedModel={selectedModel}
-              onModelChange={setSelectedModel}
               selectedAgent={selectedAgent}
               onAgentChange={setSelectedAgent}
               models={models}
               isLoadingModels={isLoadingModels}
+              onModelChange={setSelectedModel}
               activePrompt={activePrompt}
             />
           </>
@@ -1084,40 +1082,42 @@ export default function ChatHome() {
               }}
             >
               <div className="w-full flex items-center justify-between px-1">
-                {/* Left side - Title + status dot */}
-                <div className="flex items-center gap-2.5">
-                  <span
-                    className="inline-block rounded-full"
-                    style={{
-                      width: "6px",
-                      height: "6px",
-                      background: isTyping ? "var(--fg3)" : "var(--accent)",
-                      opacity: isTyping ? 0.6 : 1,
-                      transition: "opacity 200ms ease, background 200ms ease",
-                    }}
-                    aria-hidden
-                  />
-                  <div className="flex flex-col">
-                    <h2
-                      className="font-display leading-tight"
+                {/* Left side - Title + status dot（模型选择器已移至输入框右下角） */}
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span
+                      className="inline-block rounded-full shrink-0"
                       style={{
-                        fontSize: "15px",
-                        fontWeight: 600,
-                        letterSpacing: "-0.01em",
-                        color: "var(--fg1)",
+                        width: "6px",
+                        height: "6px",
+                        background: isTyping ? "var(--fg3)" : "var(--accent)",
+                        opacity: isTyping ? 0.6 : 1,
+                        transition: "opacity 200ms ease, background 200ms ease",
                       }}
-                    >
-                      {t("chat.headerTitle")}
-                    </h2>
-                    <p
-                      className="font-text leading-tight"
-                      style={{
-                        fontSize: "11px",
-                        color: "var(--fg3)",
-                      }}
-                    >
-                      {isTyping ? t("chat.statusTyping") : t("chat.statusOnline")}
-                    </p>
+                      aria-hidden
+                    />
+                    <div className="flex flex-col min-w-0">
+                      <h2
+                        className="font-display leading-tight truncate"
+                        style={{
+                          fontSize: "15px",
+                          fontWeight: 600,
+                          letterSpacing: "-0.01em",
+                          color: "var(--fg1)",
+                        }}
+                      >
+                        {t("chat.headerTitle")}
+                      </h2>
+                      <p
+                        className="font-text leading-tight"
+                        style={{
+                          fontSize: "11px",
+                          color: "var(--fg3)",
+                        }}
+                      >
+                        {isTyping ? t("chat.statusTyping") : t("chat.statusOnline")}
+                      </p>
+                    </div>
                   </div>
                 </div>
                 {/* Right side - New Chat, Theme Toggle */}
@@ -1171,11 +1171,11 @@ export default function ChatHome() {
               selectedDb={selectedDb}
               onDbChange={setSelectedDb}
               selectedModel={selectedModel}
-              onModelChange={setSelectedModel}
               selectedAgent={selectedAgent}
               onAgentChange={setSelectedAgent}
               models={models}
               isLoadingModels={isLoadingModels}
+              onModelChange={setSelectedModel}
               activePrompt={activePrompt}
             />
           </>

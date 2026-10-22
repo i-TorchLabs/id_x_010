@@ -389,12 +389,7 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
                       key={opt.value}
                       type="button"
                       onClick={() => setDays(opt.value)}
-                      className="rounded-full px-3 py-1 text-xs font-medium transition-colors"
-                      style={{
-                        background: selected ? "var(--accent)" : "transparent",
-                        color: selected ? "var(--accent-fg)" : "var(--fg3)",
-                        border: "0.5px solid var(--divider)",
-                      }}
+                      className={`chip-btn rounded-full px-3 py-1 text-xs font-medium${selected ? " chip-btn-active" : ""}`}
                     >
                       {t(opt.label)}
                     </button>
@@ -407,6 +402,7 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
                 style={{
                   border: "0.5px solid var(--divider)",
                   background: "var(--card)",
+                  boxShadow: "var(--shadow-inset), var(--shadow-xs)",
                 }}
               >
                 {(["tokens", "cost"] as Metric[]).map((m) => {
@@ -416,10 +412,22 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
                       key={m}
                       type="button"
                       onClick={() => setMetric(m)}
-                      className="rounded-full px-3 py-1 text-xs font-medium transition-colors"
+                      className="rounded-full px-3 py-1 text-xs font-medium"
                       style={{
                         background: selected ? "var(--accent)" : "transparent",
                         color: selected ? "var(--accent-fg)" : "var(--fg3)",
+                        boxShadow: selected ? "var(--shadow-sm)" : "none",
+                        cursor: "pointer",
+                        transition:
+                          "background-color 180ms ease, color 180ms ease, box-shadow 180ms ease",
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!selected)
+                          e.currentTarget.style.color = "var(--fg1)";
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!selected)
+                          e.currentTarget.style.color = "var(--fg3)";
                       }}
                     >
                       {m === "tokens" ? t("usage.metricTokens") : t("usage.metricCost")}
@@ -439,6 +447,7 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
                 className="text-sm rounded-lg px-3 py-2"
                 style={{
                   background: "var(--error-bg)",
+                  border: "0.5px solid var(--error-border)",
                   color: "var(--error)",
                 }}
               >

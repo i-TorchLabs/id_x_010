@@ -32,18 +32,17 @@ export function SqlApprovalPanel({
   const isDark = theme === "dark";
   const [isExpanded, setIsExpanded] = useState(true);
 
+  // 三按钮共用的布局样式；外观(底色/描边/阴影/过渡)交给
+  // globals.css 的 .btn-cta / .btn-ghost 工具类统一管理。
   const btnBase: React.CSSProperties = {
     padding: "10px 0",
     borderRadius: "12px",
     fontSize: "13px",
     fontWeight: 600,
-    transition: "opacity 200ms",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     gap: "6px",
-    background: isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.08)",
-    color: isDark ? "#ffffff" : "#1d1d1f",
   };
 
   return (
@@ -140,12 +139,8 @@ export function SqlApprovalPanel({
                 className="mt-2 overflow-hidden"
                 style={{
                   borderRadius: "12px",
-                  border: isDark
-                    ? "1px solid rgba(255,255,255,0.06)"
-                    : "1px solid rgba(0,0,0,0.04)",
-                  background: isDark
-                    ? "rgba(255,255,255,0.03)"
-                    : "rgba(0,0,0,0.02)",
+                  border: "0.5px solid var(--divider)",
+                  background: "var(--surface-1)",
                   padding: "8px",
                 }}
               >
@@ -157,7 +152,7 @@ export function SqlApprovalPanel({
                     fontSize: "13px",
                     lineHeight: "1.65",
                     letterSpacing: "0.01em",
-                    color: isDark ? "rgba(255,255,255,0.8)" : "#1d1d1f",
+                    color: "var(--fg1)",
                   }}
                 >
                   {sql}
@@ -179,20 +174,14 @@ export function SqlApprovalPanel({
                 </p>
               </div>
 
-              {/* Action Buttons */}
+              {/* Action Buttons —— Execute 用 accent 实色 CTA，
+                  Regenerate / Cancel 用浅底描边 ghost，统一立体反馈 */}
               <div className="pb-1 pt-2 grid grid-cols-3 gap-2">
-                <motion.button
-                  whileHover={{ opacity: 0.85 }}
-                  whileTap={{ opacity: 0.7 }}
+                <button
+                  className="btn-cta"
                   onClick={onApprove}
                   disabled={isProcessing}
-                  style={{
-                    ...btnBase,
-                    background: isDark ? "#ffffff" : "#000000",
-                    color: isDark ? "#000000" : "#ffffff",
-                    opacity: isProcessing ? 0.4 : 1,
-                    cursor: isProcessing ? "not-allowed" : "pointer",
-                  }}
+                  style={btnBase}
                 >
                   <svg
                     className="w-4 h-4"
@@ -206,18 +195,13 @@ export function SqlApprovalPanel({
                     <path d="M5 13l4 4L19 7" />
                   </svg>
                   Execute
-                </motion.button>
+                </button>
 
-                <motion.button
-                  whileHover={{ opacity: 0.85 }}
-                  whileTap={{ opacity: 0.7 }}
+                <button
+                  className="btn-ghost"
                   onClick={onReject}
                   disabled={isProcessing}
-                  style={{
-                    ...btnBase,
-                    opacity: isProcessing ? 0.4 : 1,
-                    cursor: isProcessing ? "not-allowed" : "pointer",
-                  }}
+                  style={btnBase}
                 >
                   <svg
                     className="w-4 h-4"
@@ -231,18 +215,13 @@ export function SqlApprovalPanel({
                     <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                   </svg>
                   Regenerate
-                </motion.button>
+                </button>
 
-                <motion.button
-                  whileHover={{ opacity: 0.85 }}
-                  whileTap={{ opacity: 0.7 }}
+                <button
+                  className="btn-ghost"
                   onClick={onCancel}
                   disabled={isProcessing}
-                  style={{
-                    ...btnBase,
-                    opacity: isProcessing ? 0.4 : 1,
-                    cursor: isProcessing ? "not-allowed" : "pointer",
-                  }}
+                  style={btnBase}
                 >
                   <svg
                     className="w-3.5 h-3.5"
@@ -256,7 +235,7 @@ export function SqlApprovalPanel({
                     <path d="M6 18L18 6M6 6l12 12" />
                   </svg>
                   Cancel
-                </motion.button>
+                </button>
               </div>
             </motion.div>
           )}

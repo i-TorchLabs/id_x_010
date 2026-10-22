@@ -228,10 +228,6 @@ class ModelSettingsInput:
     model_name_list: List[str] = strawberry.field(
         description="可选模型名称列表，消息输入框的模型选择器据此渲染"
     )
-    quota_limit_monthly_usd: Optional[float] = strawberry.field(
-        default=None,
-        description="月度额度上限（USD，自然月聚合）；为空表示不限额",
-    )
 
 
 @strawberry.type
@@ -312,11 +308,8 @@ class UserModelPropertyMutationResponseType:
 
 @strawberry.input
 class SaveDefaultModelInput:
-    """设置用户默认模型（跨 Provider 选择）。"""
+    """设置用户默认模型（跨 Provider 选择）。配额由管理员在后台设置。"""
     model_name: str = strawberry.field(description="默认模型名称")
-    quota_limit_monthly_usd: Optional[float] = strawberry.field(
-        default=None, description="月度额度上限（USD）；留空表示不限额"
-    )
 
 
 @strawberry.type
@@ -324,9 +317,6 @@ class SaveDefaultModelResponseType:
     success: bool = strawberry.field(description="是否成功")
     message: str = strawberry.field(description="消息")
     model_name: Optional[str] = strawberry.field(default=None, description="已设置的默认模型名")
-    quota_limit_monthly_usd: Optional[float] = strawberry.field(
-        default=None, description="已设置的月度配额"
-    )
 
 
 @strawberry.input

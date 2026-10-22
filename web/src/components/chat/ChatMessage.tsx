@@ -257,10 +257,8 @@ export function ChatMessage({
   // Shared code block style
   const codeBlockStyle = {
     borderRadius: "12px",
-    border: isDark
-      ? "1px solid rgba(255,255,255,0.06)"
-      : "1px solid rgba(0,0,0,0.04)",
-    background: isDark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.02)",
+    border: "0.5px solid var(--divider)",
+    background: "var(--surface-1)",
     padding: "8px",
   };
 
@@ -269,7 +267,7 @@ export function ChatMessage({
     fontSize: "13px",
     lineHeight: "1.65",
     letterSpacing: "0.01em",
-    color: isDark ? "rgba(255,255,255,0.8)" : "#1d1d1f",
+    color: "var(--fg1)",
   };
 
   // TASK-015：SQL Agent 气泡内 4 个子气泡的统一风格。
@@ -404,9 +402,7 @@ export function ChatMessage({
                             style={{
                               marginTop: "4px",
                               paddingTop: "4px",
-                              borderTop: isDark
-                                ? "1px solid rgba(255,255,255,0.06)"
-                                : "1px solid rgba(0,0,0,0.04)",
+                              borderTop: "0.5px solid var(--divider)",
                             }}
                           >
                             <div
@@ -550,7 +546,7 @@ export function ChatMessage({
                   borderRadius: 10,
                   // 红色语义色：边框/背景/文字三档叠加，浅红底 + 深红字 + 中红边
                   background: "var(--error-bg)",
-                  border: "1px solid var(--error-border)",
+                  border: "0.5px solid var(--error-border)",
                   boxShadow: "var(--shadow-xs)",
                   display: "flex",
                   alignItems: "flex-start",
@@ -1012,14 +1008,8 @@ function FeedbackBar({
         type="button"
         onClick={() => handleSubmit(1)}
         title={t("chat.feedback.tooltipHelpful")}
-        style={{
-          background: submitted === "up" ? "var(--surface-2)" : "transparent",
-          border: "0.5px solid var(--divider)",
-          borderRadius: 6,
-          padding: "2px 8px",
-          cursor: "pointer",
-          color: submitted === "up" ? "var(--success, #16a34a)" : "var(--fg3)",
-        }}
+        className={`chip-btn${submitted === "up" ? " chip-btn-active" : ""}`}
+        style={{ padding: "3px 10px", fontSize: 12, lineHeight: "16px" }}
       >
         👍
       </button>
@@ -1030,14 +1020,8 @@ function FeedbackBar({
           setLastRating(-1);
         }}
         title={t("chat.feedback.tooltipNeedsImprovement")}
-        style={{
-          background: submitted === "down" ? "var(--surface-2)" : "transparent",
-          border: "0.5px solid var(--divider)",
-          borderRadius: 6,
-          padding: "2px 8px",
-          cursor: "pointer",
-          color: submitted === "down" ? "var(--error, #dc2626)" : "var(--fg3)",
-        }}
+        className={`chip-btn${submitted === "down" ? " chip-btn-active" : ""}`}
+        style={{ padding: "3px 10px", fontSize: 12, lineHeight: "16px" }}
       >
         👎
       </button>
@@ -1045,32 +1029,28 @@ function FeedbackBar({
         <span style={{ fontSize: 10 }}>{t("chat.feedback.submitted")}</span>
       )}
       {showFeedbackInput && (
-        <div style={{ display: "flex", gap: 4, alignItems: "center", flex: 1 }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flex: 1 }}>
           <input
             type="text"
             value={feedbackText}
             onChange={(e) => setFeedbackText(e.target.value)}
             placeholder={t("chat.feedback.commentsPlaceholder")}
+            className="field-input"
             style={{
               flex: 1,
               fontSize: 11,
-              padding: "2px 6px",
-              borderRadius: 4,
-              border: "0.5px solid var(--divider)",
-              background: "var(--surface-1)",
-              color: "var(--fg2)",
+              padding: "4px 10px",
             }}
           />
           <button
             type="button"
             onClick={() => handleSubmit(-1)}
+            className="chip-btn"
             style={{
-              fontSize: 10,
-              padding: "2px 8px",
-              borderRadius: 4,
-              background: "var(--surface-2)",
-              border: "0.5px solid var(--divider)",
-              cursor: "pointer",
+              fontSize: 11,
+              padding: "4px 12px",
+              borderRadius: 980,
+              whiteSpace: "nowrap",
             }}
           >
             {t("chat.feedback.submit")}

@@ -2492,7 +2492,6 @@ class Mutation:
             api_key = input.api_key.strip()
             model_name = input.model_name.strip()
             model_name_list = [n.strip() for n in (input.model_name_list or []) if n and n.strip()]
-            quota_limit = input.quota_limit_monthly_usd
 
             if not all([provider, base_url, api_key, model_name]):
                 return ModelSettingsResponseType(
@@ -2505,13 +2504,9 @@ class Mutation:
             if model_name not in model_name_list:
                 model_name_list = [model_name, *model_name_list]
 
-            # 额度上限若传入须为非负数
-            if quota_limit is not None and quota_limit < 0:
-                return ModelSettingsResponseType(
-                    success=False,
-                    message="月度额度上限须为非负数（留空表示不限额）",
-                    settings=None,
-                )
+            # 配额由管理员在后台设置，用户保存设置时沿用库中既有值
+            existing = await get_user_model_settings(user.id)
+            quota_limit = existing.quota_limit_monthly_usd if existing else None
 
             logger.info(
                 f"{get_request_id()}收到模型设置保存请求，开始连通性检测: "
@@ -2716,7 +2711,7 @@ class Mutation:
                 success=False, message=f"失败: {str(e)}", provider=None
             )
 
-    @strawberry.mutation(description="设置默认模型名与月度配额（跨 Provider 选择默认模型）")
+    @strawberry.mutation(description="设置默认模型名（跨 Provider 选择；配额由管理员在后台设置）")
     async def save_default_model(
         self, info: strawberry.Info, input: SaveDefaultModelInput
     ) -> SaveDefaultModelResponseType:
@@ -2734,13 +2729,8 @@ class Mutation:
                     success=False, message="默认模型名不能为空",
                 )
 
-            quota = input.quota_limit_monthly_usd
-            if quota is not None and quota < 0:
-                return SaveDefaultModelResponseType(
-                    success=False, message="月度额度须为非负数",
-                )
-
-            # 默认模型名存入 user_model_settings
+            # 默认模型名存入 user_model_settings；配额由管理员通过
+            # set_user_system_quota 维护，此处不再触碰 users.system_model_quota_usd
             settings = await upsert_user_model_settings(
                 user_id=user.id,
                 provider="",
@@ -2755,27 +2745,10 @@ class Mutation:
                     success=False, message="保存失败",
                 )
 
-            # 系统模型配额直接写入 users 表（不在 UI 展示）
-            try:
-                async with get_session()() as session:
-                    u = (
-                        await session.execute(
-                            select(User).where(User.id == user.id)
-                        )
-                    ).scalar_one_or_none()
-                    if u is not None:
-                        u.system_model_quota_usd = quota
-                        await session.commit()
-            except Exception as qe:
-                logger.warning(
-                    f"{get_request_id()}写入系统模型配额失败: {qe}"
-                )
-
             return SaveDefaultModelResponseType(
                 success=True,
                 message="默认模型已设置",
                 model_name=settings.model_name,
-                quota_limit_monthly_usd=quota,
             )
         except Exception as e:
             logger.error(

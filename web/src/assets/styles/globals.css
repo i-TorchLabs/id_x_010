@@ -263,6 +263,37 @@ body {
     transform: scale(0.985);
 }
 
+/* ── Selector Trigger —— 输入框右下角「模型 / 智能体 / 数据库」选择器的统一胶囊外观
+   安静的浅色胶囊：图标 + 文字 + 旋转箭头；悬停时描边加深 + 轻微上浮阴影。
+   用 .pill-trigger.selector-trigger 双类保证优先级高于 HeroUI 的
+   .select--secondary .select__trigger 默认底色。*/
+.pill-trigger.selector-trigger {
+    background: var(--surface-1);
+    border: 0.5px solid var(--divider);
+    border-radius: 980px;
+    color: var(--fg1);
+    gap: 6px;
+    align-items: center;
+    padding-top: 0;
+    padding-bottom: 0;
+}
+@media (hover: hover) {
+    .pill-trigger.selector-trigger:hover {
+        background: var(--hover-bg);
+        border-color: var(--divider-strong);
+    }
+}
+.pill-trigger.selector-trigger[data-disabled="true"] {
+    opacity: 0.5;
+}
+
+/* 选择器弹层：统一圆角 / 描边 / 投影，弱化 HeroUI 默认的超大圆角 */
+.selector-popover {
+    border-radius: 14px;
+    border: 0.5px solid var(--divider);
+    box-shadow: var(--shadow-pop);
+}
+
 /* ── Chat Bubble —— 消息气泡的统一卡片外观
    AI 气泡用浮起卡片阴影 + 内边描边；用户气泡用 accent 实色填充。*/
 .bubble-ai {
@@ -296,6 +327,166 @@ body {
 .icon-btn:active {
     background-color: var(--hover-bg-strong);
     transform: scale(0.94);
+}
+
+/* ── Small Icon Button ──
+   列表行内的紧凑图标按钮(下载/编辑/删除等):
+   默认 fg3 低调,悬停时出现圆角热区背景并提亮,按压回缩。
+   比透明度 hover 更有质感,且热区更友好。*/
+.icon-btn-sm {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    padding: 4px;
+    border-radius: 7px;
+    color: var(--fg3);
+    cursor: pointer;
+    transition: background-color 160ms ease, color 160ms ease,
+        transform 160ms ease;
+}
+@media (hover: hover) {
+    .icon-btn-sm:hover {
+        background-color: var(--hover-bg);
+        color: var(--fg1);
+    }
+}
+.icon-btn-sm:active {
+    background-color: var(--hover-bg-strong);
+    transform: scale(0.92);
+}
+.icon-btn-sm:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+/* ── Chip Button ──
+   小型次级按钮(反馈 👍👎、Table/Chart 切换、Export、时间范围切换等)的
+   统一外观:0.5px 细描边 + 顶部高光 + 悬停加深 + 按压回缩。
+   选中态加 .chip-btn-active(accent 实色反转)。*/
+.chip-btn {
+    background: var(--surface-1);
+    border: 0.5px solid var(--divider);
+    border-radius: 8px;
+    color: var(--fg2);
+    box-shadow: var(--shadow-inset), var(--shadow-xs);
+    cursor: pointer;
+    transition: background-color 180ms ease, border-color 180ms ease,
+        color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+}
+@media (hover: hover) {
+    .chip-btn:hover {
+        background: var(--hover-bg);
+        border-color: var(--divider-strong);
+        color: var(--fg1);
+        box-shadow: var(--shadow-inset), var(--shadow-sm);
+    }
+}
+.chip-btn:active {
+    transform: scale(0.96);
+    background: var(--hover-bg-strong);
+}
+.chip-btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+    transform: none;
+}
+.chip-btn-active,
+.chip-btn-active:hover {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-fg);
+    box-shadow: var(--shadow-sm);
+}
+
+/* ── CTA Button ──
+   主操作按钮(Execute / Submit 等)的实色立体外观:
+   accent 填充 + 内高光 + 悬停上浮阴影 + 按压回缩。*/
+.btn-cta {
+    background: var(--accent);
+    color: var(--accent-fg);
+    border: none;
+    border-radius: 980px;
+    box-shadow: var(--shadow-inset), var(--shadow-sm);
+    cursor: pointer;
+    transition: box-shadow 180ms ease, transform 180ms ease, opacity 180ms ease;
+}
+@media (hover: hover) {
+    .btn-cta:hover {
+        box-shadow: var(--shadow-inset), var(--shadow-md);
+        transform: translateY(-1px);
+    }
+}
+.btn-cta:active {
+    transform: scale(0.97);
+    box-shadow: var(--shadow-inset), var(--shadow-xs);
+}
+.btn-cta:disabled {
+    opacity: 0.45;
+    cursor: default;
+    transform: none;
+    box-shadow: var(--shadow-xs);
+}
+
+/* ── Ghost CTA ──
+   与 .btn-cta 并排的次级操作(Cancel / Regenerate):
+   浅底胶囊 + 细描边,同样的过渡节奏。*/
+.btn-ghost {
+    background: var(--surface-1);
+    color: var(--fg1);
+    border: 0.5px solid var(--divider);
+    border-radius: 980px;
+    box-shadow: var(--shadow-inset), var(--shadow-xs);
+    cursor: pointer;
+    transition: background-color 180ms ease, border-color 180ms ease,
+        box-shadow 180ms ease, transform 180ms ease;
+}
+@media (hover: hover) {
+    .btn-ghost:hover {
+        background: var(--hover-bg);
+        border-color: var(--divider-strong);
+        box-shadow: var(--shadow-inset), var(--shadow-sm);
+    }
+}
+.btn-ghost:active {
+    transform: scale(0.97);
+    background: var(--hover-bg-strong);
+}
+.btn-ghost:disabled {
+    opacity: 0.45;
+    cursor: default;
+    transform: none;
+}
+
+/* ── Field ──
+   小型文本输入框(重命名、反馈评论等)的统一外观:
+   浅底 + 细描边,聚焦时描边加深 + 柔和 ring。*/
+.field-input {
+    background: var(--input-bg);
+    border: 0.5px solid var(--input-border);
+    border-radius: 10px;
+    color: var(--fg1);
+    outline: none;
+    transition: border-color 180ms ease, box-shadow 180ms ease,
+        background-color 180ms ease;
+}
+.field-input::placeholder {
+    color: var(--fg3);
+}
+.field-input:focus {
+    border-color: var(--divider-strong);
+    box-shadow: var(--ring);
+    background: var(--surface-2);
+}
+
+/* ── Native Checkbox ──
+   管理后台表格内仍有原生 checkbox，用 accent-color 使其
+   跟随黑白主题，并提供统一的指针/尺寸。*/
+input[type="checkbox"] {
+    accent-color: var(--accent);
+    width: 15px;
+    height: 15px;
+    cursor: pointer;
 }
 
 /* ── Transition Helpers ── */

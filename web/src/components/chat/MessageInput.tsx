@@ -1,150 +1,19 @@
 "use client";
 
-import { useState, useRef, useEffect, useLayoutEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useTheme } from "@/context/ThemeContext";
 import { useI18n } from "@/context/I18nContext";
 import { motion } from "framer-motion";
-import { Button, ListBox, Select } from "@heroui/react";
-import { modelGraphqlApi, ModelInfo, MarkdownPromptItem } from "@/api/graphql";
+import { Button } from "@heroui/react";
+import { ModelInfo, MarkdownPromptItem } from "@/api/graphql";
 import { AgentSelector, AgentType } from "./AgentSelector";
 import { DatabaseSelector } from "./DatabaseSelector";
+import { ModelSelector } from "./ModelSelector";
 
 type Variant = "footer" | "hero";
 
-// 模型选择器 —— 框体宽度自适应当前文字内容长度
-function ModelSelector({
-  models,
-  selectedModel,
-  setSelectedModel,
-  isLoadingModels,
-  isSmall,
-}: {
-  models: ModelInfo[];
-  selectedModel: ModelInfo | null;
-  setSelectedModel: (m: ModelInfo | null) => void;
-  isLoadingModels: boolean;
-  isSmall: boolean;
-}) {
-  const measureRef = useRef<HTMLSpanElement>(null);
-  const [width, setWidth] = useState<number | null>(null);
-  const { t } = useI18n();
-
-  const displayText = selectedModel
-    ? selectedModel.isSystem
-      ? `${selectedModel.name} (${selectedModel.provider}) · ${t("chat.sysBadge")}`
-      : `${selectedModel.name} (${selectedModel.provider})`
-    : isLoadingModels
-      ? t("chat.modelLoading")
-      : t("chat.noModels");
-
-  useLayoutEffect(() => {
-    if (measureRef.current) {
-      setWidth(measureRef.current.offsetWidth);
-    }
-  }, [displayText, isSmall]);
-
-  const minW = isSmall ? 96 : 120;
-  const maxW = isSmall ? 220 : 280;
-  const triggerWidth =
-    width != null
-      ? `min(${maxW}px, max(${minW}px, ${width + 36}px))`
-      : `${minW}px`;
-
-  return (
-    <Select
-      aria-label={t("sidebar.modelSelection")}
-      value={selectedModel ? String(selectedModel.id) : null}
-      onChange={(key) => {
-        const model = models.find((m) => m.id === Number(key));
-        setSelectedModel(model || null);
-      }}
-      isDisabled={isLoadingModels || models.length === 0}
-      disabledKeys={models
-        .filter(
-          (m) =>
-            m.name.includes("Under deployment") ||
-            m.provider.includes("Under deployment"),
-        )
-        .map((m) => String(m.id))}
-      placeholder={isLoadingModels ? t("chat.modelLoading") : t("chat.noModels")}
-      variant="secondary"
-      className="w-auto"
-      style={{ width: triggerWidth }}
-    >
-      <Select.Trigger
-        className={`pill-trigger ${isSmall ? "h-9 px-1.5" : "h-11 px-2"} whitespace-nowrap overflow-hidden flex items-center rounded-lg`}
-      >
-        <Select.Value
-          className={`flex! flex-1! min-w-0! h-auto ${isSmall ? "h-7 text-xs" : "h-9 text-sm"} px-2.5 items-center! justify-center! text-center! rounded-md font-medium truncate bg-default/60 text-foreground`}
-        >
-          {({ selectedText, isPlaceholder }) => (
-            <span className="block w-full text-center truncate">
-              {isPlaceholder
-                ? isLoadingModels
-                  ? t("chat.modelLoading")
-                  : t("chat.noModels")
-                : selectedText}
-            </span>
-          )}
-        </Select.Value>
-      </Select.Trigger>
-      <Select.Popover>
-        <ListBox>
-          {models.map((model) => (
-            <ListBox.Item
-              key={model.id}
-              id={String(model.id)}
-              textValue={`${model.name} (${model.provider})`}
-            >
-              {({ isSelected }) => (
-                <span className="flex items-center gap-2 w-full">
-                  <span
-                    className={`inline-block w-2 h-2 rounded-full shrink-0 transition-opacity ${
-                      isSelected ? "opacity-100" : "opacity-0"
-                    }`}
-                    style={{ background: "var(--fg)" }}
-                  />
-                  <span className="flex-1">
-                    {model.name} ({model.provider})
-                  </span>
-                  {model.isSystem && (
-                    <span
-                      className="font-text shrink-0 px-1 py-0.5 rounded"
-                      style={{
-                        fontSize: "9px",
-                        fontWeight: 600,
-                        letterSpacing: "0.04em",
-                        background: "var(--accent-bg, rgba(59,130,246,0.10))",
-                        color: "var(--accent, #3b82f6)",
-                      }}
-                    >
-                      {t("chat.sysBadge")}
-                    </span>
-                  )}
-                </span>
-              )}
-            </ListBox.Item>
-          ))}
-        </ListBox>
-      </Select.Popover>
-      <span
-        ref={measureRef}
-        aria-hidden
-        className={`${isSmall ? "text-xs" : "text-sm"} font-medium`}
-        style={{
-          position: "absolute",
-          visibility: "hidden",
-          whiteSpace: "nowrap",
-          pointerEvents: "none",
-          left: -9999,
-          top: -9999,
-        }}
-      >
-        {displayText}
-      </span>
-    </Select>
-  );
-}
+// NOTE: 模型选择器（./ModelSelector）渲染在输入框右下角，紧靠智能体选择器；
+// 模型列表与选中态由页面（ChatHome）通过 props 下发。
 
 interface MessageInputProps {
   onSendMessage: (
@@ -159,11 +28,14 @@ interface MessageInputProps {
   selectedDb?: string | null;
   onDbChange?: (dbName: string | null) => void;
   selectedModel?: ModelInfo | null;
-  onModelChange?: (model: ModelInfo | null) => void;
   selectedAgent?: AgentType;
   onAgentChange?: (agent: AgentType) => void;
+  /** 模型选择器所需：可选模型列表 */
   models?: ModelInfo[];
+  /** 模型选择器所需：模型列表加载中 */
   isLoadingModels?: boolean;
+  /** 模型选择器所需：切换选中模型 */
+  onModelChange?: (m: ModelInfo | null) => void;
   /** 当前生效的提示词（由后端每轮对话自动注入）；仅作展示徽标用 */
   activePrompt?: MarkdownPromptItem | null;
 }
@@ -174,106 +46,25 @@ export function MessageInput({
   isStreaming = false,
   selectedDb = null,
   onDbChange,
-  selectedModel: controlledModel,
-  onModelChange,
+  selectedModel = null,
   selectedAgent: controlledAgent,
   onAgentChange,
-  models: controlledModels,
-  isLoadingModels: controlledIsLoadingModels,
+  models = [],
+  isLoadingModels = false,
+  onModelChange,
   activePrompt,
 }: MessageInputProps) {
   const [input, setInput] = useState("");
-  const [internalModels, setInternalModels] = useState<ModelInfo[]>([]);
-  const [internalSelectedModel, setInternalSelectedModel] =
-    useState<ModelInfo | null>(null);
   const [internalSelectedAgent, setInternalSelectedAgent] =
     useState<AgentType>("general");
-  const [internalIsLoadingModels, setInternalIsLoadingModels] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { theme } = useTheme();
   const { t } = useI18n();
   const isDark = theme === "dark";
 
-  const models =
-    controlledModels !== undefined ? controlledModels : internalModels;
-  const selectedModel =
-    controlledModel !== undefined ? controlledModel : internalSelectedModel;
-  const setSelectedModel = onModelChange ?? setInternalSelectedModel;
   const selectedAgent =
     controlledAgent !== undefined ? controlledAgent : internalSelectedAgent;
   const setSelectedAgent = onAgentChange ?? setInternalSelectedAgent;
-  const isLoadingModels =
-    controlledIsLoadingModels !== undefined
-      ? controlledIsLoadingModels
-      : internalIsLoadingModels;
-
-  useEffect(() => {
-    if (controlledModels !== undefined) return;
-
-    let cancelled = false;
-    const MAX_RETRIES = 5;
-    const BASE_DELAY = 1000;
-    const REQUEST_TIMEOUT = 10000;
-
-    const loadModels = async (attempt = 0) => {
-      if (cancelled) return;
-      setInternalIsLoadingModels(true);
-      let retrying = false;
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
-
-        try {
-          const response = await modelGraphqlApi.getModels(controller.signal);
-          clearTimeout(timeoutId);
-          if (cancelled) return;
-          if (response.getModels.success) {
-            setInternalModels(response.getModels.models);
-            setInternalSelectedModel((prev) => {
-              if (prev !== null) return prev;
-              const list = response.getModels.models;
-              if (list.length === 0) return null;
-              return list.find((m) => m.isDefault) ?? list[0];
-            });
-          } else if (attempt < MAX_RETRIES) {
-            const delay = BASE_DELAY * Math.pow(2, attempt);
-            console.warn(
-              `Failed to load models (attempt ${attempt + 1}): ${response.getModels.message}; retrying in ${delay}ms`,
-            );
-            retrying = true;
-            setTimeout(() => loadModels(attempt + 1), delay);
-            return;
-          }
-        } catch (fetchError) {
-          clearTimeout(timeoutId);
-          throw fetchError;
-        }
-      } catch (error) {
-        if (cancelled) return;
-        if (attempt < MAX_RETRIES) {
-          const delay = BASE_DELAY * Math.pow(2, attempt);
-          console.warn(
-            `Model list load error (attempt ${attempt + 1}); retrying in ${delay}ms:`,
-            error,
-          );
-          retrying = true;
-          setTimeout(() => loadModels(attempt + 1), delay);
-          return;
-        }
-        console.error("Final model list load failure:", error);
-      } finally {
-        if (!cancelled && !retrying) {
-          setInternalIsLoadingModels(false);
-        }
-      }
-    };
-
-    loadModels();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [controlledModels]);
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -294,16 +85,6 @@ export function MessageInput({
       handleSend();
     }
   };
-
-  const renderModelSelector = (isSmall: boolean) => (
-    <ModelSelector
-      models={models}
-      selectedModel={selectedModel}
-      setSelectedModel={setSelectedModel}
-      isLoadingModels={isLoadingModels}
-      isSmall={isSmall}
-    />
-  );
 
   // 当前生效的提示词徽标（仅展示；选中态由侧边栏「提示词库」分区管理）
   const renderActivePromptBadge = () =>
@@ -397,7 +178,7 @@ export function MessageInput({
                   style={{
                     fontSize: "16px",
                     letterSpacing: "-0.20px",
-                    color: isDark ? "#ffffff" : "#1d1d1f",
+                    color: "var(--fg)",
                     lineHeight: "1.47",
                     maxHeight: "200px",
                     minHeight: "80px",
@@ -408,11 +189,23 @@ export function MessageInput({
                   }}
                 />
 
-                <div className="absolute right-3 bottom-3 flex items-center gap-3">
+                <div className="absolute right-3 bottom-3 flex items-center gap-2">
                   {selectedAgent !== "general" && (
                     <DatabaseSelector
                       selectedDb={selectedDb}
                       onDbChange={onDbChange || (() => {})}
+                      size="small"
+                    />
+                  )}
+
+                  {/* 模型选择器：输入框右下角，紧靠智能体选择器 */}
+                  {onModelChange && (
+                    <ModelSelector
+                      models={models}
+                      selectedModel={selectedModel}
+                      setSelectedModel={onModelChange}
+                      isLoadingModels={isLoadingModels}
+                      isSmall
                     />
                   )}
 
@@ -420,9 +213,8 @@ export function MessageInput({
                     selectedAgent={selectedAgent}
                     onAgentChange={setSelectedAgent}
                     variant="dropdown"
+                    size="small"
                   />
-
-                  {renderModelSelector(false)}
 
                   {renderSendButton(false)}
                 </div>
@@ -453,12 +245,10 @@ export function MessageInput({
       animate={{ y: 0 }}
       className="w-full"
       style={{
-        background: isDark ? "rgba(0,0,0,0.72)" : "rgba(255,255,255,0.72)",
-        backdropFilter: "saturate(180%) blur(20px)",
-        WebkitBackdropFilter: "saturate(180%) blur(20px)",
-        borderTop: isDark
-          ? "none"
-          : "0.5px solid rgba(0,0,0,0.06)",
+        background: "var(--nav-bg)",
+        backdropFilter: "var(--backdrop)",
+        WebkitBackdropFilter: "var(--backdrop)",
+        borderTop: isDark ? "none" : "0.5px solid var(--divider)",
       }}
     >
       <div className="py-3 pb-4 px-4">
@@ -485,7 +275,7 @@ export function MessageInput({
                 style={{
                   fontSize: "16px",
                   letterSpacing: "-0.20px",
-                  color: isDark ? "#ffffff" : "#1d1d1f",
+                  color: "var(--fg)",
                   lineHeight: "1.5",
                   maxHeight: "600px",
                   minHeight: "80px",
@@ -504,14 +294,23 @@ export function MessageInput({
                   />
                 )}
 
+                {/* 模型选择器：输入框右下角，紧靠智能体选择器 */}
+                {onModelChange && (
+                  <ModelSelector
+                    models={models}
+                    selectedModel={selectedModel}
+                    setSelectedModel={onModelChange}
+                    isLoadingModels={isLoadingModels}
+                    isSmall
+                  />
+                )}
+
                 <AgentSelector
                   selectedAgent={selectedAgent}
                   onAgentChange={setSelectedAgent}
                   variant="dropdown"
                   size="small"
                 />
-
-                {renderModelSelector(true)}
 
                 {renderSendButton(true)}
               </div>
@@ -592,17 +391,16 @@ function ImageButton({
         onClick={handleClick}
         disabled={uploading}
         title={t("chat.tooltipUploadImage")}
+        className="chip-btn"
         style={{
           width: 32,
           height: 32,
-          borderRadius: 8,
-          background: "var(--surface-2)",
-          border: "0.5px solid var(--divider-strong)",
-          color: "var(--fg2)",
+          borderRadius: 10,
           cursor: uploading ? "wait" : "pointer",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
+          padding: 0,
           zIndex: 10,
           position: "relative",
         }}

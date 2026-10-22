@@ -6,14 +6,41 @@
 
 "use client";
 
+import type { CSSProperties } from "react";
 import { useState, useEffect } from "react";
 import { ListBox, Select } from "@heroui/react";
 import { databaseGraphqlApi, DatabaseInfo } from "@/api/graphql";
+import {
+  SelectorCheck,
+  SelectorHeader,
+  selectorItemStyle,
+  selectorListStyle,
+} from "./selector-ui";
+
+// 数据库图标（单色圆柱）
+function DatabaseIcon({ style }: { style?: CSSProperties }) {
+  return (
+    <svg
+      aria-hidden
+      style={{ width: 14, height: 14, ...style }}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <ellipse cx="12" cy="5" rx="9" ry="3" />
+      <path d="M3 5v14a9 3 0 0 0 18 0V5" />
+      <path d="M3 12a9 3 0 0 0 18 0" />
+    </svg>
+  );
+}
 
 interface DatabaseSelectorProps {
   selectedDb: string | null;
   onDbChange: (dbName: string | null) => void;
-  size?: "default" | "small"; // default: 44px height, small: 36px height
+  size?: "default" | "small"; // default: 40px height, small: 36px height
 }
 
 export function DatabaseSelector({
@@ -48,6 +75,11 @@ export function DatabaseSelector({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const selectedLabel =
+    databases.find((db) => db.key === selectedDb)?.label ?? null;
+  const displayText =
+    selectedLabel ?? (isLoading ? "Loading..." : "No databases");
+
   return (
     <Select
       aria-label="Database"
@@ -59,31 +91,53 @@ export function DatabaseSelector({
       className="w-auto"
     >
       <Select.Trigger
-        className={`pill-trigger ${isSmall ? "h-9 px-1.5" : "h-11 px-2"} min-w-[100px] max-w-[180px] whitespace-nowrap overflow-hidden flex items-center rounded-lg`}
+        className={`pill-trigger selector-trigger ${isSmall ? "h-9" : "h-10"} max-w-[180px] flex items-center`}
       >
-        <Select.Value
-          className={`!flex !flex-1 !min-w-0 h-auto ${isSmall ? "h-7 text-xs" : "h-9 text-sm"} px-2.5 !items-center !justify-center !text-center rounded-md font-medium truncate bg-default/60 text-foreground`}
-        >
-          {({ selectedText, isPlaceholder }) => (
-            <span className="block w-full text-center truncate">
-              {isPlaceholder ? (isLoading ? "Loading..." : "No databases") : selectedText}
+        <DatabaseIcon style={{ color: "var(--fg3)", flexShrink: 0 }} />
+        <Select.Value className="flex-1 min-w-0">
+          {() => (
+            <span
+              className={`block truncate ${isLoading ? "animate-pulse" : ""}`}
+              style={{
+                fontSize: isSmall ? 12 : 13,
+                fontWeight: 500,
+                letterSpacing: "-0.1px",
+                color: selectedLabel ? "var(--fg1)" : "var(--fg3)",
+              }}
+            >
+              {displayText}
             </span>
           )}
         </Select.Value>
+        <Select.Indicator style={{ color: "var(--fg3)" }} />
       </Select.Trigger>
-      <Select.Popover>
-        <ListBox>
+      <Select.Popover
+        className="selector-popover"
+        style={{ minWidth: 200, maxWidth: 280 }}
+      >
+        <SelectorHeader>Database</SelectorHeader>
+        <ListBox style={selectorListStyle}>
           {databases.map((db) => (
-            <ListBox.Item key={db.key} id={db.key} textValue={db.label}>
+            <ListBox.Item
+              key={db.key}
+              id={db.key}
+              textValue={db.label}
+              style={selectorItemStyle}
+            >
               {({ isSelected }) => (
-                <span className="flex items-center gap-2 w-full">
+                <>
                   <span
-                    className={`inline-block w-2 h-2 rounded-full shrink-0 transition-opacity ${
-                      isSelected ? "bg-green-500 opacity-100" : "opacity-0"
-                    }`}
-                  />
-                  <span className="flex-1">{db.label}</span>
-                </span>
+                    className="flex-1 min-w-0 truncate"
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 500,
+                      color: "var(--fg1)",
+                    }}
+                  >
+                    {db.label}
+                  </span>
+                  <SelectorCheck visible={isSelected} />
+                </>
               )}
             </ListBox.Item>
           ))}

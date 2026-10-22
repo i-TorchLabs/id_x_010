@@ -61,19 +61,15 @@ async function graphqlRequest<T = any>(
   return json.data as T;
 }
 
-// 原生 textarea 样式
+// 原生 textarea 的布局样式；外观(底色/描边/focus ring)走 .field-input 工具类
 const textareaStyle: React.CSSProperties = {
   width: "100%",
   minHeight: 320,
   padding: "10px 12px",
-  borderRadius: 8,
-  border: "0.5px solid var(--divider)",
-  background: "var(--surface-1)",
-  color: "var(--fg2)",
+  borderRadius: 10,
   fontFamily: "monospace",
   fontSize: 13,
   resize: "vertical",
-  outline: "none",
 };
 
 export function PromptStudio() {
@@ -126,9 +122,11 @@ export function PromptStudio() {
           style={{
             marginBottom: 12,
             padding: "8px 12px",
-            borderRadius: 8,
-            background: message.kind === "ok" ? "rgba(22,163,74,0.1)" : "rgba(220,38,38,0.1)",
-            border: `1px solid ${message.kind === "ok" ? "rgba(22,163,74,0.4)" : "rgba(220,38,38,0.4)"}`,
+            borderRadius: 10,
+            background: message.kind === "ok" ? "var(--badge-bg)" : "var(--error-bg)",
+            border: `0.5px solid ${message.kind === "ok" ? "var(--divider-strong)" : "var(--error-border)"}`,
+            color: message.kind === "ok" ? "var(--fg1)" : "var(--error)",
+            boxShadow: "var(--shadow-xs)",
             fontSize: 13,
           }}
         >
@@ -156,21 +154,28 @@ export function PromptStudio() {
               key={k.key}
               type="button"
               onClick={() => setSelectedKey(k.key)}
+              className={`chip-btn${selectedKey === k.key ? " chip-btn-active" : ""}`}
               style={{
                 display: "block",
                 width: "100%",
                 textAlign: "left",
                 padding: "8px 10px",
-                borderRadius: 6,
+                borderRadius: 10,
                 marginBottom: 4,
-                background: selectedKey === k.key ? "var(--surface-2)" : "transparent",
-                border: "0.5px solid var(--divider)",
-                cursor: "pointer",
                 fontSize: 12,
               }}
             >
               <div style={{ fontWeight: 500, fontSize: 12 }}>{k.label}</div>
-              <div style={{ fontSize: 10, color: "var(--fg3)", marginTop: 2 }}>{k.key}</div>
+              <div
+                style={{
+                  fontSize: 10,
+                  marginTop: 2,
+                  opacity: selectedKey === k.key ? 0.7 : 1,
+                  color: selectedKey === k.key ? "inherit" : "var(--fg3)",
+                }}
+              >
+                {k.key}
+              </div>
             </button>
           ))}
         </div>
@@ -199,6 +204,7 @@ export function PromptStudio() {
               value={content}
               onChange={(e) => setContent(e.target.value)}
               placeholder={`Edit the prompt content for ${selectedKey}...\n\nSupports {var} placeholders (e.g. {top_k}, {intent_guidance}). Once saved, this version takes effect immediately for subsequent requests.`}
+              className="field-input"
               style={textareaStyle}
             />
           </div>

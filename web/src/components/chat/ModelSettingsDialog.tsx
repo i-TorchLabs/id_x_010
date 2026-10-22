@@ -5,7 +5,8 @@
  *  - Users can add multiple providers, each with its own endpoint + API key
  *  - Each provider has its own model_name_list
  *  - A default model is selected across all providers
- *  - Monthly quota (USD) applies to all models
+ *  - Monthly quota (USD) is managed by administrators in the admin panel;
+ *    users cannot view or change it here
  *
  * System preset models are shown in a read-only section with optional
  * per-user API key override.
@@ -90,9 +91,8 @@ export function ModelSettingsDialog({
   const [expandedProvider, setExpandedProvider] = useState<number | null>(null);
   const [newModelInputs, setNewModelInputs] = useState<Record<number, string>>({});
 
-  // ── Default model + quota (from user_model_settings) ──
+  // ── Default model (from user_model_settings)；配额由管理员在后台设置 ──
   const [defaultModel, setDefaultModel] = useState<string>("");
-  const [quotaLimit, setQuotaLimit] = useState<string>("");
   const [allModelNames, setAllModelNames] = useState<string[]>([]);
 
   // ── System models (read-only + per-user key override) ──
@@ -102,7 +102,11 @@ export function ModelSettingsDialog({
   >(new Map());
 
   const [isLoading, setIsLoading] = useState(false);
-  const [isSavingProvider, setIsSavingProvider] = useState(false);
+  // 按 Provider 索引跟踪保存中状态，避免一个卡片保存时其他卡片也被禁用
+  const [savingProviderIndex, setSavingProviderIndex] = useState<number | null>(
+    null,
+  );
+  const [savingSkipsTest, setSavingSkipsTest] = useState(false);
   const [isSavingDefault, setIsSavingDefault] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>(null);
 
@@ -117,12 +121,9 @@ export function ModelSettingsDialog({
         systemModelUserKeyGraphqlApi.mySystemModelKeys().catch(() => null),
       ]);
 
-      // Default model + quota from user_model_settings
+      // Default model from user_model_settings
       const s: ModelSettings | null = res.getModelSettings.settings;
       setDefaultModel(s?.modelName ?? "");
-      setQuotaLimit(
-        s?.quotaLimitMonthlyUsd == null ? "" : String(s.quotaLimitMonthlyUsd),
-      );
 
       // Provider drafts
       const providers = provRes?.myModelProviders?.providers ?? [];
@@ -210,8 +211,11 @@ export function ModelSettingsDialog({
   );
 
   const saveProvider = useCallback(
-    async (index: number) => {
+    async (index: number, options?: { skipTest?: boolean }) => {
       const draft = providerDrafts[index];
+      if (!draft) return;
+      // 防重入：请求进行中忽略重复点击（按钮置灰前可能已被连点）
+      if (savingProviderIndex != null) return;
       if (!draft.provider.trim() || !draft.baseUrl.trim() || !draft.apiKey.trim()) {
         setFeedback({
           type: "error",
@@ -227,7 +231,8 @@ export function ModelSettingsDialog({
         return;
       }
 
-      setIsSavingProvider(true);
+      setSavingProviderIndex(index);
+      setSavingSkipsTest(options?.skipTest === true);
       setFeedback(null);
       try {
         const res = await userModelProviderGraphqlApi.saveModelProvider({
@@ -237,16 +242,20 @@ export function ModelSettingsDialog({
           apiKey: draft.apiKey.trim(),
           modelNameList: draft.modelNameList,
           sortOrder: draft.sortOrder,
-          testConnection: true,
+          testConnection: !options?.skipTest,
         });
         if (res.saveModelProvider.success) {
           const saved = res.saveModelProvider.provider;
           if (saved) {
-            setProviderDrafts((prev) => {
-              const next = [...prev];
-              next[index] = providerToDraft(saved);
-              return next;
-            });
+            // 优先按 id 回填（已存在的 Provider）；新建的则按当前索引回填，
+            // 避免保存期间列表变动导致错位。
+            setProviderDrafts((prev) =>
+              prev.map((d, i) =>
+                d.id === saved.id || (draft.id == null && i === index)
+                  ? providerToDraft(saved)
+                  : d,
+              ),
+            );
           }
           setFeedback({ type: "success", text: t("settings.providerSaved") });
           onSaved?.();
@@ -262,10 +271,11 @@ export function ModelSettingsDialog({
           text: err instanceof Error ? err.message : t("settings.errorSaveFailed"),
         });
       } finally {
-        setIsSavingProvider(false);
+        // 无论如何都复位，保证按钮可再次点击
+        setSavingProviderIndex(null);
       }
     },
-    [providerDrafts, onSaved],
+    [providerDrafts, savingProviderIndex, onSaved, t],
   );
 
   const handleProviderNameInput = useCallback(
@@ -320,20 +330,12 @@ export function ModelSettingsDialog({
     });
   }, []);
 
-  // ── Default model + quota save ──
+  // ── Default model save（配额由管理员设置，此处不再提交） ──
 
   const handleSaveDefault = useCallback(async () => {
     if (isSavingDefault) return;
     if (!defaultModel.trim()) {
       setFeedback({ type: "error", text: t("settings.errorDefaultModelRequired") });
-      return;
-    }
-    const quotaNum = quotaLimit.trim() === "" ? null : Number(quotaLimit);
-    if (quotaNum != null && (Number.isNaN(quotaNum) || quotaNum < 0)) {
-      setFeedback({
-        type: "error",
-        text: t("settings.errorQuotaInvalid"),
-      });
       return;
     }
 
@@ -342,7 +344,6 @@ export function ModelSettingsDialog({
     try {
       const res = await userModelProviderGraphqlApi.saveDefaultModel({
         modelName: defaultModel.trim(),
-        quotaLimitMonthlyUsd: quotaNum,
       });
       if (res.saveDefaultModel.success) {
         setFeedback({ type: "success", text: t("settings.defaultModelSaved") });
@@ -358,7 +359,7 @@ export function ModelSettingsDialog({
     } finally {
       setIsSavingDefault(false);
     }
-  }, [defaultModel, quotaLimit, isSavingDefault, onSaved]);
+  }, [defaultModel, isSavingDefault, onSaved]);
 
   return (
     <Modal.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>
@@ -398,8 +399,11 @@ export function ModelSettingsDialog({
                             style={{
                               background: "var(--surface-2)",
                               border: hasUserKey
-                                ? "1px solid var(--accent, #3b82f6)"
+                                ? "0.5px solid var(--divider-strong)"
                                 : "0.5px solid var(--divider)",
+                              boxShadow: hasUserKey
+                                ? "var(--shadow-inset), var(--shadow-xs)"
+                                : "none",
                               opacity: sm.enabled ? 1 : 0.5,
                             }}
                           >
@@ -422,9 +426,8 @@ export function ModelSettingsDialog({
                                       fontSize: "10px",
                                       fontWeight: 600,
                                       letterSpacing: "0.04em",
-                                      background:
-                                        "var(--accent-bg, rgba(59,130,246,0.10))",
-                                      color: "var(--accent, #3b82f6)",
+                                      background: "var(--badge-bg)",
+                                      color: "var(--fg2)",
                                     }}
                                   >
                                     {t("settings.systemBadge")}
@@ -434,7 +437,7 @@ export function ModelSettingsDialog({
                                       className="font-text shrink-0"
                                       style={{
                                         fontSize: "11px",
-                                        color: "var(--accent, #3b82f6)",
+                                        color: "var(--fg3)",
                                       }}
                                     >
                                       {t("settings.defaultBadge")}
@@ -445,7 +448,7 @@ export function ModelSettingsDialog({
                                       className="font-text shrink-0"
                                       style={{
                                         fontSize: "11px",
-                                        color: "var(--accent, #3b82f6)",
+                                        color: "var(--fg3)",
                                       }}
                                     >
                                       {t("settings.keyConfigured")}
@@ -674,10 +677,9 @@ export function ModelSettingsDialog({
                                         onClick={() =>
                                           removeModelFromProvider(idx, name)
                                         }
-                                        className="text-xs shrink-0"
+                                        className="icon-btn-sm text-xs"
                                         style={{
-                                          color: "var(--fg4)",
-                                          cursor: "pointer",
+                                          padding: 2,
                                           lineHeight: 1,
                                         }}
                                         aria-label={t("settings.ariaRemoveModel", { name })}
@@ -717,16 +719,31 @@ export function ModelSettingsDialog({
                               </div>
                             </div>
 
-                            <Button
-                              variant="primary"
-                              size="sm"
-                              onPress={() => void saveProvider(idx)}
-                              isDisabled={isSavingProvider}
-                            >
-                              {isSavingProvider
-                                ? t("settings.testingAndSaving")
-                                : t("settings.saveProvider")}
-                            </Button>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                variant="primary"
+                                size="sm"
+                                onPress={() => void saveProvider(idx)}
+                                isDisabled={savingProviderIndex != null}
+                              >
+                                {savingProviderIndex === idx
+                                  ? savingSkipsTest
+                                    ? t("settings.saving")
+                                    : t("settings.testingAndSaving")
+                                  : t("settings.saveProvider")}
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onPress={() =>
+                                  void saveProvider(idx, { skipTest: true })
+                                }
+                                isDisabled={savingProviderIndex != null}
+                                className="text-xs"
+                              >
+                                {t("settings.saveProviderSkipTest")}
+                              </Button>
+                            </div>
                           </div>
                         )}
                       </div>
@@ -734,7 +751,7 @@ export function ModelSettingsDialog({
                   })}
                 </div>
 
-                {/* ── Default Model + Quota ── */}
+                {/* ── Default Model（配额由管理员在管理后台设置） ── */}
                 <div
                   className="flex flex-col gap-3 rounded-xl px-4 py-4"
                   style={{
@@ -742,7 +759,7 @@ export function ModelSettingsDialog({
                     border: "0.5px solid var(--divider)",
                   }}
                 >
-                  <p className="label-section">{t("settings.defaultModelQuotaSection")}</p>
+                  <p className="label-section">{t("settings.defaultModelSection")}</p>
 
                   <TextField fullWidth className="flex flex-col gap-1.5">
                     <Label className="text-sm font-medium">
@@ -772,26 +789,12 @@ export function ModelSettingsDialog({
                     )}
                   </TextField>
 
-                  <TextField fullWidth className="flex flex-col gap-1.5">
-                      <Label className="text-sm font-medium">
-                        {t("settings.fieldMonthlyQuota")}
-                      </Label>
-                      <Input
-                        type="number"
-                        inputMode="decimal"
-                        min="0"
-                        step="0.01"
-                        placeholder={t("settings.quotaPlaceholder")}
-                        value={quotaLimit}
-                        onChange={(e) => setQuotaLimit(e.target.value)}
-                      />
-                    <p
-                      className="font-text"
-                      style={{ fontSize: "11px", color: "var(--fg4)" }}
-                    >
-                      {t("settings.quotaHelpText")}
-                    </p>
-                  </TextField>
+                  <p
+                    className="font-text"
+                    style={{ fontSize: "11px", color: "var(--fg4)" }}
+                  >
+                    {t("settings.quotaManagedByAdmin")}
+                  </p>
 
                   <Button
                     variant="primary"
@@ -799,7 +802,7 @@ export function ModelSettingsDialog({
                     onPress={() => void handleSaveDefault()}
                     isDisabled={isSavingDefault}
                   >
-                    {isSavingDefault ? t("settings.saving") : t("settings.saveDefaultAndQuota")}
+                    {isSavingDefault ? t("settings.saving") : t("settings.saveDefault")}
                   </Button>
                 </div>
 
@@ -809,11 +812,13 @@ export function ModelSettingsDialog({
                     style={
                       feedback.type === "success"
                         ? {
-                            background: "rgba(34, 197, 94, 0.10)",
-                            color: "#16a34a",
+                            background: "var(--badge-bg)",
+                            border: "0.5px solid var(--divider)",
+                            color: "var(--fg1)",
                           }
                         : {
                             background: "var(--error-bg)",
+                            border: "0.5px solid var(--error-border)",
                             color: "var(--error)",
                           }
                     }
@@ -828,7 +833,7 @@ export function ModelSettingsDialog({
             <Button
               slot="close"
               variant="tertiary"
-              isDisabled={isSavingProvider || isSavingDefault}
+              isDisabled={savingProviderIndex != null || isSavingDefault}
             >
               {t("settings.close")}
             </Button>
