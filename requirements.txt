@@ -19,7 +19,10 @@ langgraph
 # 注意：1.x 与 3.x 的 from_conn_string 形态不同——_ensure_pg_checkpointer 已做
 # 多形态兼容(实例 / async context manager),3.x 形态下未保活时降级 MemorySaver。
 langgraph-checkpoint-postgres>=1.0.0,<4.0
-semantic_router
+# 0.1.x 提供 semantic_router.routers.SemanticRouter；0.0.x 时代类名为 RouteLayer。
+# x_langgraph_supervisor 已做双形态兼容，但部署环境仍应锁在 0.1.x 区间，
+# 避免装到接口不兼容的版本导致意图路由降级。
+semantic_router>=0.1.0,<0.2
 # litellm>=1.98.0 在 Python 3.10 下崩溃（其 compact.py/compression.py 从 typing 导入
 # NotRequired，该符号 3.11 才加入 typing）；1.97.0 是最后一个可导入版本。
 # semantic_router 间接依赖 litellm，此处显式锁定。

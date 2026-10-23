@@ -193,7 +193,7 @@ export function ApprovalCenter() {
           <span style={{ color: "var(--fg3)" }}>
             {connected ? "WS Connected" : "WS Disconnected"}
           </span>
-          <Button size="sm" variant="ghost" onClick={refresh}>
+          <Button size="sm" variant="ghost" onPress={refresh}>
             Refresh
           </Button>
         </div>
@@ -270,7 +270,7 @@ export function ApprovalCenter() {
                       size="sm"
                       variant="primary"
                       isDisabled={!!processing[task.id]}
-                      onClick={() => handleAction(task, "approve")}
+                      onPress={() => handleAction(task, "approve")}
                     >
                       Approve
                     </Button>
@@ -278,14 +278,14 @@ export function ApprovalCenter() {
                       size="sm"
                       variant="danger"
                       isDisabled={!!processing[task.id]}
-                      onClick={() => handleAction(task, "reject")}
+                      onPress={() => handleAction(task, "reject")}
                     >
                       Reject
                     </Button>
                     <Button
                       size="sm"
                       variant="ghost"
-                      onClick={() => handleAction(task, "cancel")}
+                      onPress={() => handleAction(task, "cancel")}
                     >
                       Cancel
                     </Button>

@@ -21,6 +21,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button, Input, Label, Modal, TextField } from "@heroui/react";
 import { useI18n } from "@/context/I18nContext";
+import { useDraggableDialog } from "@/hooks/useDraggableDialog";
 import {
   settingsGraphqlApi,
   type ModelSettings,
@@ -86,6 +87,7 @@ export function ModelSettingsDialog({
   onSaved,
 }: ModelSettingsDialogProps) {
   const { t } = useI18n();
+  const { handleProps: dragHandleProps } = useDraggableDialog();
   // ── Provider drafts (multi-provider) ──
   const [providerDrafts, setProviderDrafts] = useState<ProviderDraft[]>([]);
   const [expandedProvider, setExpandedProvider] = useState<number | null>(null);
@@ -366,7 +368,7 @@ export function ModelSettingsDialog({
       <Modal.Container>
         <Modal.Dialog className="sm:max-w-[760px]">
           <Modal.CloseTrigger />
-          <Modal.Header>
+          <Modal.Header {...dragHandleProps}>
             <Modal.Heading>{t("settings.modalTitle")}</Modal.Heading>
           </Modal.Header>
           <Modal.Body>

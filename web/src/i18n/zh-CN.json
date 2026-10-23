@@ -228,6 +228,7 @@
   "usage.range30d": "30天",
   "usage.range90d": "90天",
   "usage.emptyChart": "暂无使用数据",
+    "usage.zeroCostChart": "该区间内暂无费用",
   "usage.ariaBarChart": "每日用量柱状图",
   "usage.errorLoadFailed": "加载失败",
   "usage.metricTokens": "Token 用量",

@@ -16,6 +16,7 @@ import { useTheme } from "@/context/ThemeContext";
 import { useI18n } from "@/context/I18nContext";
 import { userGraphqlApi, type User } from "@/api/graphql";
 import { uploadAvatar, prevalidateAvatarFile } from "@/api/upload";
+import { useDraggableDialog } from "@/hooks/useDraggableDialog";
 
 interface ProfileDialogProps {
   isOpen: boolean;
@@ -43,6 +44,7 @@ export function ProfileDialog({
 }: ProfileDialogProps) {
   const { theme } = useTheme();
   const { t } = useI18n();
+  const { handleProps: dragHandleProps } = useDraggableDialog();
   const isDark = theme === "dark";
 
   const [displayName, setDisplayName] = useState<string>("");
@@ -139,7 +141,7 @@ export function ProfileDialog({
       <Modal.Container>
         <Modal.Dialog className="sm:max-w-[480px]">
           <Modal.CloseTrigger />
-          <Modal.Header>
+          <Modal.Header {...dragHandleProps}>
             <Modal.Heading>{t("profile.modalTitle")}</Modal.Heading>
           </Modal.Header>
           <Modal.Body>

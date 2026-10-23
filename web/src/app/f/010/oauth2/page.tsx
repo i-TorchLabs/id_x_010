@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { userGraphqlApi } from "@/api/graphql";
 import { OAUTH_STATE_KEY, setSsoLoginFlag } from "@/utils/sso";
@@ -14,8 +14,14 @@ import { OAUTH_STATE_KEY, setSsoLoginFlag } from "@/utils/sso";
  */
 export default function OAuthCallbackPage() {
   const router = useRouter();
+  // StrictMode 下 effect 会双执行；code 只能兑换一次、state 校验后即销毁，
+  // 必须用 ref 保证整个流程只跑一次，否则第二次执行会误报 state_mismatch。
+  const ranRef = useRef(false);
 
   useEffect(() => {
+    if (ranRef.current) return;
+    ranRef.current = true;
+
     // 仅客户端解析 query，避免 useSearchParams 需 Suspense 包裹
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
@@ -44,16 +50,15 @@ export default function OAuthCallbackPage() {
           );
           return;
         }
-        if (typeof window !== "undefined") {
-          localStorage.setItem("token", resp.token);
-          localStorage.setItem("user", JSON.stringify(resp.user));
-          // 标记当前会话由 SSO 建立，登出时一并退出 ADFS
-          setSsoLoginFlag();
-        }
-        // SSO 默认建立普通用户：管理员若经 SSO 登录则按 role 跳转
+        localStorage.setItem("token", resp.token);
+        localStorage.setItem("user", JSON.stringify(resp.user));
+        // 标记当前会话由 SSO 建立，登出时一并退出 ADFS
+        setSsoLoginFlag();
+        // SSO 默认建立普通用户：管理员若经 SSO 登录则按 role 跳转。
+        // 用 replace 将回调页移出历史栈，防止"后退"回到已失效的 code 页重跑流程。
         const role: string = resp.user.role ?? "user";
         const hasAdmin = role.split(",").map((r: string) => r.trim()).includes("admin");
-        router.push(hasAdmin ? "/f/admin-home" : "/f/user-home");
+        router.replace(hasAdmin ? "/f/admin-home" : "/f/user-home");
       })
       .catch((error) => {
         console.error("SSO login failed:", error);

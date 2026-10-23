@@ -10,6 +10,7 @@ import {
 import { uploadMarkdown } from "@/api/upload";
 import { useTheme } from "@/context/ThemeContext";
 import { useI18n } from "@/context/I18nContext";
+import { useDraggableDialog } from "@/hooks/useDraggableDialog";
 
 interface PromptPanelProps {
   /** 当前选中的提示词变化时通知父组件（用于在输入框附近显示徽标等） */
@@ -51,6 +52,9 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { theme } = useTheme();
   const { t } = useI18n();
+  // 删除确认 / 编辑内容两个弹窗各自独立的拖拽状态
+  const { handleProps: deleteDragHandleProps } = useDraggableDialog();
+  const { handleProps: editDragHandleProps } = useDraggableDialog();
   const isDark = theme === "dark";
 
   // 加载提示词列表
@@ -789,7 +793,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
             <AlertDialog.CloseTrigger
               onPress={() => setPromptToDelete(null)}
             />
-            <AlertDialog.Header>
+            <AlertDialog.Header {...deleteDragHandleProps}>
               <AlertDialog.Icon status="warning" />
               <AlertDialog.Heading>{t("prompt.confirmDeleteTitle")}</AlertDialog.Heading>
             </AlertDialog.Header>
@@ -845,7 +849,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
         <Modal.Container>
           <Modal.Dialog className="sm:max-w-[720px]">
             <Modal.CloseTrigger onPress={closeContentEditor} />
-            <Modal.Header>
+            <Modal.Header {...editDragHandleProps}>
               <Modal.Heading>
                 Edit Content · {editingPrompt?.noteName ?? editingPrompt?.filename}
               </Modal.Heading>

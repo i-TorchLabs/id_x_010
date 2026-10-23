@@ -247,7 +247,7 @@ export default function LoginForm({
               variant="secondary"
               size="lg"
               className="rounded-full font-semibold"
-              onClick={onSsoClick}
+              onPress={onSsoClick}
             >
               {t("login.signInWithSso")}
             </Button>

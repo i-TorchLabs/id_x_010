@@ -15,7 +15,26 @@ from langgraph.types import Command, Send
 from pydantic import BaseModel, Field, SecretStr
 from semantic_router import Route
 from semantic_router.encoders import OpenAIEncoder
-from semantic_router.routers import SemanticRouter as _SemanticRouter
+
+# semantic_router 版本兼容：0.1.x 为 semantic_router.routers.SemanticRouter，
+# 0.0.x 时代类名为 RouteLayer（位于 semantic_router.layer 或顶层）。
+# 导入失败不应炸掉整个模块（会连累路由注册和聊天主链路），
+# 降级为 None，由 SemanticRouter.__init__ 统一走"始终路由到 general"的兑底。
+_SemanticRouter: Any = None
+for _import in (
+    lambda: __import__(
+        "semantic_router.routers", fromlist=["SemanticRouter"]
+    ).SemanticRouter,
+    lambda: __import__("semantic_router", fromlist=["SemanticRouter"]).SemanticRouter,
+    lambda: __import__("semantic_router.layer", fromlist=["RouteLayer"]).RouteLayer,
+    lambda: __import__("semantic_router", fromlist=["RouteLayer"]).RouteLayer,
+):
+    try:
+        _SemanticRouter = _import()
+        break
+    except (ImportError, AttributeError):
+        continue
+
 from utils.log_util import get_request_id, logger
 from x_models.id_x_010.src.agents.x_general_agent import (
     DEFAULT_SYSTEM_PROMPT,
@@ -175,6 +194,12 @@ class SemanticRouter:
         # "始终路由到 general"，保证聊天主链路可用。
         self._ready = False
         self.route_layer = None
+        if _SemanticRouter is None:
+            logger.warning(
+                f"{get_request_id()}semantic_router 版本不兼容（未找到 "
+                "SemanticRouter/RouteLayer），意图路由降级为 general"
+            )
+            return
         try:
             external_config = get_external_model_config()
 
@@ -199,11 +224,20 @@ class SemanticRouter:
                 openai_base_url=final_base_url,
             )
 
-            self.route_layer = _SemanticRouter(
-                encoder=self.encoder,
-                routes=[],
-            )
-            self.route_layer.add([GENERAL_ROUTE, SQL_ROUTE, CODE_ROUTE])
+            all_routes = [GENERAL_ROUTE, SQL_ROUTE, CODE_ROUTE]
+            try:
+                # 0.1.x：先空路由构造，再批量 add（此时立即计算语料向量）
+                self.route_layer = _SemanticRouter(
+                    encoder=self.encoder,
+                    routes=[],
+                )
+                self.route_layer.add(all_routes)
+            except TypeError:
+                # 0.0.x RouteLayer：构造器直接传全部路由（add 只收单个 Route）
+                self.route_layer = _SemanticRouter(
+                    encoder=self.encoder,
+                    routes=all_routes,
+                )
             self._ready = True
 
             logger.info(f"{get_request_id()}SemanticRouter 初始化完成")

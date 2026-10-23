@@ -23,6 +23,7 @@ import {
   type User,
 } from "@/api/graphql";
 import { AlertDialog, Button } from "@heroui/react";
+import { useDraggableDialog } from "@/hooks/useDraggableDialog";
 import {
   clearSsoLoginFlag,
   isSsoLogin,
@@ -564,6 +565,7 @@ export default function ChatHome() {
 
   const router = useRouter();
   const { t } = useI18n();
+  const { handleProps: logoutDragHandleProps } = useDraggableDialog();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showUsageStats, setShowUsageStats] = useState(false);
@@ -1213,7 +1215,7 @@ export default function ChatHome() {
         <AlertDialog.Container>
           <AlertDialog.Dialog className="sm:max-w-[400px]">
             <AlertDialog.CloseTrigger />
-            <AlertDialog.Header>
+            <AlertDialog.Header {...logoutDragHandleProps}>
               <AlertDialog.Icon status="warning" />
               <AlertDialog.Heading>{t("chat.logoutConfirmTitle")}</AlertDialog.Heading>
             </AlertDialog.Header>

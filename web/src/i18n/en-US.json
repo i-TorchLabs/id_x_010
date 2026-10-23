@@ -228,6 +228,7 @@
   "usage.range30d": "30d",
   "usage.range90d": "90d",
   "usage.emptyChart": "No usage data",
+    "usage.zeroCostChart": "No cost in this period",
   "usage.ariaBarChart": "Daily usage bar chart",
   "usage.errorLoadFailed": "Load failed",
   "usage.metricTokens": "Token Usage",

@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 import { Button, Input, Label, Modal, TextField } from "@heroui/react";
 import { LangToggle } from "@/components/LangToggle";
 import { useI18n } from "@/context/I18nContext";
+import { useDraggableDialog } from "@/hooks/useDraggableDialog";
 import { API_BASE_URL, BASE_URL } from "@/utils/config";
 import {
   adminSystemModelUserKeyGraphqlApi,
@@ -162,6 +163,7 @@ export function AdminPanel() {
 
 function SystemModelsTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) {
   const { t } = useI18n();
+  const { handleProps: dragHandleProps } = useDraggableDialog();
   const [models, setModels] = useState<SystemModel[]>([]);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<SystemModel | null>(null);
@@ -261,7 +263,7 @@ function SystemModelsTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) 
           <Modal.Container>
             <Modal.Dialog className="sm:max-w-[520px]">
               <Modal.CloseTrigger />
-              <Modal.Header><Modal.Heading>{editing.id ? t("admin.models.editModelTitle") : t("admin.models.addModelTitle")}</Modal.Heading></Modal.Header>
+              <Modal.Header {...dragHandleProps}><Modal.Heading>{editing.id ? t("admin.models.editModelTitle") : t("admin.models.addModelTitle")}</Modal.Heading></Modal.Header>
               <Modal.Body>
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <TextField fullWidth className="flex flex-col gap-1.5">
@@ -310,6 +312,9 @@ function SystemModelsTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) 
 
 function UsersTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) {
   const { t } = useI18n();
+  // 配额 / 重置密码两个弹窗各自独立的拖拽状态
+  const { handleProps: quotaDragHandleProps } = useDraggableDialog();
+  const { handleProps: resetDragHandleProps } = useDraggableDialog();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(false);
   const [quotaModal, setQuotaModal] = useState<{ userId: number; email: string } | null>(null);
@@ -423,7 +428,7 @@ function UsersTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) {
           <Modal.Container>
             <Modal.Dialog className="sm:max-w-[420px]">
               <Modal.CloseTrigger />
-              <Modal.Header><Modal.Heading>{t("admin.users.quotaModalTitle", { email: quotaModal.email })}</Modal.Heading></Modal.Header>
+              <Modal.Header {...quotaDragHandleProps}><Modal.Heading>{t("admin.users.quotaModalTitle", { email: quotaModal.email })}</Modal.Heading></Modal.Header>
               <Modal.Body>
                 <TextField fullWidth className="flex flex-col gap-1.5">
                   <Label className="text-sm font-medium">{t("admin.users.fieldMonthlyQuota")}</Label>
@@ -446,7 +451,7 @@ function UsersTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) {
           <Modal.Container>
             <Modal.Dialog className="sm:max-w-[420px]">
               <Modal.CloseTrigger />
-              <Modal.Header><Modal.Heading>{t("admin.users.resetPasswordModalTitle", { email: resetModal.email })}</Modal.Heading></Modal.Header>
+              <Modal.Header {...resetDragHandleProps}><Modal.Heading>{t("admin.users.resetPasswordModalTitle", { email: resetModal.email })}</Modal.Heading></Modal.Header>
               <Modal.Body>
                 <TextField fullWidth className="flex flex-col gap-1.5">
                   <Label className="text-sm font-medium">{t("admin.users.fieldNewPassword")}</Label>
@@ -495,6 +500,7 @@ function ModelKeysModal({
   onFeedback: (f: Feedback) => void;
 }) {
   const { t } = useI18n();
+  const { handleProps: dragHandleProps } = useDraggableDialog();
   const [models, setModels] = useState<SystemModelBrief[]>([]);
   const [mappings, setMappings] = useState<Map<number, SystemModelUserMappingItem>>(new Map());
   const [editing, setEditing] = useState<Record<number, string>>({});
@@ -578,7 +584,7 @@ function ModelKeysModal({
       <Modal.Container>
         <Modal.Dialog className="sm:max-w-[560px]">
           <Modal.CloseTrigger />
-          <Modal.Header>
+          <Modal.Header {...dragHandleProps}>
             <Modal.Heading>{t("admin.users.modelKeysModalTitle", { email: user.email })}</Modal.Heading>
           </Modal.Header>
           <Modal.Body>

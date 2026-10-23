@@ -17,6 +17,7 @@ import { Button, Modal } from "@heroui/react";
 import { motion } from "framer-motion";
 import { useTheme } from "@/context/ThemeContext";
 import { useI18n } from "@/context/I18nContext";
+import { useDraggableDialog } from "@/hooks/useDraggableDialog";
 import {
   usageGraphqlApi,
   type UsageDailyItem,
@@ -48,11 +49,23 @@ function formatTokens(n: number): string {
 }
 
 function formatCost(n: number): string {
-  if (n === 0) return "$0";
-  if (n < 0.0001) return `$${n.toFixed(6)}`;
-  if (n < 0.01) return `$${n.toFixed(5)}`;
-  if (n < 1) return `$${n.toFixed(4)}`;
-  return `$${n.toFixed(2)}`;
+  if (!Number.isFinite(n) || n <= 0) return "$0.00";
+  if (n >= 1) return `$${n.toFixed(2)}`;
+  if (n >= 0.01) return `$${n.toFixed(3)}`;
+  // 极小金额：保留约 2 位有效数字并去掉尾随 0，避免输出一长串零
+  const digits = Math.min(6, Math.max(3, 2 - Math.floor(Math.log10(n))));
+  const trimmed = parseFloat(n.toFixed(digits));
+  return trimmed > 0 ? `$${trimmed}` : "<$0.000001";
+}
+
+// Y 轴费用刻度：根据最大值确定统一的小数位，保证 5 个刻度格式一致
+function costAxisDecimals(maxV: number): number {
+  if (maxV >= 10) return 0;
+  if (maxV >= 1) return 1;
+  if (maxV >= 0.1) return 2;
+  if (maxV >= 0.01) return 3;
+  if (maxV >= 0.001) return 4;
+  return 5;
 }
 
 function formatDateLabel(dateStr: string): string {
@@ -65,7 +78,7 @@ function formatDateLabel(dateStr: string): string {
 // ── 柱状图（手绘 SVG，framer-motion 动画）──
 const CHART_W = 960;
 const CHART_H = 300;
-const PAD_L = 52;
+const PAD_L = 62;
 const PAD_R = 16;
 const PAD_T = 18;
 const PAD_B = 36;
@@ -92,21 +105,21 @@ function BarChart({
     [daily, metric],
   );
 
-  const maxV = useMemo(() => {
-    const m = Math.max(...values, 0);
-    return m > 0 ? m : 1;
-  }, [values]);
+  // 原始最大值：为 0 说明该区间内没有任何用量/费用，单独渲染空态而不是伪造 $1 刻度
+  const maxRaw = useMemo(() => Math.max(...values, 0), [values]);
+  const maxV = maxRaw > 0 ? maxRaw : 1;
 
   const n = daily.length;
   const slot = n > 0 ? PLOT_W / n : PLOT_W;
   const barW = Math.min(slot * 0.7, 38);
 
-  // Y 轴 4 档刻度
+  // Y 轴 4 档刻度：费用按 maxV 统一小数位；tokens 取整避免出现小数刻度
   const gridFractions = [0, 0.25, 0.5, 0.75, 1];
+  const costDecimals = costAxisDecimals(maxV);
   const yLabel = (f: number) =>
     metric === "tokens"
-      ? formatTokens(maxV * f)
-      : formatCost(maxV * f);
+      ? formatTokens(Math.round(maxV * f))
+      : `$${(maxV * f).toFixed(costDecimals)}`;
 
   // X 轴标签：均匀取 ~6 个
   const labelStep = Math.max(1, Math.floor(n / 6));
@@ -117,13 +130,17 @@ function BarChart({
     : "rgba(0,0,0,0.08)";
   const labelColor = "var(--fg3)";
 
-  if (n === 0) {
+  if (n === 0 || maxRaw <= 0) {
     return (
       <div
         className="flex items-center justify-center"
         style={{ height: CHART_H, color: labelColor, fontSize: "13px" }}
       >
-        {t("usage.emptyChart")}
+        {n === 0
+          ? t("usage.emptyChart")
+          : metric === "cost"
+            ? t("usage.zeroCostChart")
+            : t("usage.emptyChart")}
       </div>
     );
   }
@@ -214,17 +231,27 @@ function BarChart({
             {isHovered && (
               <g pointerEvents="none">
                 {(() => {
+                  // 先生成文案再按长度估算气泡宽度，避免费用长文本溢出
+                  const line2 =
+                    metric === "tokens"
+                      ? `${formatTokens(d.totalTokens)} · ${d.requestCount}`
+                      : `${formatCost(d.costUsd)} · ${formatTokens(d.totalTokens)}`;
+                  const tipW = Math.max(
+                    104,
+                    line2.length * 7 + 20,
+                    d.date.length * 6 + 20,
+                  );
                   const tx = Math.min(
-                    Math.max(x + barW / 2, 60),
-                    CHART_W - 60,
+                    Math.max(x + barW / 2, PAD_L + tipW / 2),
+                    CHART_W - PAD_R - tipW / 2,
                   );
                   const ty = Math.max(y - 8, PAD_T + 30);
                   return (
                     <>
                       <rect
-                        x={tx - 52}
+                        x={tx - tipW / 2}
                         y={ty - 26}
-                        width={104}
+                        width={tipW}
                         height={36}
                         rx={6}
                         fill={isDark ? "#2c2c2e" : "#ffffff"}
@@ -248,11 +275,7 @@ function BarChart({
                         fontWeight={600}
                         fill="var(--fg)"
                       >
-                        {metric === "tokens"
-                          ? `${formatTokens(d.totalTokens)} · ${d.requestCount}`
-                          : `${formatCost(d.costUsd)} · ${formatTokens(
-                              d.totalTokens,
-                            )}`}
+                        {line2}
                       </text>
                     </>
                   );
@@ -324,6 +347,7 @@ interface UsageStatsDialogProps {
 export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps) {
   const { theme } = useTheme();
   const { t } = useI18n();
+  const { handleProps: dragHandleProps } = useDraggableDialog();
   const isDark = theme === "dark";
 
   const [days, setDays] = useState(30);
@@ -365,17 +389,26 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
     }
   }, [isOpen, days, load]);
 
-  const maxModelCost = useMemo(
-    () => Math.max(...(data?.byModel.map((m) => m.costUsd) ?? [0]), 0.0001),
-    [data],
-  );
+  // 模型明细占比条：优先按费用占比；全部模型费用为 0（如免费模型）时退化为按 token 占比
+  const modelRatio = useMemo(() => {
+    const models = data?.byModel ?? [];
+    const maxCost = Math.max(...models.map((m) => m.costUsd), 0);
+    if (maxCost > 0) {
+      return (m: UsageModelBreakdownItem) => m.costUsd / maxCost;
+    }
+    const maxTokens = Math.max(...models.map((m) => m.totalTokens), 0);
+    if (maxTokens > 0) {
+      return (m: UsageModelBreakdownItem) => m.totalTokens / maxTokens;
+    }
+    return () => 0;
+  }, [data]);
 
   return (
     <Modal.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>
       <Modal.Container>
         <Modal.Dialog className="sm:max-w-[1040px]">
           <Modal.CloseTrigger />
-          <Modal.Header>
+          <Modal.Header {...dragHandleProps}>
             <Modal.Heading>{t("usage.modalTitle")}</Modal.Heading>
           </Modal.Header>
           <Modal.Body>
@@ -535,8 +568,7 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
                       }}
                     >
                       {data.byModel.map((m, i) => {
-                        const ratio =
-                          maxModelCost > 0 ? m.costUsd / maxModelCost : 0;
+                        const ratio = modelRatio(m);
                         return (
                           <div
                             key={`${m.modelName}-${i}`}
