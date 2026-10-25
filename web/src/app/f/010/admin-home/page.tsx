@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * /f/admin-home 路由入口（TASK-013）
+ * /f/010/admin-home 路由入口（TASK-013）
  *
- * 客户端路由守卫：未登录跳 /f/admin-login，非 admin 跳 /f/user-home。
+ * 客户端路由守卫：未登录跳 /f/010/admin-login，非 admin 跳 /f/010/user-home。
  * 服务端 require_admin 在每个 mutation 内同样守护，绕过客户端会被 403。
  * role 为多角色字段（逗号分隔），含 admin 角色即可访问。
  */
@@ -27,13 +27,13 @@ export default function AdminPage() {
     if (typeof window === "undefined") return;
     const token = localStorage.getItem("token");
     if (!token) {
-      router.replace("/f/admin-login");
+      router.replace("/f/010/admin-login");
       return;
     }
     try {
       const user: LocalUser = JSON.parse(localStorage.getItem("user") || "{}");
       if (!user.id) {
-        router.replace("/f/admin-login");
+        router.replace("/f/010/admin-login");
         return;
       }
       // role 多角色（逗号分隔）权威，is_admin 兼容兜底
@@ -42,12 +42,12 @@ export default function AdminPage() {
         : !!user.is_admin;
       if (!hasAdmin) {
         // 普通用户重定向到用户首页
-        router.replace("/f/user-home");
+        router.replace("/f/010/user-home");
         return;
       }
       setReady(true);
     } catch {
-      router.replace("/f/admin-login");
+      router.replace("/f/010/admin-login");
     }
   }, [router]);
 

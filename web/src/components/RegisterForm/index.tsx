@@ -282,7 +282,7 @@ export default function RegisterForm({
       <div className="text-center mt-8 text-[14px] text-muted">
         {t("register.hasAccountPrompt")}{" "}
         <a
-          href="/f/user-login"
+          href="/f/010/user-login"
           className="no-underline hover:underline text-foreground font-semibold"
         >
           {t("login.signInLink")}

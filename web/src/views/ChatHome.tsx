@@ -707,7 +707,7 @@ export default function ChatHome() {
       if (ssoSession) {
         redirectToAdfsLogout();
       } else {
-        router.push("/f/user-login");
+        router.push("/f/010/user-login");
       }
     }
   };

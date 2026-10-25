@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
 
 /**
- * /f/login 已废弃：管理后台登录与用户登录分离后，本路由重定向到用户登录页。
- * 管理后台登录请访问 /f/admin-login。
+ * /f/010/login 已废弃：管理后台登录与用户登录分离后，本路由重定向到用户登录页。
+ * 管理后台登录请访问 /f/010/admin-login。
  *
  * 保留 query string（如 SSO 回调的 ?error=xxx）以便错误信息透传到新登录页。
  */
@@ -17,5 +17,5 @@ export default async function LoginRedirect({
       Array.isArray(v) ? v.map((x) => [k, x]) : v ? [[k, v]] : [],
     ),
   ).toString();
-  redirect(qs ? `/f/user-login?${qs}` : "/f/user-login");
+  redirect(qs ? `/f/010/user-login?${qs}` : "/f/010/user-login");
 }

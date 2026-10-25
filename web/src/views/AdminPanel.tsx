@@ -88,7 +88,7 @@ export function AdminPanel() {
       if (ssoSession) {
         redirectToAdfsLogout();
       } else {
-        router.push("/f/admin-login");
+        router.push("/f/010/admin-login");
       }
     }
   };

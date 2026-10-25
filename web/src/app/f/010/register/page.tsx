@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 /**
- * /f/register 已废弃：注册页迁至 /f/user-register。
+ * /f/010/register 已废弃：注册页迁至 /f/010/user-register。
  * 保留 query string 透传（如 ?registered=true 等历史参数）。
  */
 export default async function RegisterRedirect({
@@ -15,5 +15,5 @@ export default async function RegisterRedirect({
       Array.isArray(v) ? v.map((x) => [k, x]) : v ? [[k, v]] : [],
     ),
   ).toString();
-  redirect(qs ? `/f/user-register?${qs}` : "/f/user-register");
+  redirect(qs ? `/f/010/user-register?${qs}` : "/f/010/user-register");
 }

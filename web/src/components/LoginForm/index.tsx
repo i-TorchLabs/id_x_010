@@ -200,7 +200,7 @@ export default function LoginForm({
             </Checkbox.Content>
           </Checkbox>
           <a
-            href="/f/forgot-password"
+            href="/f/010/forgot-password"
             className="text-[14px] no-underline hover:underline text-foreground font-medium"
           >
             {t("login.forgotPassword")}
@@ -261,7 +261,7 @@ export default function LoginForm({
           <>
             {t("login.adminFooterPrompt")}{" "}
             <a
-              href="/f/user-login"
+              href="/f/010/user-login"
               className="no-underline hover:underline text-foreground font-semibold"
             >
               {t("login.userSignInLink")}
@@ -272,7 +272,7 @@ export default function LoginForm({
             <div>
               {t("login.noAccountPrompt")}{" "}
               <a
-                href="/f/user-register"
+                href="/f/010/user-register"
                 className="no-underline hover:underline text-foreground font-semibold"
               >
                 {t("login.signUpLink")}
@@ -280,7 +280,7 @@ export default function LoginForm({
             </div>
             <div className="mt-2">
               <a
-                href="/f/admin-login"
+                href="/f/010/admin-login"
                 className="no-underline hover:underline text-foreground font-semibold"
               >
                 {t("login.adminLoginLink")}

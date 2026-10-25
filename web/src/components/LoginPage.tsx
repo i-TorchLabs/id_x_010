@@ -38,7 +38,7 @@ export default function LoginPage({ mode = "user" }: LoginPageProps) {
     const [passwordError, setPasswordError] = useState(false);
 
     const isAdmin = mode === "admin";
-    const redirectTo = isAdmin ? "/f/admin-home" : "/f/user-home";
+    const redirectTo = isAdmin ? "/f/010/admin-home" : "/f/010/user-home";
 
     // SSO 回调失败时通过 ?error= 携带原因回显到登录页
     useEffect(() => {
@@ -64,9 +64,9 @@ export default function LoginPage({ mode = "user" }: LoginPageProps) {
                 ? u.role.split(",").map((r: string) => r.trim()).includes("admin")
                 : !!u?.is_admin;
             if (isAdmin && hasAdmin) {
-                router.replace("/f/admin-home");
+                router.replace("/f/010/admin-home");
             } else if (!isAdmin) {
-                router.replace("/f/user-home");
+                router.replace("/f/010/user-home");
             }
         } catch {
             // 本地 user 损坏，忽略让其重新登录

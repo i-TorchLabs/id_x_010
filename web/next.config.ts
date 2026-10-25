@@ -7,17 +7,17 @@ const nextConfig: NextConfig = {
         return [
             {
                 source: "/",
-                destination: "/f/login",
+                destination: "/f/010/login",
                 permanent: false,
             },
             {
                 source: "/admin",
-                destination: "/f/admin-home",
+                destination: "/f/010/admin-home",
                 permanent: false,
             },
             {
-                source: "/f/home",
-                destination: "/f/user-home",
+                source: "/f/010/home",
+                destination: "/f/010/user-home",
                 permanent: false,
             },
         ];

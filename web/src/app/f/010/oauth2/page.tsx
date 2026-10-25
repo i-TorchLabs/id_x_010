@@ -28,14 +28,14 @@ export default function OAuthCallbackPage() {
     const state = params.get("state");
 
     if (!code) {
-      router.replace("/f/user-login?error=sso_missing_code");
+      router.replace("/f/010/user-login?error=sso_missing_code");
       return;
     }
 
     // CSRF 校验：state 必须与授权请求时生成并暂存的一致
     const savedState = sessionStorage.getItem(OAUTH_STATE_KEY);
     if (!savedState || savedState !== state) {
-      router.replace("/f/user-login?error=sso_state_mismatch");
+      router.replace("/f/010/user-login?error=sso_state_mismatch");
       return;
     }
     sessionStorage.removeItem(OAUTH_STATE_KEY);
@@ -46,7 +46,7 @@ export default function OAuthCallbackPage() {
         const resp = result.ssoLogin;
         if (!resp.success || !resp.token || !resp.user) {
           router.replace(
-            `/f/user-login?error=${encodeURIComponent(resp.message || "SSO sign-in failed")}`,
+            `/f/010/user-login?error=${encodeURIComponent(resp.message || "SSO sign-in failed")}`,
           );
           return;
         }
@@ -58,12 +58,12 @@ export default function OAuthCallbackPage() {
         // 用 replace 将回调页移出历史栈，防止"后退"回到已失效的 code 页重跑流程。
         const role: string = resp.user.role ?? "user";
         const hasAdmin = role.split(",").map((r: string) => r.trim()).includes("admin");
-        router.replace(hasAdmin ? "/f/admin-home" : "/f/user-home");
+        router.replace(hasAdmin ? "/f/010/admin-home" : "/f/010/user-home");
       })
       .catch((error) => {
         console.error("SSO login failed:", error);
         router.replace(
-          `/f/user-login?error=${encodeURIComponent(error.message || "SSO sign-in failed")}`,
+          `/f/010/user-login?error=${encodeURIComponent(error.message || "SSO sign-in failed")}`,
         );
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
