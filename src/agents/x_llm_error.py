@@ -14,9 +14,10 @@
 
 from __future__ import annotations
 
-# 外部模型默认值（硅基流动可用模型，与 ops/init/05_models.sql 预置数据保持一致）。
-# 注意：Pro/zai-org/GLM-5 已被平台下架（403 Model disabled），勿再使用。
-DEFAULT_EXTERNAL_MODEL = "zai-org/GLM-5.2"
+# 外部模型默认值（与 ops/init/05_models.sql 预置数据保持一致，走 chinarouter 网关）。
+# 注意：Pro/zai-org/GLM-5 已被平台下架（403 Model disabled）；
+# zai-org/GLM-5.2 在 distributor 网关已无可用通道（503 model_not_found），勿再使用。
+DEFAULT_EXTERNAL_MODEL = "deepseek-v4-flash"
 
 # 更换模型的操作指引，追加在模型类错误提示之后
 _SETTINGS_HINT = "请在左下角「模型设置」中检查后更换为可用模型"
@@ -40,6 +41,31 @@ def friendly_llm_error(e: Exception, model_name: str = "") -> str:
         return (
             f"模型{model}已被平台禁用或下架，{_SETTINGS_HINT}"
             f"（如 {DEFAULT_EXTERNAL_MODEL}）"
+        )
+
+    # 中转网关兼容性问题：当前模型通道不支持请求中的某些特性
+    # （强制 tool_choice / assistant 消息结尾等），属于模型与功能不匹配，
+    # 提示用户换模型而不是透传原始英文 400
+    if (
+        "tool_choice" in lower
+        or "assistant message prefill" in lower
+        or "must end with a user message" in lower
+    ):
+        return (
+            f"模型{model}的接入通道不支持当前功能所需的调用方式"
+            f"（工具调用/消息格式限制），{_SETTINGS_HINT}"
+        )
+
+    # 503 / 网关无可用通道：中转网关（distributor）对该模型已无上游通道，
+    # 典型报文 "No available channel for model xxx under group auto"
+    if (
+        status == 503
+        or "model_not_found" in lower
+        or "no available channel" in lower
+    ):
+        return (
+            f"模型{model}在网关侧已无可用通道（可能已下线或暂时不可用），"
+            f"{_SETTINGS_HINT}（如 {DEFAULT_EXTERNAL_MODEL}）"
         )
 
     # 403 无权限：常见于模型下架、未开通或 key 无该模型权限

@@ -210,8 +210,14 @@ class UsageLog(Base):
     total_tokens: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, comment="总 token 数"
     )
+    input_cost_usd: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0, comment="输入 token 花费（USD），本地模型为 0"
+    )
+    output_cost_usd: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0, comment="输出 token 花费（USD），本地模型为 0"
+    )
     cost_usd: Mapped[float] = mapped_column(
-        Float, nullable=False, default=0.0, comment="估算花费（USD），本地模型为 0"
+        Float, nullable=False, default=0.0, comment="估算花费（USD）= 输入 + 输出，本地模型为 0"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -219,6 +225,56 @@ class UsageLog(Base):
         index=True,
         comment="创建时间",
     )
+
+
+class ModelPrice(Base):
+    """模型价格表：按模型名称匹配串记录 input / output 单价（USD / 1M tokens）。
+
+    ``model_key`` 为小写匹配串（如 ``gpt-4o-mini``、``deepseek-chat``），
+    计价时对模型名做子串匹配，取匹配串最长（最特异）的一条；
+    未命中任何行时回退到 x_pricing 内置目录。
+    """
+
+    __tablename__ = "model_prices"
+    __table_args__ = {"comment": "模型价格表（USD / 1M tokens）"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    model_key: Mapped[str] = mapped_column(
+        String(128),
+        unique=True,
+        nullable=False,
+        index=True,
+        comment="模型名称匹配串（小写，子串匹配）",
+    )
+    input_price_per_1m: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0, comment="输入价格（USD / 1M tokens）"
+    )
+    output_price_per_1m: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0, comment="输出价格（USD / 1M tokens）"
+    )
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, comment="是否启用（停用后回退内置目录）"
+    )
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        comment="创建时间",
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        comment="更新时间",
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "model_key": self.model_key,
+            "input_price_per_1m": self.input_price_per_1m,
+            "output_price_per_1m": self.output_price_per_1m,
+            "enabled": self.enabled,
+        }
 
 
 class UserToken(Base):

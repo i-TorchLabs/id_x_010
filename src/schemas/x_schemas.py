@@ -52,6 +52,16 @@ class StreamChunkType:
         default=None,
         description="工具输出摘要（tool_call end 类型携带，便于前端展示简短结果）",
     )
+    input_tokens: Optional[int] = strawberry.field(
+        default=None,
+        description="本轮输入 token 数（done 类型携带，来源 LLM usage_metadata；"
+        "模型未返回用量时为 None）",
+    )
+    output_tokens: Optional[int] = strawberry.field(
+        default=None,
+        description="本轮输出 token 数（done 类型携带，来源 LLM usage_metadata；"
+        "模型未返回用量时为 None）",
+    )
 
 
 @strawberry.type
@@ -468,6 +478,8 @@ class UsageDailyType:
     input_tokens: int = strawberry.field(description="输入 token 合计")
     output_tokens: int = strawberry.field(description="输出 token 合计")
     total_tokens: int = strawberry.field(description="总 token 合计")
+    input_cost_usd: float = strawberry.field(description="输入花费合计（USD）")
+    output_cost_usd: float = strawberry.field(description="输出花费合计（USD）")
     cost_usd: float = strawberry.field(description="花费合计（USD）")
 
 
@@ -477,7 +489,11 @@ class UsageModelBreakdownType:
 
     model_name: str = strawberry.field(description="模型名称")
     request_count: int = strawberry.field(description="请求次数")
+    input_tokens: int = strawberry.field(description="输入 token 合计")
+    output_tokens: int = strawberry.field(description="输出 token 合计")
     total_tokens: int = strawberry.field(description="总 token 合计")
+    input_cost_usd: float = strawberry.field(description="输入花费合计（USD）")
+    output_cost_usd: float = strawberry.field(description="输出花费合计（USD）")
     cost_usd: float = strawberry.field(description="花费合计（USD）")
 
 
@@ -495,6 +511,18 @@ class UsageStatsResponseType:
     total_requests: int = strawberry.field(description="请求总次数")
     total_tokens: int = strawberry.field(description="总 token 合计")
     total_cost_usd: float = strawberry.field(description="花费总计（USD）")
+    total_input_tokens: int = strawberry.field(
+        default=0, description="输入 token 总计"
+    )
+    total_output_tokens: int = strawberry.field(
+        default=0, description="输出 token 总计"
+    )
+    total_input_cost_usd: float = strawberry.field(
+        default=0.0, description="输入花费总计（USD）"
+    )
+    total_output_cost_usd: float = strawberry.field(
+        default=0.0, description="输出花费总计（USD）"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -828,6 +856,61 @@ class SystemModelMutationResponseType:
 
 @strawberry.type
 class DeleteSystemModelResponseType:
+    success: bool = strawberry.field(description="是否成功")
+    message: str = strawberry.field(description="消息")
+
+
+# ---------------------------------------------------------------------------
+# 模型价格（model_prices 表，管理员 CRUD，USD / 1M tokens）
+# ---------------------------------------------------------------------------
+
+
+@strawberry.type
+class ModelPriceType:
+    """model_prices 表的展示视图。"""
+    id: int = strawberry.field(description="价格记录 ID")
+    model_key: str = strawberry.field(description="模型名称匹配串（小写，子串匹配）")
+    input_price_per_1m: float = strawberry.field(description="输入价格（USD / 1M tokens）")
+    output_price_per_1m: float = strawberry.field(description="输出价格（USD / 1M tokens）")
+    enabled: bool = strawberry.field(description="是否启用（停用后回退内置目录）")
+    created_at: Optional[str] = strawberry.field(default=None, description="创建时间 ISO")
+    updated_at: Optional[str] = strawberry.field(default=None, description="更新时间 ISO")
+
+
+@strawberry.type
+class ModelPriceListResponseType:
+    success: bool = strawberry.field(description="是否成功")
+    message: str = strawberry.field(description="消息")
+    prices: List[ModelPriceType] = strawberry.field(
+        default_factory=list, description="模型价格列表"
+    )
+
+
+@strawberry.input
+class ModelPriceInput:
+    """新增 / 更新模型价格入参。id 为 None 时按 model_key 新增，非 None 时更新指定行。"""
+    id: Optional[int] = strawberry.field(default=None, description="已有记录 ID（更新时传）")
+    model_key: str = strawberry.field(description="模型名称匹配串（小写，子串匹配）")
+    input_price_per_1m: float = strawberry.field(
+        default=0.0, description="输入价格（USD / 1M tokens）"
+    )
+    output_price_per_1m: float = strawberry.field(
+        default=0.0, description="输出价格（USD / 1M tokens）"
+    )
+    enabled: bool = strawberry.field(default=True, description="是否启用")
+
+
+@strawberry.type
+class ModelPriceMutationResponseType:
+    success: bool = strawberry.field(description="是否成功")
+    message: str = strawberry.field(description="消息")
+    price: Optional[ModelPriceType] = strawberry.field(
+        default=None, description="新增/更新后的价格记录"
+    )
+
+
+@strawberry.type
+class DeleteModelPriceResponseType:
     success: bool = strawberry.field(description="是否成功")
     message: str = strawberry.field(description="消息")
 

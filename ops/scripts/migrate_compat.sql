@@ -33,6 +33,15 @@ UPDATE users SET is_admin = TRUE WHERE role LIKE '%admin%' AND is_admin IS NOT T
 ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS is_system_model BOOLEAN NOT NULL DEFAULT FALSE;
 COMMENT ON COLUMN usage_logs.is_system_model IS '是否为系统预置模型调用（配额与统计仅计入系统模型）';
 
+-- usage_logs 增量字段：input_cost_usd / output_cost_usd（输入/输出分项计费）
+ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS input_cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0.0;
+COMMENT ON COLUMN usage_logs.input_cost_usd IS '输入 token 花费（USD），本地模型为 0';
+ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS output_cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0.0;
+COMMENT ON COLUMN usage_logs.output_cost_usd IS '输出 token 花费（USD），本地模型为 0';
+
+-- 模型价格表（model_prices）由应用层 Base.metadata.create_all 自动建；
+-- 预置价格见 ops/init/01_init.sql（老库可按需手工执行对应 INSERT 段）。
+
 -- 把所有 sha256/NULL 老数据标记为 sha256（登录时由 verify_password 自动升级）
 UPDATE users
 SET password_algo = 'sha256'

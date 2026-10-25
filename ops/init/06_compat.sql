@@ -20,6 +20,31 @@ UPDATE users SET is_admin = TRUE WHERE role LIKE '%admin%' AND is_admin IS NOT T
 -- usage_logs 增量字段：is_system_model
 ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS is_system_model BOOLEAN NOT NULL DEFAULT FALSE;
 COMMENT ON COLUMN usage_logs.is_system_model IS '是否为系统预置模型调用（配额与统计仅计入系统模型）';
+
+-- usage_logs 增量字段：input_cost_usd / output_cost_usd（输入/输出分项计费）
+ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS input_cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0.0;
+COMMENT ON COLUMN usage_logs.input_cost_usd IS '输入 token 花费（USD），本地模型为 0';
+ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS output_cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0.0;
+COMMENT ON COLUMN usage_logs.output_cost_usd IS '输出 token 花费（USD），本地模型为 0';
+
+-- 模型价格表（model_prices）：input / output 单价（USD / 1M tokens）
+CREATE TABLE IF NOT EXISTS model_prices (
+    id SERIAL PRIMARY KEY,
+    model_key VARCHAR(128) NOT NULL UNIQUE,
+    input_price_per_1m DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    output_price_per_1m DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS ix_model_prices_model_key ON model_prices(model_key);
+COMMENT ON TABLE model_prices IS '模型价格表（USD / 1M tokens）';
+COMMENT ON COLUMN model_prices.model_key IS '模型名称匹配串（小写，子串匹配，最长匹配优先）';
+COMMENT ON COLUMN model_prices.input_price_per_1m IS '输入价格（USD / 1M tokens）';
+COMMENT ON COLUMN model_prices.output_price_per_1m IS '输出价格（USD / 1M tokens）';
+COMMENT ON COLUMN model_prices.enabled IS '是否启用（停用后回退内置目录）';
+-- 预置价格数据已迁移至 08_model_prices.sql（与网关实际可用模型同步）
+
 COMMENT ON COLUMN users.password_algo IS '密码哈希算法：bcrypt / sha256（老数据）';
 
 UPDATE users

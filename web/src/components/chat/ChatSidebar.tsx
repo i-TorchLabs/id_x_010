@@ -348,48 +348,90 @@ export function ChatSidebar({
 
                 <Separator />
 
-                {/* ── User Footer ── */}
-                <div
-                    className="px-3 py-2.5 shrink-0 flex items-center gap-2 mx-2 mb-2 rounded-xl"
-                    style={{ background: "var(--surface-1)", border: "0.5px solid var(--divider)" }}
-                >
+                {/* ── User Footer —— 底部分格：不用独立框体/图标簇，
+                    而是以分隔线划出的一格，内部是与侧边栏同风格的
+                    整行菜单项：用户设置 / 使用统计 / 模型设置 / 登出 ── */}
+                <div className="px-2 pt-2 pb-2 shrink-0 flex flex-col gap-0.5">
+                    {/* 用户设置：头像 + 姓名/邮箱整行可点，点击打开个人资料 */}
                     <button
                         type="button"
                         onClick={onEditProfile}
                         disabled={!onEditProfile}
-                        aria-label={t("sidebar.ariaEditProfile")}
-                        className="shrink-0 rounded-full transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2"
-                        style={{ outlineOffset: 2, cursor: onEditProfile ? "pointer" : "default" }}
+                        aria-label={t("sidebar.menuProfile")}
+                        title={t("sidebar.menuProfile")}
+                        className="w-full flex items-center gap-2.5 text-left"
+                        style={{
+                            ...iconBtnBase,
+                            justifyContent: "flex-start",
+                            padding: "6px 8px",
+                            cursor: onEditProfile ? "pointer" : "default",
+                        }}
+                        onMouseEnter={handleHover}
+                        onMouseLeave={handleLeave}
                     >
-                        <Avatar size="sm">
+                        <Avatar size="sm" className="shrink-0">
                             {avatarUrl && <Avatar.Image src={avatarUrl} alt={userName} />}
                             <Avatar.Fallback className="text-xs font-semibold" style={{ background: "var(--accent)", color: "var(--accent-fg)" }}>
                                 {userName.slice(0, 1).toUpperCase()}
                             </Avatar.Fallback>
                         </Avatar>
+                        <span className="flex-1 min-w-0">
+                            <span className="font-text block truncate" style={{ fontSize: "13px", fontWeight: 600, color: "var(--fg1)", letterSpacing: "-0.01em" }}>
+                                {userName}
+                            </span>
+                            <span className="font-text block truncate" style={{ fontSize: "11px", color: "var(--fg3)" }}>
+                                {userEmail}
+                            </span>
+                        </span>
                     </button>
-                    <div className={`flex-1 min-w-0 ${onEditProfile ? "cursor-pointer" : ""}`} onClick={onEditProfile}>
-                        <p className="font-text truncate" style={{ fontSize: "13px", fontWeight: 600, color: "var(--fg1)", letterSpacing: "-0.01em" }}>
-                            {userName}
-                        </p>
-                        <p className="font-text truncate" style={{ fontSize: "11px", color: "var(--fg3)" }}>
-                            {userEmail}
-                        </p>
-                    </div>
+
                     {onUsageStats && (
-                        <Button isIconOnly variant="ghost" size="sm" onPress={onUsageStats} aria-label={t("sidebar.ariaUsage")} className="icon-btn">
-                            <UsageIcon className="w-[18px] h-[18px]" />
-                        </Button>
+                        <button
+                            type="button"
+                            onClick={onUsageStats}
+                            aria-label={t("sidebar.ariaUsage")}
+                            className="w-full flex items-center gap-2.5 text-left"
+                            style={{ ...iconBtnBase, justifyContent: "flex-start", padding: "7px 10px" }}
+                            onMouseEnter={handleHover}
+                            onMouseLeave={handleLeave}
+                        >
+                            <UsageIcon className="w-4 h-4 shrink-0" />
+                            <span className="font-text" style={{ fontSize: "13px", fontWeight: 500 }}>
+                                {t("sidebar.menuUsage")}
+                            </span>
+                        </button>
                     )}
                     {onSettings && (
-                        <Button isIconOnly variant="ghost" size="sm" onPress={onSettings} aria-label={t("sidebar.ariaSettings")} className="icon-btn">
-                            <GearIcon className="w-[18px] h-[18px]" />
-                        </Button>
+                        <button
+                            type="button"
+                            onClick={onSettings}
+                            aria-label={t("sidebar.ariaSettings")}
+                            className="w-full flex items-center gap-2.5 text-left"
+                            style={{ ...iconBtnBase, justifyContent: "flex-start", padding: "7px 10px" }}
+                            onMouseEnter={handleHover}
+                            onMouseLeave={handleLeave}
+                        >
+                            <GearIcon className="w-4 h-4 shrink-0" />
+                            <span className="font-text" style={{ fontSize: "13px", fontWeight: 500 }}>
+                                {t("sidebar.menuSettings")}
+                            </span>
+                        </button>
                     )}
                     {onLogout && (
-                        <Button isIconOnly variant="ghost" size="sm" onPress={onLogout} aria-label={t("sidebar.ariaLogout")} className="icon-btn">
-                            <LogoutIcon className="w-[18px] h-[18px]" />
-                        </Button>
+                        <button
+                            type="button"
+                            onClick={onLogout}
+                            aria-label={t("sidebar.ariaLogout")}
+                            className="w-full flex items-center gap-2.5 text-left"
+                            style={{ ...iconBtnBase, justifyContent: "flex-start", padding: "7px 10px" }}
+                            onMouseEnter={handleHover}
+                            onMouseLeave={handleLeave}
+                        >
+                            <LogoutIcon className="w-4 h-4 shrink-0" />
+                            <span className="font-text" style={{ fontSize: "13px", fontWeight: 500 }}>
+                                {t("sidebar.menuLogout")}
+                            </span>
+                        </button>
                     )}
                 </div>
             </div>

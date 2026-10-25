@@ -41,6 +41,11 @@ from x_models.id_x_010.src.schemas.x_schemas import (
     DatabaseInfoType,
     DatabaseListResponseType,
     DeleteSystemModelResponseType,
+    DeleteModelPriceResponseType,
+    ModelPriceInput,
+    ModelPriceListResponseType,
+    ModelPriceMutationResponseType,
+    ModelPriceType,
     ForgotPasswordInput,
     SystemModelUserKeyInput,
     SystemModelUserKeyMutationResponseType,
@@ -115,6 +120,7 @@ from x_models.id_x_010.src.views.x_views import (
     delete_external_model,
     delete_markdown_prompt,
     delete_system_model,
+    delete_model_price,
     delete_user_model_provider,
     find_provider_for_model,
     get_active_markdown_prompt,
@@ -130,6 +136,7 @@ from x_models.id_x_010.src.views.x_views import (
     list_agent_db_settings,
     list_external_models,
     list_system_models,
+    list_model_prices,
     list_user_markdown_prompts,
     list_user_model_providers,
     list_user_system_model_mappings,
@@ -146,6 +153,7 @@ from x_models.id_x_010.src.views.x_views import (
     update_user_profile,
     upsert_external_model,
     upsert_system_model,
+    upsert_model_price,
     upsert_user_model_provider,
     upsert_user_model_settings,
     upsert_user_system_model_mapping,
@@ -502,8 +510,23 @@ class Query:
                 cost_col = func.coalesce(func.sum(UsageLog.cost_usd), 0.0).label(
                     "cost"
                 )
+                in_cost_col = func.coalesce(
+                    func.sum(UsageLog.input_cost_usd), 0.0
+                ).label("in_cost")
+                out_cost_col = func.coalesce(
+                    func.sum(UsageLog.output_cost_usd), 0.0
+                ).label("out_cost")
                 daily_stmt = (
-                    select(date_col, func.count().label("cnt"), in_col, out_col, tot_col, cost_col)
+                    select(
+                        date_col,
+                        func.count().label("cnt"),
+                        in_col,
+                        out_col,
+                        tot_col,
+                        in_cost_col,
+                        out_cost_col,
+                        cost_col,
+                    )
                     .where(
                         UsageLog.user_id == user.id,
                         UsageLog.is_system_model.is_(True),
@@ -523,6 +546,8 @@ class Query:
                             input_tokens=int(row.in_tok),
                             output_tokens=int(row.out_tok),
                             total_tokens=int(row.tot_tok),
+                            input_cost_usd=float(row.in_cost),
+                            output_cost_usd=float(row.out_cost),
                             cost_usd=float(row.cost),
                         )
                     )
@@ -531,6 +556,18 @@ class Query:
                 model_cost_col = func.coalesce(
                     func.sum(UsageLog.cost_usd), 0.0
                 ).label("cost")
+                model_in_cost_col = func.coalesce(
+                    func.sum(UsageLog.input_cost_usd), 0.0
+                ).label("in_cost")
+                model_out_cost_col = func.coalesce(
+                    func.sum(UsageLog.output_cost_usd), 0.0
+                ).label("out_cost")
+                model_in_col = func.coalesce(
+                    func.sum(UsageLog.input_tokens), 0
+                ).label("in_tok")
+                model_out_col = func.coalesce(
+                    func.sum(UsageLog.output_tokens), 0
+                ).label("out_tok")
                 model_tot_col = func.coalesce(
                     func.sum(UsageLog.total_tokens), 0
                 ).label("tot_tok")
@@ -538,7 +575,11 @@ class Query:
                     select(
                         UsageLog.model_name,
                         func.count().label("cnt"),
+                        model_in_col,
+                        model_out_col,
                         model_tot_col,
+                        model_in_cost_col,
+                        model_out_cost_col,
                         model_cost_col,
                     )
                     .where(
@@ -557,13 +598,21 @@ class Query:
                         UsageModelBreakdownType(
                             model_name=row.model_name or "未知模型",
                             request_count=int(row.cnt),
+                            input_tokens=int(row.in_tok),
+                            output_tokens=int(row.out_tok),
                             total_tokens=int(row.tot_tok),
+                            input_cost_usd=float(row.in_cost),
+                            output_cost_usd=float(row.out_cost),
                             cost_usd=float(row.cost),
                         )
                     )
 
                 total_requests = sum(d.request_count for d in daily)
                 total_tokens = sum(d.total_tokens for d in daily)
+                total_input_tokens = sum(d.input_tokens for d in daily)
+                total_output_tokens = sum(d.output_tokens for d in daily)
+                total_input_cost = sum(d.input_cost_usd for d in daily)
+                total_output_cost = sum(d.output_cost_usd for d in daily)
                 total_cost = sum(d.cost_usd for d in daily)
 
                 return UsageStatsResponseType(
@@ -574,6 +623,10 @@ class Query:
                     by_model=by_model,
                     total_requests=total_requests,
                     total_tokens=total_tokens,
+                    total_input_tokens=total_input_tokens,
+                    total_output_tokens=total_output_tokens,
+                    total_input_cost_usd=round(total_input_cost, 6),
+                    total_output_cost_usd=round(total_output_cost, 6),
                     total_cost_usd=round(total_cost, 6),
                 )
         except Exception as e:
@@ -659,6 +712,49 @@ class Query:
             )
             return SystemModelListResponseType(
                 success=False, message=f"获取失败: {str(e)}", models=[]
+            )
+
+    @strawberry.field(description="管理员：获取模型价格列表（USD / 1M tokens）")
+    async def model_prices(self, info: strawberry.Info) -> ModelPriceListResponseType:
+        from x_models.id_x_010.src.middleware.x_admin import (
+            AdminRequiredError,
+            require_admin,
+        )
+
+        try:
+            await require_admin(_get_info_request(info))
+            rows = await list_model_prices()
+            prices = [
+                ModelPriceType(
+                    id=r.id,
+                    model_key=r.model_key,
+                    input_price_per_1m=float(r.input_price_per_1m or 0.0),
+                    output_price_per_1m=float(r.output_price_per_1m or 0.0),
+                    enabled=bool(r.enabled),
+                    created_at=(
+                        r.created_at.isoformat() if r.created_at else None
+                    ),
+                    updated_at=(
+                        r.updated_at.isoformat() if r.updated_at else None
+                    ),
+                )
+                for r in rows
+            ]
+            return ModelPriceListResponseType(
+                success=True,
+                message=f"成功获取 {len(prices)} 条模型价格",
+                prices=prices,
+            )
+        except AdminRequiredError as e:
+            return ModelPriceListResponseType(
+                success=False, message=e.message, prices=[]
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}获取模型价格列表失败: {e}", exc_info=True
+            )
+            return ModelPriceListResponseType(
+                success=False, message=f"获取失败: {str(e)}", prices=[]
             )
 
     @strawberry.field(description="获取当前用户的全部自定义模型 Provider（多 Provider 多模型）")
@@ -1452,6 +1548,16 @@ class Mutation:
                             if chunk.get("security_block") is not None
                             else None
                         ),
+                        input_tokens=(
+                            int((chunk.get("usage") or {}).get("input_tokens", 0) or 0)
+                            if chunk.get("usage")
+                            else None
+                        ),
+                        output_tokens=(
+                            int((chunk.get("usage") or {}).get("output_tokens", 0) or 0)
+                            if chunk.get("usage")
+                            else None
+                        ),
                     )
             elif action == "reject":
                 last_chunk_type = None
@@ -1483,6 +1589,16 @@ class Mutation:
                             if chunk.get("security_block") is not None
                             else None
                         ),
+                        input_tokens=(
+                            int((chunk.get("usage") or {}).get("input_tokens", 0) or 0)
+                            if chunk.get("usage")
+                            else None
+                        ),
+                        output_tokens=(
+                            int((chunk.get("usage") or {}).get("output_tokens", 0) or 0)
+                            if chunk.get("usage")
+                            else None
+                        ),
                     )
 
                 if last_chunk_type == "sql_rejected":
@@ -1511,6 +1627,22 @@ class Mutation:
                             security_block=(
                                 bool(chunk2["security_block"])
                                 if chunk2.get("security_block") is not None
+                                else None
+                            ),
+                            input_tokens=(
+                                int(
+                                    (chunk2.get("usage") or {}).get("input_tokens", 0)
+                                    or 0
+                                )
+                                if chunk2.get("usage")
+                                else None
+                            ),
+                            output_tokens=(
+                                int(
+                                    (chunk2.get("usage") or {}).get("output_tokens", 0)
+                                    or 0
+                                )
+                                if chunk2.get("usage")
                                 else None
                             ),
                         )
@@ -3024,6 +3156,95 @@ class Mutation:
             )
 
     # ------------------------------------------------------------------
+    # 模型价格管理（model_prices 表，管理员 CRUD，USD / 1M tokens）
+    # ------------------------------------------------------------------
+
+    @strawberry.mutation(description="管理员：新增/更新模型价格（USD / 1M tokens）")
+    async def save_model_price(
+        self, info: strawberry.Info, input: ModelPriceInput
+    ) -> ModelPriceMutationResponseType:
+        from x_models.id_x_010.src.middleware.x_admin import (
+            AdminRequiredError,
+            require_admin,
+        )
+
+        try:
+            await require_admin(_get_info_request(info))
+        except AdminRequiredError as e:
+            return ModelPriceMutationResponseType(
+                success=False, message=e.message, price=None
+            )
+
+        model_key = (input.model_key or "").strip().lower()
+        if not model_key:
+            return ModelPriceMutationResponseType(
+                success=False, message="模型名称匹配串不能为空", price=None
+            )
+        if input.input_price_per_1m < 0 or input.output_price_per_1m < 0:
+            return ModelPriceMutationResponseType(
+                success=False, message="价格不能为负数", price=None
+            )
+
+        saved = await upsert_model_price(
+            model_key=model_key,
+            input_price_per_1m=input.input_price_per_1m,
+            output_price_per_1m=input.output_price_per_1m,
+            enabled=input.enabled,
+            price_id=input.id,
+        )
+        if saved is None:
+            return ModelPriceMutationResponseType(
+                success=False,
+                message="保存失败：记录不存在或 model_key 与其它行冲突",
+                price=None,
+            )
+
+        return ModelPriceMutationResponseType(
+            success=True,
+            message="模型价格已保存",
+            price=ModelPriceType(
+                id=saved.id,
+                model_key=saved.model_key,
+                input_price_per_1m=float(saved.input_price_per_1m or 0.0),
+                output_price_per_1m=float(saved.output_price_per_1m or 0.0),
+                enabled=bool(saved.enabled),
+                created_at=saved.created_at.isoformat() if saved.created_at else None,
+                updated_at=saved.updated_at.isoformat() if saved.updated_at else None,
+            ),
+        )
+
+    @strawberry.mutation(description="管理员：删除模型价格（删除后计价回退内置目录）")
+    async def delete_model_price(
+        self, info: strawberry.Info, price_id: int
+    ) -> DeleteModelPriceResponseType:
+        from x_models.id_x_010.src.middleware.x_admin import (
+            AdminRequiredError,
+            require_admin,
+        )
+
+        try:
+            await require_admin(_get_info_request(info))
+        except AdminRequiredError as e:
+            return DeleteModelPriceResponseType(success=False, message=e.message)
+
+        try:
+            ok = await delete_model_price(price_id)
+            if not ok:
+                return DeleteModelPriceResponseType(
+                    success=False, message="价格记录不存在或已被删除"
+                )
+            return DeleteModelPriceResponseType(
+                success=True, message="模型价格已删除"
+            )
+        except Exception as e:
+            logger.error(
+                f"{get_request_id()}删除模型价格失败: {e}", exc_info=True
+            )
+            return DeleteModelPriceResponseType(
+                success=False, message=f"删除失败: {str(e)}"
+            )
+
+    # ------------------------------------------------------------------
     # 用户对系统预置模型的 API Key 映射（system_model_user_mappings 表）
     # 用户可保存自己的 key 覆盖系统模型的全局 key，便于按用户统计用量
     # ------------------------------------------------------------------
@@ -3694,6 +3915,9 @@ class Subscription:
                 base_url=override_base_url,
                 prompt_content=active_prompt_content,
             ):
+                # LLM 末块（done 类型）携带的 token 用量：转发给前端在
+                # 气泡底部展示，同时缓存供流结束后落库 usage_logs
+                _chunk_usage = chunk.get("usage") or None
                 chunk_type = StreamChunkType(
                     type=chunk.get("type", ""),
                     content=chunk.get("content"),
@@ -3724,6 +3948,16 @@ class Subscription:
                     # 不会携带这两个字段，保持 None 即可
                     tool_name=chunk.get("tool_name"),
                     tool_output=chunk.get("tool_output"),
+                    input_tokens=(
+                        int(_chunk_usage.get("input_tokens", 0) or 0)
+                        if _chunk_usage
+                        else None
+                    ),
+                    output_tokens=(
+                        int(_chunk_usage.get("output_tokens", 0) or 0)
+                        if _chunk_usage
+                        else None
+                    ),
                 )
 
                 if chunk_type.type == "intent":
@@ -4506,6 +4740,7 @@ def register_routers(route_prefix: str) -> Router:
                     # 字段转发——之前只发 6 个字段，前端 ResultView 永远收不到数据。
                     _raw_data = chunk.get("data")
                     _raw_chart = chunk.get("chart_config")
+                    _usage = chunk.get("usage") or None
                     chunk_data = _json.dumps(
                         {
                             "type": chunk.get("type", ""),
@@ -4527,6 +4762,18 @@ def register_routers(route_prefix: str) -> Router:
                                 else None
                             ),
                             "security_block": chunk.get("security_block"),
+                            # 审批后续流的 token 用量（done chunk 携带），
+                            # 供前端气泡 meta 行展示
+                            "input_tokens": (
+                                int(_usage.get("input_tokens", 0) or 0)
+                                if _usage
+                                else None
+                            ),
+                            "output_tokens": (
+                                int(_usage.get("output_tokens", 0) or 0)
+                                if _usage
+                                else None
+                            ),
                         }
                     )
                     yield f"data: {chunk_data}\n\n"
@@ -4536,6 +4783,7 @@ def register_routers(route_prefix: str) -> Router:
                 ):
                     _raw_data = chunk.get("data")
                     _raw_chart = chunk.get("chart_config")
+                    _usage = chunk.get("usage") or None
                     chunk_data = _json.dumps(
                         {
                             "type": chunk.get("type", ""),
@@ -4557,6 +4805,16 @@ def register_routers(route_prefix: str) -> Router:
                                 else None
                             ),
                             "security_block": chunk.get("security_block"),
+                            "input_tokens": (
+                                int(_usage.get("input_tokens", 0) or 0)
+                                if _usage
+                                else None
+                            ),
+                            "output_tokens": (
+                                int(_usage.get("output_tokens", 0) or 0)
+                                if _usage
+                                else None
+                            ),
                         }
                     )
                     yield f"data: {chunk_data}\n\n"

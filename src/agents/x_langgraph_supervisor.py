@@ -516,6 +516,13 @@ class LLMRouter:
             "only 1 is allowed" in lower or "invalid" in lower
         )
 
+    @staticmethod
+    def _is_tool_choice_error(err: Exception) -> bool:
+        # 中转网关对强制工具调用返回 400，错误文本形如：
+        # tool_choice: type "tool" and "any" are not supported for this model
+        # with_structured_output 默认通过强制 function_calling 实现，同样会触发
+        return "tool_choice" in str(err).lower()
+
     async def _route_structured(self, query: str) -> Tuple[str, float]:
         assert self.structured_llm is not None, "structured_llm must not be None"
         prompt = self._build_classification_prompt().format(query=query)
@@ -532,6 +539,16 @@ class LLMRouter:
                 self.llm = self._create_llm(temp=1.0)
                 self.structured_llm = self.llm.with_structured_output(IntentResult)
                 result = cast(IntentResult, await self.structured_llm.ainvoke(prompt))
+            elif self._is_tool_choice_error(e):
+                # 模型/网关不支持强制 tool_choice：永久切换到普通文本模式，
+                # 避免后续请求重复撞 400 被外层兑底成 general 误路由
+                logger.info(
+                    f"{get_request_id()}LLM Router 模型不支持强制 tool_choice，"
+                    f"切换普通模式: {type(e).__name__}: {e}"
+                )
+                self.structured_llm = None
+                self.use_structured_output = False
+                return await self._route_normal(query)
             else:
                 raise
 

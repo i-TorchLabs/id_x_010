@@ -67,6 +67,10 @@ type ChatMessage = {
   /** TASK-017：反馈按钮定位所需——会话 ID 与消息序号 */
   conversationId?: string;
   index?: number;
+  /** 本轮输入 token 数（done chunk 携带；模型未返回用量时为 undefined） */
+  inputTokens?: number;
+  /** 本轮输出 token 数（done chunk 携带；模型未返回用量时为 undefined） */
+  outputTokens?: number;
 };
 
 function SidebarToggle({
@@ -253,8 +257,8 @@ export default function ChatHome() {
       let sqlBuffer = "";
       let contentBuffer = "";
       let modelUsed = "";
-      let thinkingStartTime: number | null = null;
-      let thinkingEndTime: number | null = null;
+      // 请求发出时刻：用于计算"用时"（= 用户发起到最后响应的总时长）
+      const requestStartTime = Date.now();
       let isFirstContent = true;
       let responseMessageId: string | null = null; // 第二个气泡的ID
 
@@ -302,10 +306,6 @@ export default function ChatHome() {
 
             case "thinking":
               // 思考过程
-              // 记录思考开始时间（只记录一次）
-              if (thinkingStartTime === null) {
-                thinkingStartTime = Date.now();
-              }
               if (chunk.content) {
                 thinkingBuffer += chunk.content;
                 setMessages((prev) =>
@@ -362,7 +362,6 @@ export default function ChatHome() {
               // 自然语言回复内容 - 统一复用第一个气泡
               if (chunk.content) {
                 if (isFirstContent) {
-                  thinkingEndTime = Date.now();
                   isFirstContent = false;
 
                   // 统一复用第一个气泡，不再创建第二个气泡
@@ -386,11 +385,6 @@ export default function ChatHome() {
                   setCurrentConversationId(chunk.conversationId);
                 }
 
-                const thinkingTime =
-                  thinkingStartTime && thinkingEndTime
-                    ? Math.round((thinkingEndTime - thinkingStartTime) / 1000)
-                    : 0;
-
                 setMessages((prev) =>
                   prev.map((msg) =>
                     msg.id === responseMessageId
@@ -398,7 +392,6 @@ export default function ChatHome() {
                           ...msg,
                           content: contentBuffer,
                           modelUsed: modelUsed,
-                          thinkingTime: thinkingTime,
                         }
                       : msg,
                   ),
@@ -416,6 +409,10 @@ export default function ChatHome() {
                         pendingSql: chunk.sql || chunk.content || "",
                         sqlMeaning: chunk.sqlMeaning || undefined,
                         sqlApprovalStatus: "pending" as const,
+                        thinkingTime: Math.max(
+                          0.1,
+                          Math.round((Date.now() - requestStartTime) / 100) / 10,
+                        ),
                       }
                     : msg,
                 ),
@@ -498,8 +495,45 @@ export default function ChatHome() {
               break;
 
             case "done":
-              // 完成
+              // 完成：用时 = 用户发起到 done 的总时长（保留 1 位小数，下限 0.1s）。
+              // done chunk 还携带本轮 token 用量（LLM usage_metadata），一并回填。
               setIsTyping(false);
+              {
+                const totalTime = Math.max(
+                  0.1,
+                  Math.round((Date.now() - requestStartTime) / 100) / 10,
+                );
+                // 上游网关可能中途掀断流（实测只收到 "<thin" 残片就 done），
+                // 此时既无正文也无有效 thinking/SQL——给出明确提示而非空白气泡
+                const isEmptyResponse =
+                  isFirstContent &&
+                  !sqlBuffer &&
+                  !thinkingBuffer.trim() &&
+                  !contentBuffer.trim();
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === (responseMessageId || assistantMessageId)
+                      ? {
+                          ...msg,
+                          ...(isEmptyResponse &&
+                          !msg.pendingSql &&
+                          !msg.resultData &&
+                          !msg.content
+                            ? { content: t("chat.errorEmptyResponse") }
+                            : {}),
+                          ...(chunk.inputTokens != null ||
+                          chunk.outputTokens != null
+                            ? {
+                                inputTokens: chunk.inputTokens ?? undefined,
+                                outputTokens: chunk.outputTokens ?? undefined,
+                              }
+                            : {}),
+                          thinkingTime: totalTime,
+                        }
+                      : msg,
+                  ),
+                );
+              }
               break;
 
             case "security_block":
@@ -516,6 +550,10 @@ export default function ChatHome() {
                           reason: chunk.content || t("chat.errorSqlBlocked"),
                           sql: chunk.sql || undefined,
                         },
+                        thinkingTime: Math.max(
+                          0.1,
+                          Math.round((Date.now() - requestStartTime) / 100) / 10,
+                        ),
                       }
                     : msg,
                 ),
@@ -523,7 +561,9 @@ export default function ChatHome() {
               break;
 
             case "error":
-              // 错误
+              // 错误：除回填文案外必须清掉 contentType——若本轮已经过
+              // sql_generated（contentType="sql"），不清会把错误文本渲染进
+              // SQL 代码块，出现“报错显示在 SQL 框里”的问题。
               setIsTyping(false);
               setMessages((prev) =>
                 prev.map((msg) =>
@@ -533,6 +573,11 @@ export default function ChatHome() {
                         content:
                           chunk.content ||
                           t("chat.errorGeneric"),
+                        contentType: undefined,
+                        thinkingTime: Math.max(
+                          0.1,
+                          Math.round((Date.now() - requestStartTime) / 100) / 10,
+                        ),
                       }
                     : msg,
                 ),
@@ -550,6 +595,10 @@ export default function ChatHome() {
                     ...msg,
                     content:
                       t("chat.errorConnectionFailed"),
+                    thinkingTime: Math.max(
+                      0.1,
+                      Math.round((Date.now() - requestStartTime) / 100) / 10,
+                    ),
                   }
                 : msg,
             ),
@@ -557,6 +606,20 @@ export default function ChatHome() {
         },
         onComplete: () => {
           setIsTyping(false);
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === (responseMessageId || assistantMessageId) &&
+              msg.thinkingTime == null
+                ? {
+                    ...msg,
+                    thinkingTime: Math.max(
+                      0.1,
+                      Math.round((Date.now() - requestStartTime) / 100) / 10,
+                    ),
+                  }
+                : msg,
+            ),
+          );
         },
       });
     },
@@ -602,6 +665,28 @@ export default function ChatHome() {
   const handleNewChat = () => {
     setMessages([]);
   };
+
+  const handleStopStreaming = useCallback(() => {
+    streamChatClient.abort();
+    setIsTyping(false);
+    setIsSqlProcessing(false);
+    setMessages((prev) => {
+      if (prev.length === 0) return prev;
+      const lastIdx = prev.length - 1;
+      const last = prev[lastIdx];
+      if (
+        last.type === "assistant" &&
+        !last.content &&
+        !last.thinking &&
+        !last.pendingSql
+      ) {
+        const updated = [...prev];
+        updated[lastIdx] = { ...last, content: t("chat.messageStopped") };
+        return updated;
+      }
+      return prev;
+    });
+  }, [t]);
 
   const handleLogout = async () => {
     setShowLogoutConfirm(false);
@@ -650,12 +735,18 @@ export default function ChatHome() {
       );
 
       let contentBuffer = "";
+      // 用时统计起点：从点击批准到流结束（done/error）的总时长
+      const approvalStartTime = Date.now();
 
       streamChatClient.sqlApproval({
         conversationId: currentConversationId || "",
         sql,
         action: "approve",
         question,
+        // 必须透传当前选中模型：之前漏传导致后端回退到
+        // DEFAULT_EXTERNAL_MODEL，撞上网关 503 model_not_found
+        modelType: selectedModel?.modelType,
+        modelName: selectedModel?.name,
         dbName: selectedDb,
         onChunk: (chunk) => {
           switch (chunk.type) {
@@ -733,6 +824,31 @@ export default function ChatHome() {
               break;
             case "done":
               setIsSqlProcessing(false);
+              // 用时 = 点击批准到 done 的总时长；同时回填 token 用量
+              {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === messageId
+                      ? {
+                          ...msg,
+                          ...(chunk.inputTokens != null ||
+                          chunk.outputTokens != null
+                            ? {
+                                inputTokens: chunk.inputTokens ?? undefined,
+                                outputTokens: chunk.outputTokens ?? undefined,
+                              }
+                            : {}),
+                          thinkingTime: Math.max(
+                            0.1,
+                            Math.round(
+                              (Date.now() - approvalStartTime) / 100,
+                            ) / 10,
+                          ),
+                        }
+                      : msg,
+                  ),
+                );
+              }
               break;
             case "security_block":
               // 审批后执行仍可能被安全机制拦截（如重新生成的 SQL 触及受保护表）
@@ -746,6 +862,12 @@ export default function ChatHome() {
                           reason: chunk.content || t("chat.errorSqlBlocked"),
                           sql: chunk.sql || undefined,
                         },
+                        thinkingTime: Math.max(
+                          0.1,
+                          Math.round(
+                            (Date.now() - approvalStartTime) / 100,
+                          ) / 10,
+                        ),
                       }
                     : msg,
                 ),
@@ -761,6 +883,12 @@ export default function ChatHome() {
                         content: chunk.content || t("chat.errorExecutionFailed"),
                         pendingSql: undefined,
                         sqlApprovalStatus: undefined,
+                        thinkingTime: Math.max(
+                          0.1,
+                          Math.round(
+                            (Date.now() - approvalStartTime) / 100,
+                          ) / 10,
+                        ),
                       }
                     : msg,
                 ),
@@ -773,10 +901,25 @@ export default function ChatHome() {
         },
         onComplete: () => {
           setIsSqlProcessing(false);
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === messageId && msg.thinkingTime == null
+                ? {
+                    ...msg,
+                    thinkingTime: Math.max(
+                      0.1,
+                      Math.round(
+                        (Date.now() - approvalStartTime) / 100,
+                      ) / 10,
+                    ),
+                  }
+                : msg,
+            ),
+          );
         },
       });
     },
-    [currentConversationId, messages],
+    [currentConversationId, messages, selectedDb, selectedModel],
   );
 
   const handleSqlReject = useCallback(
@@ -808,12 +951,17 @@ export default function ChatHome() {
       );
 
       let contentBuffer = "";
+      // 用时统计起点：从点击拒绝到流结束（done/sql_approval/error）的总时长
+      const rejectStartTime = Date.now();
 
       streamChatClient.sqlApproval({
         conversationId: currentConversationId || "",
         sql,
         action: "reject",
         question,
+        // 同 approve：透传当前选中模型，避免重新生成 SQL 时回退默认模型
+        modelType: selectedModel?.modelType,
+        modelName: selectedModel?.name,
         dbName: selectedDb,
         onChunk: (chunk) => {
           switch (chunk.type) {
@@ -843,6 +991,10 @@ export default function ChatHome() {
                         sqlMeaning: chunk.sqlMeaning || undefined,
                         sqlApprovalStatus: "pending" as const,
                         content: "",
+                        thinkingTime: Math.max(
+                          0.1,
+                          Math.round((Date.now() - rejectStartTime) / 100) / 10,
+                        ),
                       }
                     : msg,
                 ),
@@ -903,6 +1055,29 @@ export default function ChatHome() {
               break;
             case "done":
               setIsSqlProcessing(false);
+              // 用时 = 点击拒绝到 done 的总时长；同时回填 token 用量
+              {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === messageId
+                      ? {
+                          ...msg,
+                          ...(chunk.inputTokens != null ||
+                          chunk.outputTokens != null
+                            ? {
+                                inputTokens: chunk.inputTokens ?? undefined,
+                                outputTokens: chunk.outputTokens ?? undefined,
+                              }
+                            : {}),
+                          thinkingTime: Math.max(
+                            0.1,
+                            Math.round((Date.now() - rejectStartTime) / 100) / 10,
+                          ),
+                        }
+                      : msg,
+                  ),
+                );
+              }
               break;
             case "security_block":
               // 重新生成 SQL 后被安全机制拦截
@@ -916,6 +1091,10 @@ export default function ChatHome() {
                           reason: chunk.content || t("chat.errorSqlBlocked"),
                           sql: chunk.sql || undefined,
                         },
+                        thinkingTime: Math.max(
+                          0.1,
+                          Math.round((Date.now() - rejectStartTime) / 100) / 10,
+                        ),
                       }
                     : msg,
                 ),
@@ -931,6 +1110,10 @@ export default function ChatHome() {
                         content: chunk.content || t("chat.errorRegenerationFailed"),
                         pendingSql: undefined,
                         sqlApprovalStatus: undefined,
+                        thinkingTime: Math.max(
+                          0.1,
+                          Math.round((Date.now() - rejectStartTime) / 100) / 10,
+                        ),
                       }
                     : msg,
                 ),
@@ -943,10 +1126,23 @@ export default function ChatHome() {
         },
         onComplete: () => {
           setIsSqlProcessing(false);
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === messageId && msg.thinkingTime == null
+                ? {
+                    ...msg,
+                    thinkingTime: Math.max(
+                      0.1,
+                      Math.round((Date.now() - rejectStartTime) / 100) / 10,
+                    ),
+                  }
+                : msg,
+            ),
+          );
         },
       });
     },
-    [currentConversationId, messages],
+    [currentConversationId, messages, selectedDb, selectedModel],
   );
 
   const handleSqlCancel = useCallback(
@@ -1014,10 +1210,15 @@ export default function ChatHome() {
       const updatedMessages = messages.slice(0, messageIndex);
       setMessages(updatedMessages);
 
-      // 重新发送该用户消息（使用默认模型）
-      handleSendMessage(messageContent);
+      // 重新发送该用户消息（透传当前选中的模型/Agent/数据库，避免回退默认值）
+      handleSendMessage(
+        messageContent,
+        selectedModel || undefined,
+        selectedAgent,
+        selectedDb,
+      );
     },
-    [messages, handleSendMessage],
+    [messages, handleSendMessage, selectedModel, selectedAgent, selectedDb],
   );
 
   const isEmpty = messages.length === 0;
@@ -1169,7 +1370,8 @@ export default function ChatHome() {
             <MessageInput
               variant="footer"
               onSendMessage={handleSendMessage}
-              isStreaming={isTyping}
+              onStop={handleStopStreaming}
+              isStreaming={isTyping || isSqlProcessing}
               selectedDb={selectedDb}
               onDbChange={setSelectedDb}
               selectedModel={selectedModel}

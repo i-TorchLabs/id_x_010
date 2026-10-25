@@ -5,8 +5,7 @@
 
 INSERT INTO external_provider (api_key, llm_base_url, embd_base_url, vl_base_url)
 SELECT 'sk-c0NWVjzh9yAto2piPdsJ0ccHEKzXKjrEmlckXvEuAbdlbo5K',
-       'https://api.chinarouter.net/v1',
-       'https://api.chinarouter.net/v1',
-       'https://api.chinarouter.net/v1'
+       'https://apihk.chinarouter.net/v1',
+       'https://apihk.chinarouter.net/v1',
+       'https://apihk.chinarouter.net/v1'
 WHERE NOT EXISTS (SELECT 1 FROM external_provider);
-

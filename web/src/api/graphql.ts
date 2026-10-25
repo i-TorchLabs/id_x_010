@@ -1491,13 +1491,19 @@ export interface UsageDailyItem {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  inputCostUsd: number;
+  outputCostUsd: number;
   costUsd: number;
 }
 
 export interface UsageModelBreakdownItem {
   modelName: string;
   requestCount: number;
+  inputTokens: number;
+  outputTokens: number;
   totalTokens: number;
+  inputCostUsd: number;
+  outputCostUsd: number;
   costUsd: number;
 }
 
@@ -1510,6 +1516,10 @@ export interface UsageStatsPayload {
     byModel: UsageModelBreakdownItem[];
     totalRequests: number;
     totalTokens: number;
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    totalInputCostUsd: number;
+    totalOutputCostUsd: number;
     totalCostUsd: number;
   };
 }
@@ -1529,16 +1539,26 @@ export const usageGraphqlApi = {
             inputTokens
             outputTokens
             totalTokens
+            inputCostUsd
+            outputCostUsd
             costUsd
           }
           byModel {
             modelName
             requestCount
+            inputTokens
+            outputTokens
             totalTokens
+            inputCostUsd
+            outputCostUsd
             costUsd
           }
           totalRequests
           totalTokens
+          totalInputTokens
+          totalOutputTokens
+          totalInputCostUsd
+          totalOutputCostUsd
           totalCostUsd
         }
       }

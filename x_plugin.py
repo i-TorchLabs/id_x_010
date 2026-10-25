@@ -115,6 +115,65 @@ class _Idx010Plugin:
             # 重新建表
             await conn.run_sync(self.base.metadata.create_all)
 
+        await self._apply_compat_patches(conn)
+        await self._seed_model_prices(conn)
+
+    async def _apply_compat_patches(self, conn: AsyncConnection) -> None:
+        """幂等补齐老表的增量字段（create_all 不会 ALTER 已有表）。
+
+        与 ops/scripts/migrate_compat.sql 保持同步；失败不阻塞启动。
+        """
+        import logging
+
+        logger = logging.getLogger("x_models.id_x_010.x_plugin")
+        try:
+            from sqlalchemy import text
+
+            async with conn.begin_nested():
+                await conn.execute(text(
+                    "ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS "
+                    "input_cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0.0"
+                ))
+                await conn.execute(text(
+                    "ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS "
+                    "output_cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0.0"
+                ))
+        except Exception as e:
+            logger.warning(
+                f"[id_x_010] usage_logs 分项计费列补丁失败（不阻塞启动）: "
+                f"{type(e).__name__}: {e}"
+            )
+
+    async def _seed_model_prices(self, conn: AsyncConnection) -> None:
+        """幂等播种 model_prices 预置价格（与 x_pricing 内置目录同步）。
+
+        仅补充缺失的 model_key，不覆盖管理员已维护的价格；失败不阻塞启动。
+        """
+        import logging
+
+        logger = logging.getLogger("x_models.id_x_010.x_plugin")
+        try:
+            from sqlalchemy import text
+
+            from x_models.id_x_010.src.utils.x_pricing import _PRICING
+
+            async with conn.begin_nested():
+                for key, price in _PRICING:
+                    await conn.execute(
+                        text(
+                            "INSERT INTO model_prices "
+                            "(model_key, input_price_per_1m, output_price_per_1m, enabled) "
+                            "VALUES (:k, :i, :o, TRUE) "
+                            "ON CONFLICT (model_key) DO NOTHING"
+                        ),
+                        {"k": key, "i": price["in"], "o": price["out"]},
+                    )
+        except Exception as e:
+            logger.warning(
+                f"[id_x_010] model_prices 预置价格播种失败（不阻塞启动，"
+                f"计费回退内置目录）: {type(e).__name__}: {e}"
+            )
+
 
 def load_plugin() -> PluginInterface:
     """返回 id_x_010 插件实例。"""

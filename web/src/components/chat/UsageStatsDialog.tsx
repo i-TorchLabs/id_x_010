@@ -38,6 +38,10 @@ interface StatsData {
   byModel: UsageModelBreakdownItem[];
   totalRequests: number;
   totalTokens: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalInputCostUsd: number;
+  totalOutputCostUsd: number;
   totalCostUsd: number;
 }
 
@@ -73,6 +77,40 @@ function formatDateLabel(dateStr: string): string {
   const parts = dateStr.split("-");
   if (parts.length >= 3) return `${parts[1]}-${parts[2]}`;
   return dateStr;
+}
+
+// 把后端返回的稀疏 daily（仅含有记录的日期）补齐为完整连续日期序列。
+// 后端按 UTC 日期聚合（func.date(created_at)），这里同样用 UTC 生成日期键保证对齐。
+// 否则柱子按数组下标排布，日期间隔不均匀、X 轴标签与真实日历错位。
+const MS_PER_DAY = 86_400_000;
+
+function emptyDaily(date: string): UsageDailyItem {
+  return {
+    date,
+    requestCount: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    inputCostUsd: 0,
+    outputCostUsd: 0,
+    costUsd: 0,
+  };
+}
+
+function fillDailyRange(daily: UsageDailyItem[], days: number): UsageDailyItem[] {
+  const map = new Map(daily.map((d) => [d.date, d]));
+  const now = Date.now();
+  const rangeStart = new Date(now - (days - 1) * MS_PER_DAY)
+    .toISOString()
+    .slice(0, 10);
+  // 后端查询起点是 now - days（精确到时刻），可能存在早于 rangeStart 的
+  // "部分日"数据，保留并排在最前，避免总量与柱状图对不上
+  const out: UsageDailyItem[] = daily.filter((d) => d.date < rangeStart);
+  for (let i = days - 1; i >= 0; i--) {
+    const key = new Date(now - i * MS_PER_DAY).toISOString().slice(0, 10);
+    out.push(map.get(key) ?? emptyDaily(key));
+  }
+  return out;
 }
 
 // ── 柱状图（手绘 SVG，framer-motion 动画）──
@@ -182,7 +220,8 @@ function BarChart({
       {/* 柱子 */}
       {daily.map((d, i) => {
         const v = values[i];
-        const barH = v <= 0 ? 0 : (v / maxV) * PLOT_H;
+        // 非零值保证至少 2px 可见高度，避免极小用量在图上"消失"
+        const barH = v <= 0 ? 0 : Math.max((v / maxV) * PLOT_H, 2);
         const x = PAD_L + i * slot + (slot - barW) / 2;
         const y = PAD_T + PLOT_H - barH;
         const isHovered = hovered === i;
@@ -202,15 +241,21 @@ function BarChart({
               fill="transparent"
             />
             {v > 0 && (
+              /* 几何属性（x/y/width/height）全部用静态 SVG attribute 渲染，
+                 仅用 framer-motion 做透明度入场动画。
+                 此前用 motion.rect 动画 height/y：framer-motion 把 animate 里的
+                 y 当作 CSS transform（translateY）而非 rect 的 y 属性处理，
+                 导致柱子几何渲染异常（位置/高度不正确）。 */
               <motion.rect
                 x={x}
+                y={y}
                 width={barW}
+                height={barH}
                 rx={2}
-                initial={{ height: 0, y: PAD_T + PLOT_H }}
-                animate={{ height: barH, y }}
-                transition={{ duration: 0.5, delay: i * 0.012, ease: "easeOut" }}
-                fill={isHovered ? "var(--accent)" : "var(--accent)"}
-                opacity={isHovered ? 1 : 0.82}
+                fill="var(--accent)"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: isHovered ? 1 : 0.82 }}
+                transition={{ duration: 0.35, delay: i * 0.008, ease: "easeOut" }}
               />
             )}
 
@@ -372,6 +417,10 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
           byModel: s.byModel,
           totalRequests: s.totalRequests,
           totalTokens: s.totalTokens,
+          totalInputTokens: s.totalInputTokens,
+          totalOutputTokens: s.totalOutputTokens,
+          totalInputCostUsd: s.totalInputCostUsd,
+          totalOutputCostUsd: s.totalOutputCostUsd,
           totalCostUsd: s.totalCostUsd,
         });
       }
@@ -389,9 +438,15 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
     }
   }, [isOpen, days, load]);
 
+  // 柱状图数据：把稀疏的 daily 补齐为完整连续日期序列（无记录日补 0），
+  // 保证 X 轴按真实日历等距排布
+  const filledDaily = useMemo(
+    () => (data ? fillDailyRange(data.daily, data.days) : []),
+    [data],
+  );
+
   // 模型明细占比条：优先按费用占比；全部模型费用为 0（如免费模型）时退化为按 token 占比
-  const modelRatio = useMemo(() => {
-    const models = data?.byModel ?? [];
+  const modelRatio = useMemo(() => {    const models = data?.byModel ?? [];
     const maxCost = Math.max(...models.map((m) => m.costUsd), 0);
     if (maxCost > 0) {
       return (m: UsageModelBreakdownItem) => m.costUsd / maxCost;
@@ -497,20 +552,18 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
                   <StatCard
                     label={t("usage.cardTokenUsage")}
                     value={formatTokens(data.totalTokens)}
-                    sub={
-                      data.daily.length > 0
-                        ? t("usage.cardTokenUsageSub", {
-                            avg: formatTokens(
-                              Math.round(data.totalTokens / data.days),
-                            ),
-                          })
-                        : undefined
-                    }
+                    sub={t("usage.cardTokenSplitSub", {
+                      input: formatTokens(data.totalInputTokens),
+                      output: formatTokens(data.totalOutputTokens),
+                    })}
                   />
                   <StatCard
                     label={t("usage.cardCost")}
                     value={formatCost(data.totalCostUsd)}
-                    sub={t("usage.cardCostSub")}
+                    sub={t("usage.cardCostSplitSub", {
+                      input: formatCost(data.totalInputCostUsd),
+                      output: formatCost(data.totalOutputCostUsd),
+                    })}
                   />
                 </div>
 
@@ -535,7 +588,7 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
                   >
                     {metric === "tokens" ? t("usage.chartTitleTokens") : t("usage.chartTitleCost")}
                   </div>
-                  <BarChart daily={data.daily} metric={metric} isDark={isDark} />
+                  <BarChart daily={filledDaily} metric={metric} isDark={isDark} />
                 </div>
 
                 {/* 按模型明细 */}
@@ -615,6 +668,17 @@ export function UsageStatsDialog({ isOpen, onOpenChange }: UsageStatsDialogProps
                               </div>
                               <div className="mt-0.5">
                                 {m.requestCount} · {formatCost(m.costUsd)}
+                              </div>
+                              <div
+                                className="mt-0.5"
+                                style={{ fontSize: "11px", color: "var(--fg4)" }}
+                              >
+                                {t("usage.modelInOutDetail", {
+                                  inTokens: formatTokens(m.inputTokens),
+                                  inCost: formatCost(m.inputCostUsd),
+                                  outTokens: formatTokens(m.outputTokens),
+                                  outCost: formatCost(m.outputCostUsd),
+                                })}
                               </div>
                             </div>
                           </div>

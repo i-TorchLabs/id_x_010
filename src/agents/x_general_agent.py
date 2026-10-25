@@ -54,6 +54,74 @@ class StreamingHandler(AsyncCallbackHandler):
             self.tokens.append(token)
 
 
+class _ThinkingTagStreamParser:
+    """跨 chunk 解析 <thinking></thinking> 标签的流式分流器。
+
+    流式 token 会把标签拆碎（实测如 "<" + "th" + "inking>\\n用"），逐 token 的
+    `if "<thinking>" in token` 检测永远匹配不到，导致标签原文和思考内容
+    全部以 content 下发，前端解析后正文为空、气泡空白。
+
+    本类维护一个小缓冲：完整标签出现时立即切换分流状态；缓冲尾部疑似
+    标签前缀（如 "<"、"</think"）时先扣住，等后续 token 拼接后再判定；
+    其余文本原样放行，保证流式低延迟。流结束时调用 flush() 吐出残留。
+    """
+
+    _OPEN = "<thinking>"
+    _CLOSE = "</thinking>"
+
+    def __init__(self) -> None:
+        self._buffer = ""
+        self.in_thinking = False
+
+    def _channel(self) -> str:
+        return "thinking" if self.in_thinking else "content"
+
+    def _partial_suffix_len(self) -> int:
+        """缓冲尾部与标签前缀的最长匹配长度（需扣住等待后续 token）。"""
+        max_len = min(len(self._buffer), len(self._CLOSE) - 1)
+        for length in range(max_len, 0, -1):
+            suffix = self._buffer[-length:]
+            if self._OPEN.startswith(suffix) or self._CLOSE.startswith(suffix):
+                return length
+        return 0
+
+    def feed(self, token: str) -> List[Tuple[str, str]]:
+        self._buffer += token
+        out: List[Tuple[str, str]] = []
+        while self._buffer:
+            tag = self._CLOSE if self.in_thinking else self._OPEN
+            idx = self._buffer.find(tag)
+            if idx != -1:
+                text = self._buffer[:idx]
+                if text:
+                    out.append((self._channel(), text))
+                self._buffer = self._buffer[idx + len(tag):]
+                self.in_thinking = not self.in_thinking
+                continue
+            keep = self._partial_suffix_len()
+            emit_end = len(self._buffer) - keep
+            if emit_end > 0:
+                out.append((self._channel(), self._buffer[:emit_end]))
+                self._buffer = self._buffer[emit_end:]
+            break
+        return out
+
+    def flush(self) -> List[Tuple[str, str]]:
+        out: List[Tuple[str, str]] = []
+        if self._buffer:
+            # 流被上游截断时，暂扣的残留可能是纯标签前缀（如 "<thin"、"</think"）。
+            # 这类残片是标签语法而非正文，下发会在前端渲染成乱码——丢弃。
+            # 仅保留单个 "<"（可能是正文中的小于号，误杀代价更高）。
+            is_tag_fragment = len(self._buffer) >= 2 and (
+                self._OPEN.startswith(self._buffer)
+                or self._CLOSE.startswith(self._buffer)
+            )
+            if not is_tag_fragment:
+                out.append((self._channel(), self._buffer))
+            self._buffer = ""
+        return out
+
+
 # TASK-007：可选 metrics，缺失 prometheus_client 时静默跳过
 try:
     from x_models.id_x_010.src.utils.x_metrics import LLM_CALLS, LLM_LATENCY
@@ -211,6 +279,9 @@ class GeneralAgent:
                 base_url=local_base_url,
                 temperature=temperature,
                 streaming=True,
+                # 本地模型不计费，但 token 用量仍需统计/展示；
+                # 端点不支持时会忽略该参数，降级为无用量（非致命）
+                stream_usage=True,
             )
 
     @staticmethod
@@ -262,7 +333,10 @@ class GeneralAgent:
             "messages": payload_messages,
             "stream": True,
             "temperature": temperature,
-            "stream_usage": True,
+            # OpenAI 兼容端点的标准用量参数：流式末块附带 usage。
+            # 之前误用 langchain 专属的 stream_usage 参数，端点不识别导致
+            # usage 永远为空 → 气泡 token 展示与 usage_logs 计费全部为 0。
+            "stream_options": {"include_usage": True},
         }
 
         raw_usage = None
@@ -279,6 +353,15 @@ class GeneralAgent:
                         break
                     try:
                         chunk = _json.loads(data)
+                        # 用量必须在 choices 判空之前读取：include_usage 的末块
+                        # choices 为空数组，之前先 continue 导致 usage 永远读不到
+                        usage = chunk.get("usage")
+                        if isinstance(usage, dict):
+                            raw_usage = {
+                                "input_tokens": usage.get("prompt_tokens", 0) or 0,
+                                "output_tokens": usage.get("completion_tokens", 0) or 0,
+                                "total_tokens": usage.get("total_tokens", 0) or 0,
+                            }
                         choices = chunk.get("choices") or []
                         if not choices:
                             continue
@@ -289,15 +372,6 @@ class GeneralAgent:
                             yield ("thinking", reasoning)
                         if content:
                             yield ("content", content)
-
-                        usage = chunk.get("usage")
-                        if isinstance(usage, dict):
-                            usage_meta = {
-                                "input_tokens": usage.get("prompt_tokens", 0) or 0,
-                                "output_tokens": usage.get("completion_tokens", 0) or 0,
-                                "total_tokens": usage.get("total_tokens", 0) or 0,
-                            }
-                            raw_usage = usage_meta
                     except (_json.JSONDecodeError, KeyError, IndexError):
                         continue
 
@@ -403,7 +477,7 @@ class GeneralAgent:
         query: str,
         context: Optional[List[Dict[str, str]]] = None,
         system_prompt: Optional[str] = None,
-    ) -> AsyncGenerator[Dict[str, str], None]:
+    ) -> AsyncGenerator[Dict[str, Any], None]:
         messages = []
 
         if system_prompt:
@@ -419,11 +493,10 @@ class GeneralAgent:
         messages.append(HumanMessage(content=query))
 
         _started = time.perf_counter()
-        # TASK-015: 初始化 in_thinking，避免 ReAct path 首个 token 不含
-        # <thinking> 标签时 line 379 `if in_thinking` 抛 UnboundLocalError，
-        # 导致每次 General Agent 调用都异常降级到 LLM.astream fallback，
-        # 前端表现为"一直思考中"——ReAct 流中断后重新发起 LLM 调用期间卡住。
-        in_thinking = False
+        # TASK-015: 跨 chunk 标签解析器——流式 token 会把 <thinking> 拆碎成
+        # "<"+"th"+"inking>"，逐 token 的 `in` 检测匹配不到，导致标签和思考
+        # 内容全部走 content 通道，前端解析后气泡空白。
+        _react_parser = _ThinkingTagStreamParser()
 
         # ReAct 模式：通过 astream_events 拿到 token 级流 + tool_call 事件。
         # 先探测 v2（langgraph >=0.2.x 推荐）可用性——某些旧版本只支持 v1。
@@ -443,6 +516,7 @@ class GeneralAgent:
 
             try:
                 _react_produced = False
+                _react_usage = None
                 async for evt in self.agent.astream_events(
                     {"messages": messages}, version=events_version
                 ):
@@ -485,6 +559,10 @@ class GeneralAgent:
                         kind in ("on_chat_model_stream", "on_llm_stream")
                         and chunk is not None
                     ):
+                        # 捕获 token 用量：stream_usage=True 时末块携带 usage_metadata
+                        _meta = getattr(chunk, "usage_metadata", None)
+                        if isinstance(_meta, dict):
+                            _react_usage = _meta
                         token = getattr(chunk, "content", "")
                         if isinstance(token, list):
                             token = "".join(
@@ -512,33 +590,26 @@ class GeneralAgent:
                         if not token:
                             continue
 
-                        if "<thinking>" in token:
-                            in_thinking = True
-                            token = token.replace("<thinking>", "")
-                        if "</thinking>" in token:
-                            in_thinking = False
-                            token = token.replace("</thinking>", "")
-                        if not token:
-                            continue
-
-                        _react_produced = True
-                        if in_thinking:
+                        for _ch, _text in _react_parser.feed(token):
+                            _react_produced = True
                             yield {
-                                "type": "thinking",
-                                "content": token,
-                                "model_used": self.model_name,
-                            }
-                        else:
-                            yield {
-                                "type": "content",
-                                "content": token,
+                                "type": _ch,
+                                "content": _text,
                                 "model_used": self.model_name,
                             }
                         continue
 
-                # TASK-015: ReAct path 循环结束。如果产出了 token（content/thinking），
+                # TASK-015: ReAct path 循环结束。吐出解析器残留（末尾疑似标签
+                # 前缀的文本），再判断是否产出过 token。
                 # 正常 done + return；否则降级到下方 raw httpx 方法重新调用 LLM。
                 # 这处理 reasoning 模型 token 全被 langchain 丢弃的场景。
+                for _ch, _text in _react_parser.flush():
+                    _react_produced = True
+                    yield {
+                        "type": _ch,
+                        "content": _text,
+                        "model_used": self.model_name,
+                    }
                 if _react_produced:
                     _observe_llm(
                         self.model_name, "general", "success", time.perf_counter() - _started
@@ -546,7 +617,7 @@ class GeneralAgent:
                     yield {
                         "type": "done",
                         "model_used": self.model_name,
-                        "usage": None,
+                        "usage": _react_usage,
                     }
                     return
                 else:
@@ -571,7 +642,7 @@ class GeneralAgent:
         # raw 方法成功时直接 return；失败则降级到下方 langchain astream 路径。
         try:
             _raw_produced = False
-            _raw_in_thinking = False
+            _raw_parser = _ThinkingTagStreamParser()
             _raw_usage = None
             async for chunk_type, token in self._stream_llm_raw(messages):
                 if chunk_type == "usage":
@@ -588,26 +659,20 @@ class GeneralAgent:
                         "model_used": self.model_name,
                     }
                 else:
-                    if "<thinking>" in token:
-                        _raw_in_thinking = True
-                        token = token.replace("<thinking>", "")
-                    if "</thinking>" in token:
-                        _raw_in_thinking = False
-                        token = token.replace("</thinking>", "")
-                    if not token:
-                        continue
-                    if _raw_in_thinking:
+                    # content 通道可能内嵌被拆碎的 <thinking> 标签，走跨 chunk 解析
+                    for _ch, _text in _raw_parser.feed(token):
                         yield {
-                            "type": "thinking",
-                            "content": token,
+                            "type": _ch,
+                            "content": _text,
                             "model_used": self.model_name,
                         }
-                    else:
-                        yield {
-                            "type": "content",
-                            "content": token,
-                            "model_used": self.model_name,
-                        }
+            for _ch, _text in _raw_parser.flush():
+                _raw_produced = True
+                yield {
+                    "type": _ch,
+                    "content": _text,
+                    "model_used": self.model_name,
+                }
             if _raw_produced:
                 _observe_llm(
                     self.model_name,
@@ -628,6 +693,7 @@ class GeneralAgent:
                     f"{get_request_id()}模型限制 temperature=1，raw 重试 [stream_chat]: model={self.model_name}"
                 )
                 _retry_produced = False
+                _retry_parser = _ThinkingTagStreamParser()
                 _retry_usage = None
                 try:
                     async for chunk_type, token in self._stream_llm_raw(
@@ -647,17 +713,19 @@ class GeneralAgent:
                                 "model_used": self.model_name,
                             }
                         else:
-                            if "<thinking>" in token:
-                                token = token.replace("<thinking>", "")
-                            if "</thinking>" in token:
-                                token = token.replace("</thinking>", "")
-                            if not token:
-                                continue
-                            yield {
-                                "type": "content",
-                                "content": token,
-                                "model_used": self.model_name,
-                            }
+                            for _ch, _text in _retry_parser.feed(token):
+                                yield {
+                                    "type": _ch,
+                                    "content": _text,
+                                    "model_used": self.model_name,
+                                }
+                    for _ch, _text in _retry_parser.flush():
+                        _retry_produced = True
+                        yield {
+                            "type": _ch,
+                            "content": _text,
+                            "model_used": self.model_name,
+                        }
                     if _retry_produced:
                         _observe_llm(
                             self.model_name,
@@ -682,8 +750,7 @@ class GeneralAgent:
                     f"{type(_raw_e).__name__}: {_raw_e}"
                 )
 
-        thinking_buffer = []
-        in_thinking = False
+        _lc_parser = _ThinkingTagStreamParser()
         usage_meta = None
 
         try:
@@ -701,7 +768,6 @@ class GeneralAgent:
                 if not token:
                     token = _extract_reasoning(chunk)
                     if token:
-                        thinking_buffer.append(token)
                         yield {
                             "type": "thinking",
                             "content": token,
@@ -715,28 +781,22 @@ class GeneralAgent:
                 if isinstance(meta, dict):
                     usage_meta = meta
 
-                if "<thinking>" in token:
-                    in_thinking = True
-                    token = token.replace("<thinking>", "")
+                if not token:
+                    continue
 
-                if "</thinking>" in token:
-                    in_thinking = False
-                    token = token.replace("</thinking>", "")
+                for _ch, _text in _lc_parser.feed(token):
+                    yield {
+                        "type": _ch,
+                        "content": _text,
+                        "model_used": self.model_name,
+                    }
 
-                if token:
-                    if in_thinking:
-                        thinking_buffer.append(token)
-                        yield {
-                            "type": "thinking",
-                            "content": token,
-                            "model_used": self.model_name,
-                        }
-                    else:
-                        yield {
-                            "type": "content",
-                            "content": token,
-                            "model_used": self.model_name,
-                        }
+            for _ch, _text in _lc_parser.flush():
+                yield {
+                    "type": _ch,
+                    "content": _text,
+                    "model_used": self.model_name,
+                }
 
             _observe_llm(
                 self.model_name, "general", "success", time.perf_counter() - _started
@@ -754,9 +814,8 @@ class GeneralAgent:
                     f"{get_request_id()}模型限制 temperature=1，回退重试 [stream_chat]: model={self.model_name}"
                 )
                 self.llm = self._create_llm(temperature=1.0)
-                # 清空 buffer，重新开始流式生成
-                thinking_buffer = []
-                in_thinking = False
+                # 重置解析器，重新开始流式生成
+                _lc_parser = _ThinkingTagStreamParser()
                 usage_meta = None
                 async for chunk in self.llm.astream(messages):
                     token = chunk.content
@@ -771,28 +830,22 @@ class GeneralAgent:
                     if isinstance(meta, dict):
                         usage_meta = meta
 
-                    if "<thinking>" in token:
-                        in_thinking = True
-                        token = token.replace("<thinking>", "")
+                    if not token:
+                        continue
 
-                    if "</thinking>" in token:
-                        in_thinking = False
-                        token = token.replace("</thinking>", "")
+                    for _ch, _text in _lc_parser.feed(token):
+                        yield {
+                            "type": _ch,
+                            "content": _text,
+                            "model_used": self.model_name,
+                        }
 
-                    if token:
-                        if in_thinking:
-                            thinking_buffer.append(token)
-                            yield {
-                                "type": "thinking",
-                                "content": token,
-                                "model_used": self.model_name,
-                            }
-                        else:
-                            yield {
-                                "type": "content",
-                                "content": token,
-                                "model_used": self.model_name,
-                            }
+                for _ch, _text in _lc_parser.flush():
+                    yield {
+                        "type": _ch,
+                        "content": _text,
+                        "model_used": self.model_name,
+                    }
 
                 _observe_llm(
                     self.model_name,

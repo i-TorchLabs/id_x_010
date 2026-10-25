@@ -1343,6 +1343,11 @@ class SQLAgent:
 
         self.llm = self._create_llm()
 
+        # 本轮 token 用量累加器：SQL 链路有多次独立 LLM 调用（意图/生成/
+        # 校验/含义/解读/图表），逐次累加后随 done chunk 下发，供气泡
+        # meta 展示与 usage_logs 计费。每次请求新建 SQLAgent 实例，天然按轮隔离。
+        self._usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
         self.db = DatabaseConnection(
             host=db_host,
             port=db_port,
@@ -1355,6 +1360,9 @@ class SQLAgent:
         self._toolkit: Optional[SQLDatabaseToolkit] = None
         self._graph: Optional[CompiledStateGraph] = None
         self._schema_cache: Optional[str] = None
+        # 模型是否支持强制工具调用（tool_choice="any"）：None=未探测，
+        # False=不支持（部分中转网关/Anthropic 系模型仅支持 auto，强制会报 400）
+        self._supports_forced_tool_choice: Optional[bool] = None
 
         logger.info(
             f"{get_request_id()}SQLAgent 初始化完成: model={self.model_name}, db_name={self.db_name}"
@@ -1369,7 +1377,31 @@ class SQLAgent:
             base_url=self.base_url,
             temperature=0.1,
             streaming=True,
+            # 让 astream 末块携带 usage_metadata（转换为 stream_options.include_usage），
+            # 否则 _stream_explanation 的流式解读永远统计不到 token
+            stream_usage=True,
         )
+
+    def _track_usage(self, response: Any) -> None:
+        """累加单次 LLM 响应的 token 用量（best-effort，缺 usage_metadata 时静默跳过）。"""
+        try:
+            meta = getattr(response, "usage_metadata", None)
+            if isinstance(meta, dict):
+                self._usage["input_tokens"] += int(meta.get("input_tokens", 0) or 0)
+                self._usage["output_tokens"] += int(meta.get("output_tokens", 0) or 0)
+                self._usage["total_tokens"] += int(meta.get("total_tokens", 0) or 0)
+        except Exception:  # pragma: no cover - 统计不影响主链路
+            pass
+
+    def _usage_snapshot(self) -> Optional[Dict[str, int]]:
+        """当前累计用量快照；全 0（未获得任何 usage）时返回 None 不下发。"""
+        if (
+            self._usage["input_tokens"]
+            or self._usage["output_tokens"]
+            or self._usage["total_tokens"]
+        ):
+            return dict(self._usage)
+        return None
 
     async def _initialize_tools(self):
         if self._tools:
@@ -1491,13 +1523,25 @@ class SQLAgent:
             "type": "tool_call",
         }
         tool_call_message = AIMessage(content="", tool_calls=[tool_call])
+        # tool_call 必须有配对的 ToolMessage，否则严格网关（Anthropic 系）
+        # 会拒绝后续携带该历史的请求
+        tool_response_message = ToolMessage(
+            content=f"可用表: {', '.join(tables)}",
+            tool_call_id="list_tables_call",
+        )
 
         response_message = AIMessage(f"可用表: {', '.join(tables)}")
 
         return {
             "tables": tables,
-            "messages": [tool_call_message, response_message],
+            "messages": [tool_call_message, tool_response_message, response_message],
         }
+
+    @staticmethod
+    def _is_tool_choice_error(err: Exception) -> bool:
+        # 中转网关对不支持的 tool_choice 类型返回 400，错误文本形如：
+        # tool_choice: type "tool" and "any" are not supported for this model
+        return "tool_choice" in str(err).lower()
 
     async def _call_get_schema_node(self, state: SQLAgentState) -> Dict[str, Any]:
         question = state.get(
@@ -1509,16 +1553,39 @@ class SQLAgent:
         )
 
         if get_schema_tool:
-            llm_with_tools = self.llm.bind_tools([get_schema_tool], tool_choice="any")
             prompt = f"用户问题: {question}\n\n请确定需要查询哪些表的 schema。"
-            response = await llm_with_tools.ainvoke(
-                [
-                    SystemMessage(
-                        content="你是数据库专家，需要确定哪些表与用户问题相关。"
-                    ),
-                    HumanMessage(content=prompt),
-                ]
-            )
+            messages = [
+                SystemMessage(
+                    content="你是数据库专家，需要确定哪些表与用户问题相关。"
+                ),
+                HumanMessage(content=prompt),
+            ]
+
+            # 优先强制调用工具（tool_choice="any"）提高 schema 选表可靠性；
+            # 若模型/网关不支持强制模式（报 400）则回退 auto，并记住结果
+            # 避免同一实例后续请求重复撞 400。未发起 tool call 的情况
+            # 由 _get_schema_node 的向量召回/全 schema 兑底逻辑兼容。
+            if self._supports_forced_tool_choice is not False:
+                try:
+                    llm_with_tools = self.llm.bind_tools(
+                        [get_schema_tool], tool_choice="any"
+                    )
+                    response = await llm_with_tools.ainvoke(messages)
+                    self._track_usage(response)
+                    self._supports_forced_tool_choice = True
+                    return {"messages": [response]}
+                except Exception as e:
+                    if not self._is_tool_choice_error(e):
+                        raise
+                    self._supports_forced_tool_choice = False
+                    logger.info(
+                        f"{get_request_id()}模型不支持 tool_choice=any，"
+                        f"回退 auto 模式: {type(e).__name__}: {e}"
+                    )
+
+            llm_with_tools = self.llm.bind_tools([get_schema_tool])
+            response = await llm_with_tools.ainvoke(messages)
+            self._track_usage(response)
             return {"messages": [response]}
 
         schema = await self.db.get_schema_info()
@@ -1634,6 +1701,7 @@ class SQLAgent:
                     HumanMessage(content=prompt),
                 ]
             )
+            self._track_usage(response)
             raw = self._content_to_str(response.content).strip()
             # 兼容 ```json ... ``` 包裹
             if "```json" in raw:
@@ -1761,12 +1829,22 @@ class SQLAgent:
         else:
             llm_with_tools = self.llm
 
-        response = await llm_with_tools.ainvoke(
-            [
-                SystemMessage(content=system_prompt),
-                *state["messages"],
-            ]
-        )
+        # 历史末尾可能是 AIMessage（如 schema 兑底内容），Anthropic 系网关
+        # 要求对话必须以 user 消息结尾，否则报
+        # "does not support assistant message prefill" 400 —— 补一条引导消息
+        gen_messages: List[Any] = [
+            SystemMessage(content=system_prompt),
+            *state["messages"],
+        ]
+        if not isinstance(gen_messages[-1], HumanMessage):
+            gen_messages.append(
+                HumanMessage(
+                    content="请根据以上表结构信息，为我的问题生成 SQL 查询。"
+                )
+            )
+
+        response = await llm_with_tools.ainvoke(gen_messages)
+        self._track_usage(response)
 
         sql = ""
         natural_answer = ""
@@ -1821,12 +1899,22 @@ class SQLAgent:
 如果 SQL 没有问题，请回复'SQL检查通过'。
 如果有问题，请说明问题并给出修正后的 SQL。"""
 
-        response = await self.llm.ainvoke(
-            [
-                SystemMessage(content="你是 SQL 专家，负责检查 SQL 查询的正确性。"),
-                HumanMessage(content=check_prompt),
-            ]
-        )
+        # 非致命：检查环节的 LLM 调用可能撞上网关间歇性 503（负载均衡
+        # 部分通道不可用）。此时沿用原 SQL 继续链路，而不是让整条流崩掉。
+        try:
+            response = await self.llm.ainvoke(
+                [
+                    SystemMessage(content="你是 SQL 专家，负责检查 SQL 查询的正确性。"),
+                    HumanMessage(content=check_prompt),
+                ]
+            )
+            self._track_usage(response)
+        except Exception as e:
+            logger.warning(
+                f"{get_request_id()}SQL 检查 LLM 调用失败（非致命，沿用原 SQL）: "
+                f"{type(e).__name__}: {e}"
+            )
+            return {"sql": sql, "messages": [last_message]}
 
         response_content = self._content_to_str(response.content)
 
@@ -1944,6 +2032,7 @@ class SQLAgent:
                     ),
                 ]
             )
+            self._track_usage(meaning_resp)
             return self._content_to_str(meaning_resp.content).strip()
         except Exception as e:
             logger.warning(
@@ -2104,6 +2193,7 @@ class SQLAgent:
 
         try:
             response = await self.llm.ainvoke(messages)
+            self._track_usage(response)
         except Exception as e:
             logger.error(
                 f"{get_request_id()}第三方模型调用失败 [sql._explain_result] | model={self.model_name}, "
@@ -2251,6 +2341,7 @@ class SQLAgent:
                                 "sql": "",
                                 "answer": natural_answer,
                                 "model_used": self.model_name,
+                                "usage": self._usage_snapshot(),
                             }
                             _observe_llm(
                                 self.model_name, "sql", "success", time.perf_counter() - _started
@@ -2286,6 +2377,7 @@ class SQLAgent:
                                 "sql": sql,
                                 "answer": "",
                                 "model_used": self.model_name,
+                                "usage": self._usage_snapshot(),
                             }
                         else:
                             yield {
@@ -2421,6 +2513,7 @@ class SQLAgent:
                     "answer": answer,
                     "row_count": len(data),
                     "model_used": self.model_name,
+                    "usage": self._usage_snapshot(),
                 }
             elif error:
                 _observe_llm(
@@ -2432,6 +2525,7 @@ class SQLAgent:
                     "answer": f"查询失败: {error}",
                     "error": error,
                     "model_used": self.model_name,
+                    "usage": self._usage_snapshot(),
                 }
 
         except Exception as e:
@@ -2472,6 +2566,9 @@ class SQLAgent:
 
         try:
             async for chunk in self.llm.astream(messages):
+                # stream_usage=True 时末块携带 usage_metadata（content 为空），
+                # 在 token 处理前累加，保证流式解读的用量不丢
+                self._track_usage(chunk)
                 token = chunk.content
 
                 if isinstance(token, list):
@@ -2699,6 +2796,7 @@ class SQLAgent:
                     HumanMessage(content=prompt),
                 ]
             )
+            self._track_usage(response)
             raw = self._content_to_str(response.content).strip()
 
             # 兼容 ```json ... ``` 包裹
@@ -2873,6 +2971,7 @@ class SQLAgent:
                     "sql": sql,
                     "answer": "",
                     "model_used": self.model_name,
+                    "usage": self._usage_snapshot(),
                 }
                 return
 
@@ -2930,6 +3029,7 @@ class SQLAgent:
                         "answer": answer,
                         "row_count": len(rows),
                         "model_used": self.model_name,
+                        "usage": self._usage_snapshot(),
                     }
                     _observe_llm(
                         self.model_name, "sql", "success", time.perf_counter() - _started
@@ -2941,6 +3041,7 @@ class SQLAgent:
                         "answer": "查询结果为空",
                         "row_count": 0,
                         "model_used": self.model_name,
+                        "usage": self._usage_snapshot(),
                     }
                     _observe_llm(
                         self.model_name, "sql", "success", time.perf_counter() - _started

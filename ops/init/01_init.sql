@@ -397,6 +397,8 @@ CREATE TABLE IF NOT EXISTS usage_logs (
     input_tokens INTEGER NOT NULL DEFAULT 0,
     output_tokens INTEGER NOT NULL DEFAULT 0,
     total_tokens INTEGER NOT NULL DEFAULT 0,
+    input_cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    output_cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -414,8 +416,36 @@ COMMENT ON COLUMN usage_logs.intent IS '识别的意图（general/sql/code）';
 COMMENT ON COLUMN usage_logs.input_tokens IS '输入 token 数';
 COMMENT ON COLUMN usage_logs.output_tokens IS '输出 token 数';
 COMMENT ON COLUMN usage_logs.total_tokens IS '总 token 数';
-COMMENT ON COLUMN usage_logs.cost_usd IS '估算花费（USD），本地模型为 0';
+COMMENT ON COLUMN usage_logs.input_cost_usd IS '输入 token 花费（USD），本地模型为 0';
+COMMENT ON COLUMN usage_logs.output_cost_usd IS '输出 token 花费（USD），本地模型为 0';
+COMMENT ON COLUMN usage_logs.cost_usd IS '估算花费（USD）= 输入 + 输出，本地模型为 0';
 COMMENT ON COLUMN usage_logs.created_at IS '创建时间';
+
+-- ============================================
+-- 11b. 模型价格表 (model_prices)
+--     记录不同模型 input / output 单价（USD / 1M tokens），
+--     计费时按 model_key 小写子串匹配（最长匹配优先）；
+--     未命中时回退到应用内置目录（src/utils/x_pricing.py）
+-- ============================================
+CREATE TABLE IF NOT EXISTS model_prices (
+    id SERIAL PRIMARY KEY,
+    model_key VARCHAR(128) NOT NULL UNIQUE,
+    input_price_per_1m DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    output_price_per_1m DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ix_model_prices_model_key ON model_prices(model_key);
+
+COMMENT ON TABLE model_prices IS '模型价格表（USD / 1M tokens）';
+COMMENT ON COLUMN model_prices.model_key IS '模型名称匹配串（小写，子串匹配，最长匹配优先）';
+COMMENT ON COLUMN model_prices.input_price_per_1m IS '输入价格（USD / 1M tokens）';
+COMMENT ON COLUMN model_prices.output_price_per_1m IS '输出价格（USD / 1M tokens）';
+COMMENT ON COLUMN model_prices.enabled IS '是否启用（停用后回退内置目录）';
+
+-- 预置价格数据已迁移至 08_model_prices.sql（与网关实际可用模型同步）
 
 -- ============================================
 -- 12. SSO 单点登录配置表 (sso_settings)

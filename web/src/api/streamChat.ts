@@ -39,6 +39,10 @@ export interface StreamChunk {
   toolName?: string | null;
   /** 工具输出摘要：tool_call end chunk 携带，便于前端展示简短结果 */
   toolOutput?: string | null;
+  /** 本轮输入 token 数：done chunk 携带（模型未返回用量时为 null） */
+  inputTokens?: number | null;
+  /** 本轮输出 token 数：done chunk 携带（模型未返回用量时为 null） */
+  outputTokens?: number | null;
 }
 
 export interface ChartConfig {
@@ -146,6 +150,8 @@ class StreamChatClient {
           securityBlock
           toolName
           toolOutput
+          inputTokens
+          outputTokens
         }
       }
     `;
@@ -275,6 +281,8 @@ class StreamChatClient {
                     securityBlock: streamChat.securityBlock ?? null,
                     toolName: streamChat.toolName ?? null,
                     toolOutput: streamChat.toolOutput ?? null,
+                    inputTokens: streamChat.inputTokens ?? null,
+                    outputTokens: streamChat.outputTokens ?? null,
                   });
                 } catch (e) {
                   console.error("onChunk callback threw:", e);
@@ -297,6 +305,7 @@ class StreamChatClient {
     } catch (error) {
       if ((error as Error).name === "AbortError") {
         console.log("Stream chat aborted");
+        onComplete?.();
         return () => {};
       }
       console.error("Stream chat error:", error);
@@ -328,8 +337,8 @@ class StreamChatClient {
     onError?: (error: Error) => void;
     onComplete?: () => void;
   }): Promise<() => void> {
-    const abortController = new AbortController();
-    const { signal } = abortController;
+    this.abortController = new AbortController();
+    const { signal } = this.abortController;
 
     const baseUrl = BASE_URL.replace(/\/graphql.*$/, "");
     const url = `${baseUrl}/b/id_x_010/sql-approval`;
@@ -406,6 +415,8 @@ class StreamChatClient {
                     : data.chart_config
                   : null,
                 securityBlock: data.security_block ?? null,
+                inputTokens: data.input_tokens ?? null,
+                outputTokens: data.output_tokens ?? null,
               });
 
               if (
@@ -426,6 +437,7 @@ class StreamChatClient {
       params.onComplete?.();
     } catch (error) {
       if ((error as Error).name === "AbortError") {
+        params.onComplete?.();
         return () => {};
       }
       console.error("SQL approval error:", error);
@@ -436,7 +448,7 @@ class StreamChatClient {
       params.onError?.(error as Error);
     }
 
-    return () => abortController.abort();
+    return () => this.abort();
   }
 
   /**

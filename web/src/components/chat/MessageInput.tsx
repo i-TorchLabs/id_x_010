@@ -22,6 +22,7 @@ interface MessageInputProps {
     agentType?: AgentType,
     dbName?: string | null,
   ) => void;
+  onStop?: () => void;
   variant?: Variant;
   dark?: boolean;
   isStreaming?: boolean;
@@ -42,6 +43,7 @@ interface MessageInputProps {
 
 export function MessageInput({
   onSendMessage,
+  onStop,
   variant = "footer",
   isStreaming = false,
   selectedDb = null,
@@ -138,9 +140,35 @@ export function MessageInput({
         viewBox="0 0 20 20"
       >
         <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+       </svg>
+    </Button>
+  );
+
+  const renderStopButton = (isSmall: boolean) => (
+    <Button
+      isIconOnly
+      variant="primary"
+      size={isSmall ? "sm" : "md"}
+      onPress={onStop}
+      aria-label={t("chat.ariaStop")}
+      className="rounded-full"
+      style={{
+        boxShadow: "var(--shadow-inset), var(--shadow-md)",
+        transition: "opacity 180ms ease, box-shadow 180ms ease, transform 180ms ease",
+      }}
+    >
+      <svg
+        className={isSmall ? "w-4 h-4" : "w-5 h-5"}
+        fill="currentColor"
+        viewBox="0 0 20 20"
+      >
+        <rect x="5" y="5" width="10" height="10" rx="2" />
       </svg>
     </Button>
   );
+
+  const renderSendOrStopButton = (isSmall: boolean) =>
+    isStreaming && onStop ? renderStopButton(isSmall) : renderSendButton(isSmall);
 
   if (variant === "hero") {
     return (
@@ -216,7 +244,7 @@ export function MessageInput({
                     size="small"
                   />
 
-                  {renderSendButton(false)}
+                  {renderSendOrStopButton(false)}
                 </div>
 
                 {/* TASK-015：图片上传按钮（左下角），上传成功后插入 [image:ID] 占位 */}
@@ -312,7 +340,7 @@ export function MessageInput({
                   size="small"
                 />
 
-                {renderSendButton(true)}
+                {renderSendOrStopButton(true)}
               </div>
 
               {/* TASK-015：图片上传按钮（左下角），上传成功后插入 [image:ID] 占位 */}

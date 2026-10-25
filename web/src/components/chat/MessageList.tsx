@@ -37,6 +37,10 @@ type Message = {
     intent?: string;
     reason?: string;
   };
+  /** 本轮输入 token 数（done chunk 携带，透传给 ChatMessage 渲染底部用量） */
+  inputTokens?: number;
+  /** 本轮输出 token 数（done chunk 携带，透传给 ChatMessage 渲染底部用量） */
+  outputTokens?: number;
 };
 
 interface MessageListProps {

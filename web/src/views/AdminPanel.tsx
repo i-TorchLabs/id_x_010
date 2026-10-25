@@ -1,10 +1,11 @@
 "use client";
 
 /**
- * 后台管理面板 — 3 个页签
+ * 后台管理面板 — 4 个页签
  * 1. 系统模型管理：CRUD system_model_settings
  * 2. 用户管理：用户列表 + 系统模型配额设置 + 密码重置
  * 3. 资费管理：按用户查看系统模型用量与配额使用情况
+ * 4. 模型价格：CRUD model_prices（input / output 单价，USD / 1M tokens）
  */
 
 import { useEffect, useState, useCallback } from "react";
@@ -53,8 +54,13 @@ interface AdminUsage {
   systemModelQuotaUsd: number | null;
   monthCostUsd: number; monthRequests: number; totalCostUsd: number;
 }
+interface ModelPrice {
+  id: number; modelKey: string;
+  inputPricePer1m: number; outputPricePer1m: number;
+  enabled: boolean; updatedAt?: string | null;
+}
 
-type Tab = "models" | "users" | "billing";
+type Tab = "models" | "users" | "billing" | "prices";
 type Feedback = { kind: "ok" | "err"; text: string } | null;
 
 // ════════════════════════════════════════════════════════════
@@ -91,6 +97,7 @@ export function AdminPanel() {
     { key: "models", label: t("admin.tabModels") },
     { key: "users", label: t("admin.tabUsers") },
     { key: "billing", label: t("admin.tabBilling") },
+    { key: "prices", label: t("admin.tabPrices") },
   ];
 
   return (
@@ -152,6 +159,7 @@ export function AdminPanel() {
         {tab === "models" && <SystemModelsTab onFeedback={setFeedback} />}
         {tab === "users" && <UsersTab onFeedback={setFeedback} />}
         {tab === "billing" && <BillingTab onFeedback={setFeedback} />}
+        {tab === "prices" && <ModelPricesTab onFeedback={setFeedback} />}
       </div>
     </div>
   );
@@ -761,6 +769,169 @@ function BillingTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+// Tab 4: Model Prices Management (model_prices, USD / 1M tokens)
+// ════════════════════════════════════════════════════════════
+
+function ModelPricesTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) {
+  const { t } = useI18n();
+  const { handleProps: dragHandleProps } = useDraggableDialog();
+  const [prices, setPrices] = useState<ModelPrice[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [editing, setEditing] = useState<ModelPrice | null>(null);
+  const [inputPriceDraft, setInputPriceDraft] = useState("");
+  const [outputPriceDraft, setOutputPriceDraft] = useState("");
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await gql<{ modelPrices: { success: boolean; message: string; prices: ModelPrice[] } }>(
+        `query { modelPrices { success message prices { id modelKey inputPricePer1m outputPricePer1m enabled updatedAt } } }`,
+      );
+      if (!data.modelPrices.success) throw new Error(data.modelPrices.message);
+      setPrices(data.modelPrices.prices);
+    } catch (e) { onFeedback({ kind: "err", text: (e as Error).message }); }
+    finally { setLoading(false); }
+  }, [onFeedback]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const openAdd = () => {
+    setEditing({ id: 0, modelKey: "", inputPricePer1m: 0, outputPricePer1m: 0, enabled: true });
+    setInputPriceDraft("");
+    setOutputPriceDraft("");
+    setIsModalOpen(true);
+  };
+  const openEdit = (p: ModelPrice) => {
+    setEditing(p);
+    setInputPriceDraft(String(p.inputPricePer1m));
+    setOutputPriceDraft(String(p.outputPricePer1m));
+    setIsModalOpen(true);
+  };
+
+  const handleSave = async () => {
+    if (!editing) return;
+    const modelKey = editing.modelKey.trim().toLowerCase();
+    const inputPrice = Number(inputPriceDraft);
+    const outputPrice = Number(outputPriceDraft);
+    if (!modelKey) {
+      onFeedback({ kind: "err", text: t("admin.prices.errorKeyRequired") });
+      return;
+    }
+    if (Number.isNaN(inputPrice) || inputPrice < 0 || Number.isNaN(outputPrice) || outputPrice < 0) {
+      onFeedback({ kind: "err", text: t("admin.prices.errorPriceInvalid") });
+      return;
+    }
+    try {
+      const r = await gql<{ saveModelPrice: { success: boolean; message: string } }>(
+        `mutation($input: ModelPriceInput!) { saveModelPrice(input: $input) { success message } }`,
+        { input: { id: editing.id || null, modelKey, inputPricePer1m: inputPrice, outputPricePer1m: outputPrice, enabled: editing.enabled } },
+      );
+      if (!r.saveModelPrice.success) throw new Error(r.saveModelPrice.message);
+      onFeedback({ kind: "ok", text: t("admin.prices.saved") });
+      setIsModalOpen(false);
+      refresh();
+    } catch (e) { onFeedback({ kind: "err", text: (e as Error).message }); }
+  };
+
+  const handleDelete = async (id: number) => {
+    if (!confirm(t("admin.prices.confirmDelete"))) return;
+    try {
+      const r = await gql<{ deleteModelPrice: { success: boolean; message: string } }>(
+        `mutation($priceId: Int!) { deleteModelPrice(priceId: $priceId) { success message } }`,
+        { priceId: id },
+      );
+      if (!r.deleteModelPrice.success) throw new Error(r.deleteModelPrice.message);
+      onFeedback({ kind: "ok", text: t("admin.prices.deleted") });
+      refresh();
+    } catch (e) { onFeedback({ kind: "err", text: (e as Error).message }); }
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+        <div>
+          <span style={{ fontSize: 14, fontWeight: 600 }}>{t("admin.prices.sectionTitle", { count: prices.length })}</span>
+          <p style={{ fontSize: 12, color: "var(--fg4)", margin: "4px 0 0" }}>{t("admin.prices.helpText")}</p>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Button size="sm" variant="ghost" isDisabled={loading} onPress={refresh}>{t("admin.refresh")}</Button>
+          <Button size="sm" variant="primary" onPress={openAdd}>{t("admin.prices.addPrice")}</Button>
+        </div>
+      </div>
+
+      <div style={{ background: "var(--surface-1)", border: "0.5px solid var(--divider)", borderRadius: 12, overflow: "hidden" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ borderBottom: "0.5px solid var(--divider)", background: "var(--surface-2)" }}>
+              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.prices.colModelKey")}</th>
+              <th style={{ padding: "10px 12px", textAlign: "right" }}>{t("admin.prices.colInputPrice")}</th>
+              <th style={{ padding: "10px 12px", textAlign: "right" }}>{t("admin.prices.colOutputPrice")}</th>
+              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.prices.colEnabled")}</th>
+              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.colActions")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {prices.map((p) => (
+              <tr key={p.id} style={{ borderBottom: "0.5px solid var(--divider)" }}>
+                <td style={{ padding: "8px 12px", fontWeight: 600, fontFamily: "monospace" }}>{p.modelKey}</td>
+                <td style={{ padding: "8px 12px", textAlign: "right" }}>${p.inputPricePer1m.toFixed(4)}</td>
+                <td style={{ padding: "8px 12px", textAlign: "right" }}>${p.outputPricePer1m.toFixed(4)}</td>
+                <td style={{ padding: "8px 12px" }}>{p.enabled ? "✓" : "✗"}</td>
+                <td style={{ padding: "8px 12px" }}>
+                  <Button size="sm" variant="ghost" onPress={() => openEdit(p)}>{t("admin.edit")}</Button>
+                  <Button size="sm" variant="ghost" onPress={() => handleDelete(p.id)}>{t("admin.delete")}</Button>
+                </td>
+              </tr>
+            ))}
+            {prices.length === 0 && (
+              <tr><td colSpan={5} style={{ padding: 24, textAlign: "center", color: "var(--fg3)" }}>{t("admin.prices.empty")}</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Edit/Add Modal */}
+      {editing && (
+        <Modal.Backdrop isOpen={isModalOpen} onOpenChange={(o) => !o && setIsModalOpen(false)}>
+          <Modal.Container>
+            <Modal.Dialog className="sm:max-w-[480px]">
+              <Modal.CloseTrigger />
+              <Modal.Header {...dragHandleProps}><Modal.Heading>{editing.id ? t("admin.prices.editTitle") : t("admin.prices.addTitle")}</Modal.Heading></Modal.Header>
+              <Modal.Body>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <TextField fullWidth className="flex flex-col gap-1.5">
+                    <Label className="text-sm font-medium">{t("admin.prices.fieldModelKey")}</Label>
+                    <Input value={editing.modelKey} onChange={(e) => setEditing({ ...editing, modelKey: e.target.value })} placeholder={t("admin.prices.fieldModelKeyPlaceholder")} />
+                  </TextField>
+                  <TextField fullWidth className="flex flex-col gap-1.5">
+                    <Label className="text-sm font-medium">{t("admin.prices.fieldInputPrice")}</Label>
+                    <Input type="number" min="0" step="0.01" value={inputPriceDraft} onChange={(e) => setInputPriceDraft(e.target.value)} placeholder="0.00" />
+                  </TextField>
+                  <TextField fullWidth className="flex flex-col gap-1.5">
+                    <Label className="text-sm font-medium">{t("admin.prices.fieldOutputPrice")}</Label>
+                    <Input type="number" min="0" step="0.01" value={outputPriceDraft} onChange={(e) => setOutputPriceDraft(e.target.value)} placeholder="0.00" />
+                  </TextField>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
+                    <input type="checkbox" checked={editing.enabled} onChange={(e) => setEditing({ ...editing, enabled: e.target.checked })} />
+                    {t("admin.prices.fieldEnabled")}
+                  </label>
+                  <p style={{ fontSize: 12, color: "var(--fg4)", margin: 0 }}>{t("admin.prices.matchHelpText")}</p>
+                </div>
+              </Modal.Body>
+              <Modal.Footer>
+                <Button variant="ghost" onPress={() => setIsModalOpen(false)}>{t("admin.cancel")}</Button>
+                <Button variant="primary" onPress={handleSave}>{t("admin.save")}</Button>
+              </Modal.Footer>
+            </Modal.Dialog>
+          </Modal.Container>
+        </Modal.Backdrop>
+      )}
     </div>
   );
 }

@@ -15,6 +15,7 @@ from x_models.id_x_010.src.models.x_models import (
     ExternalModel,
     ExternalProvider,
     LocalProvider,
+    ModelPrice,
     SsoSettings,
     SystemModelSettings,
     SystemModelUserMapping,
@@ -30,7 +31,7 @@ from x_models.id_x_010.src.models.x_models import (
 )
 from x_models.id_x_010.src.schemas.x_schemas import AuthResponseType, UserInfoType
 from x_models.id_x_010.src.utils import x_oauth
-from x_models.id_x_010.src.utils.x_pricing import compute_cost
+from x_models.id_x_010.src.utils.x_pricing import compute_cost_detail
 
 # Q&A 上下文保留的最大对话轮数：1 轮 = 1 条对话记录（1 user + 1 assistant = 2 messages）。
 # 该常量同时约束 DB 历史拉取条数（get_conversation_history）与合并后消息截断
@@ -93,16 +94,22 @@ async def save_usage_log(
         input_tokens = int((usage or {}).get("input_tokens", 0) or 0)
         output_tokens = int((usage or {}).get("output_tokens", 0) or 0)
         total_tokens = int((usage or {}).get("total_tokens", 0) or 0)
+        # 部分端点的 usage 不带 total_tokens（或为 0）：用 in+out 兑底，
+        # 否则统计面板的 "Token 用量"（sum(total_tokens)）永远为 0
+        if not total_tokens:
+            total_tokens = input_tokens + output_tokens
 
         # 本地模型运行在用户自有硬件上，不计费
         if model_type == "local":
-            cost = 0.0
+            input_cost = output_cost = cost = 0.0
         else:
-            cost = compute_cost(model_name, input_tokens, output_tokens)
+            input_cost, output_cost, cost = await compute_cost_detail(
+                model_name, input_tokens, output_tokens
+            )
 
         # 用户自定义模型不计费，不统计
         if not is_system_model:
-            cost = 0.0
+            input_cost = output_cost = cost = 0.0
 
         async with get_session()() as session:
             log = UsageLog(
@@ -115,6 +122,8 @@ async def save_usage_log(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 total_tokens=total_tokens,
+                input_cost_usd=input_cost,
+                output_cost_usd=output_cost,
                 cost_usd=cost,
             )
             session.add(log)
@@ -122,7 +131,8 @@ async def save_usage_log(
             logger.info(
                 f"{get_request_id()}用量日志已保存: user_id={user_id}, "
                 f"model={model_name}, system={is_system_model}, "
-                f"in={input_tokens}, out={output_tokens}, cost=${cost:.6f}"
+                f"in={input_tokens}, out={output_tokens}, "
+                f"cost=${cost:.6f} (in=${input_cost:.6f} + out=${output_cost:.6f})"
             )
     except Exception as e:
         logger.error(f"{get_request_id()}保存用量日志失败: {e}", exc_info=True)
@@ -817,6 +827,115 @@ async def delete_system_model(model_id: int) -> bool:
             return True
     except Exception as e:
         logger.error(f"{get_request_id()}删除系统模型失败: {e}", exc_info=True)
+        return False
+
+
+# ==========================================
+# 模型价格（model_prices 表）
+# 管理员维护；计价时按 model_key 小写子串匹配（见 x_pricing._lookup_db）
+# ==========================================
+
+
+async def list_model_prices() -> List[ModelPrice]:
+    """列出全部模型价格行，按 model_key 升序。"""
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(ModelPrice).order_by(
+                    ModelPrice.model_key.asc(), ModelPrice.id.asc()
+                )
+            )
+            return list(result.scalars().all())
+    except Exception as e:
+        logger.error(f"{get_request_id()}列出模型价格失败: {e}", exc_info=True)
+        return []
+
+
+async def upsert_model_price(
+    model_key: str,
+    input_price_per_1m: float,
+    output_price_per_1m: float,
+    enabled: bool = True,
+    price_id: Optional[int] = None,
+) -> Optional[ModelPrice]:
+    """新建或更新模型价格行。
+
+    - ``price_id`` 为 None 时按 model_key 唯一性新增（已存在则更新）。
+    - ``price_id`` 非 None 时更新指定行。
+    - ``model_key`` 统一转小写存储（计价按小写子串匹配）。
+    """
+    key = (model_key or "").strip().lower()
+    if not key:
+        return None
+    try:
+        async with get_session()() as session:
+            if price_id is not None:
+                result = await session.execute(
+                    select(ModelPrice).where(ModelPrice.id == price_id)
+                )
+                row = result.scalar_one_or_none()
+                if row is None:
+                    return None
+                # 更名时避免与其它行的 model_key 冲突
+                dup = await session.execute(
+                    select(ModelPrice).where(
+                        ModelPrice.model_key == key, ModelPrice.id != price_id
+                    )
+                )
+                if dup.scalar_one_or_none() is not None:
+                    logger.warning(
+                        f"{get_request_id()}模型价格 model_key 冲突: {key}"
+                    )
+                    return None
+            else:
+                result = await session.execute(
+                    select(ModelPrice).where(ModelPrice.model_key == key)
+                )
+                row = result.scalar_one_or_none()
+                if row is None:
+                    row = ModelPrice(
+                        model_key=key,
+                        input_price_per_1m=input_price_per_1m,
+                        output_price_per_1m=output_price_per_1m,
+                        enabled=enabled,
+                    )
+                    session.add(row)
+
+            row.model_key = key
+            row.input_price_per_1m = float(input_price_per_1m or 0.0)
+            row.output_price_per_1m = float(output_price_per_1m or 0.0)
+            row.enabled = enabled
+            row.updated_at = datetime.now(timezone.utc)
+
+            await session.commit()
+            await session.refresh(row)
+            logger.info(
+                f"{get_request_id()}模型价格已保存: id={row.id}, key={key}, "
+                f"in={row.input_price_per_1m}, out={row.output_price_per_1m}, "
+                f"enabled={enabled}"
+            )
+            return row
+    except Exception as e:
+        logger.error(f"{get_request_id()}保存模型价格失败: {e}", exc_info=True)
+        return None
+
+
+async def delete_model_price(price_id: int) -> bool:
+    """按 id 删除模型价格行。返回是否删除成功。"""
+    try:
+        async with get_session()() as session:
+            result = await session.execute(
+                select(ModelPrice).where(ModelPrice.id == price_id)
+            )
+            row = result.scalar_one_or_none()
+            if row is None:
+                return False
+            await session.delete(row)
+            await session.commit()
+            logger.info(f"{get_request_id()}模型价格已删除: id={price_id}")
+            return True
+    except Exception as e:
+        logger.error(f"{get_request_id()}删除模型价格失败: {e}", exc_info=True)
         return False
 
 
