@@ -53,6 +53,10 @@ export function ProfileDialog({
   const [isUploading, setIsUploading] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 保存名称成功后自动关闭的延时（ms）：给用户足够时间读到反馈
+  const AUTO_CLOSE_DELAY_MS = 1500;
 
   // 打开时用最新 user 数据填充
   useEffect(() => {
@@ -60,7 +64,22 @@ export function ProfileDialog({
     setFeedback(null);
     setDisplayName(user?.displayName ?? "");
     setAvatarUrl(user?.avatarUrl ?? null);
+    // 若上次保存残留的自动关闭定时器，重新打开时清理
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
   }, [isOpen, user]);
+
+  // 卸载时清理自动关闭定时器，避免内存泄漏 / 误触发
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current) {
+        clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const syncLocalStorage = useCallback((updated: User) => {
     if (typeof window === "undefined") return;
@@ -88,6 +107,12 @@ export function ProfileDialog({
         setFeedback({ type: "success", text: message || t("profile.nameUpdated") });
         syncLocalStorage(updated);
         onSaved?.(updated);
+        // 显示成功提示语后延时自动关闭弹窗
+        if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = setTimeout(() => {
+          onOpenChange(false);
+          closeTimerRef.current = null;
+        }, AUTO_CLOSE_DELAY_MS);
       } else {
         setFeedback({ type: "error", text: message || t("profile.errorSaveFailed") });
       }
@@ -99,7 +124,7 @@ export function ProfileDialog({
     } finally {
       setIsSavingName(false);
     }
-  }, [displayName, isSavingName, onSaved, syncLocalStorage]);
+  }, [displayName, isSavingName, onSaved, onOpenChange, syncLocalStorage, t]);
 
   const handleFileSelect = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
