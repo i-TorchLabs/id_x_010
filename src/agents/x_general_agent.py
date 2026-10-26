@@ -29,6 +29,26 @@ except ImportError:  # pragma: no cover
     LANGGRAPH_REACT_AVAILABLE = False
 
 
+# 模块级共享 httpx client（_stream_llm_raw 使用）：
+# 每请求新建 AsyncClient 会重复 TCP+TLS 握手（百毫秒级）。
+# 共享实例 + 连接池复用消除该开销；进程退出时由 OS 回收。
+_shared_http_client = None
+
+
+def _get_shared_http_client():
+    global _shared_http_client
+    if _shared_http_client is None:
+        import httpx
+
+        _shared_http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(120.0, connect=10.0),
+            limits=httpx.Limits(
+                max_connections=100, max_keepalive_connections=20
+            ),
+        )
+    return _shared_http_client
+
+
 class StreamingHandler(AsyncCallbackHandler):
     def __init__(self):
         self.tokens = []
@@ -267,6 +287,10 @@ class GeneralAgent:
                 # 让 OpenAI 兼容端点在流式末块返回 token 用量；
                 # 不支持的端点会忽略该参数，捕获逻辑降级为 0（非致命）
                 stream_usage=True,
+                # 性能/稳定性：限定超时与重试，避免默认 2 次静默重试
+                # 把瞬时错误放大成双倍延迟、以及无超时的卡死
+                timeout=120.0,
+                max_retries=1,
             )
         else:
             local_config = get_local_model_config()
@@ -282,6 +306,8 @@ class GeneralAgent:
                 # 本地模型不计费，但 token 用量仍需统计/展示；
                 # 端点不支持时会忽略该参数，降级为无用量（非致命）
                 stream_usage=True,
+                timeout=120.0,
+                max_retries=1,
             )
 
     @staticmethod
@@ -309,8 +335,6 @@ class GeneralAgent:
         保留了 temperature 重试（reasoning 模型只允许 1）的能力由调用方处理。
         """
         import json as _json
-
-        import httpx
 
         payload_messages = []
         for msg in messages:
@@ -340,40 +364,42 @@ class GeneralAgent:
         }
 
         raw_usage = None
-        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
-            async with client.stream(
-                "POST", url, json=body, headers=headers
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line or not line.startswith("data: "):
+        # 复用模块级共享 client：每请求新建 AsyncClient 会重复 TCP+TLS 握手
+        # （百毫秒级），连接池复用后消除该开销
+        client = _get_shared_http_client()
+        async with client.stream(
+            "POST", url, json=body, headers=headers
+        ) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line or not line.startswith("data: "):
+                    continue
+                data = line[6:]
+                if data.strip() == "[DONE]":
+                    break
+                try:
+                    chunk = _json.loads(data)
+                    # 用量必须在 choices 判空之前读取：include_usage 的末块
+                    # choices 为空数组，之前先 continue 导致 usage 永远读不到
+                    usage = chunk.get("usage")
+                    if isinstance(usage, dict):
+                        raw_usage = {
+                            "input_tokens": usage.get("prompt_tokens", 0) or 0,
+                            "output_tokens": usage.get("completion_tokens", 0) or 0,
+                            "total_tokens": usage.get("total_tokens", 0) or 0,
+                        }
+                    choices = chunk.get("choices") or []
+                    if not choices:
                         continue
-                    data = line[6:]
-                    if data.strip() == "[DONE]":
-                        break
-                    try:
-                        chunk = _json.loads(data)
-                        # 用量必须在 choices 判空之前读取：include_usage 的末块
-                        # choices 为空数组，之前先 continue 导致 usage 永远读不到
-                        usage = chunk.get("usage")
-                        if isinstance(usage, dict):
-                            raw_usage = {
-                                "input_tokens": usage.get("prompt_tokens", 0) or 0,
-                                "output_tokens": usage.get("completion_tokens", 0) or 0,
-                                "total_tokens": usage.get("total_tokens", 0) or 0,
-                            }
-                        choices = chunk.get("choices") or []
-                        if not choices:
-                            continue
-                        delta = choices[0].get("delta") or {}
-                        reasoning = delta.get("reasoning_content")
-                        content = delta.get("content")
-                        if reasoning:
-                            yield ("thinking", reasoning)
-                        if content:
-                            yield ("content", content)
-                    except (_json.JSONDecodeError, KeyError, IndexError):
-                        continue
+                    delta = choices[0].get("delta") or {}
+                    reasoning = delta.get("reasoning_content")
+                    content = delta.get("content")
+                    if reasoning:
+                        yield ("thinking", reasoning)
+                    if content:
+                        yield ("content", content)
+                except (_json.JSONDecodeError, KeyError, IndexError):
+                    continue
 
         if raw_usage is not None:
             yield ("usage", _json.dumps(raw_usage))
@@ -506,7 +532,12 @@ class GeneralAgent:
             events_version = "v2"
             try:
                 # 仅创建 aiter 探测，不消费——v2 不支持时构造会抛 TypeError/ValueError
-                _ = self.agent.astream_events({"messages": messages}, version="v2")
+                _probe = self.agent.astream_events({"messages": messages}, version="v2")
+                # 探测用生成器须显式关闭，避免悬挂的底层资源
+                try:
+                    await _probe.aclose()
+                except Exception:
+                    pass
             except (TypeError, ValueError, AttributeError) as _ve:
                 logger.info(
                     f"{get_request_id()}astream_events v2 不可用,降级 v1: "
@@ -517,9 +548,18 @@ class GeneralAgent:
             try:
                 _react_produced = False
                 _react_usage = None
-                async for evt in self.agent.astream_events(
+                # 性能关键（TASK-016）：reasoning 模型的 token 可能全在
+                # reasoning_content 且无法从 langchain chunk 提取——旧逻辑会
+                # 白白消费完【整次生成】（秒级~十秒级）后才降级 raw 路径，
+                # 造成串行两次完整 LLM 调用（直连 5s → 经程序 20s 的主因）。
+                # 现在：连续 N 个"既无 content、无 reasoning、也非 tool_call"
+                # 的流 chunk 即判定不可提取，立刻中断第一次流转入 raw 路径。
+                _REACT_EMPTY_CHUNK_LIMIT = 24
+                _react_empty_chunks = 0
+                _evt_stream = self.agent.astream_events(
                     {"messages": messages}, version=events_version
-                ):
+                )
+                async for evt in _evt_stream:
                     kind = evt.get("event", "")
                     name = evt.get("name", "")
                     chunk = evt.get("chunk")
@@ -588,6 +628,28 @@ class GeneralAgent:
                                 continue
 
                         if not token:
+                            # 工具调用期间 content 为空属正常（增量在
+                            # tool_call_chunks）——不计入"不可提取"
+                            _tc = getattr(chunk, "tool_call_chunks", None) or getattr(
+                                chunk, "tool_calls", None
+                            )
+                            if _tc:
+                                _react_empty_chunks = 0
+                                continue
+                            if not _react_produced:
+                                _react_empty_chunks += 1
+                                if _react_empty_chunks >= _REACT_EMPTY_CHUNK_LIMIT:
+                                    logger.warning(
+                                        f"{get_request_id()}ReAct 流连续 "
+                                        f"{_react_empty_chunks} 个 chunk 无可提取内容"
+                                        f"（疑似 reasoning 模型 token 被 langchain 丢弃），"
+                                        f"提前中断转 raw httpx: model={self.model_name}"
+                                    )
+                                    try:
+                                        await _evt_stream.aclose()
+                                    except Exception:
+                                        pass
+                                    break
                             continue
 
                         for _ch, _text in _react_parser.feed(token):

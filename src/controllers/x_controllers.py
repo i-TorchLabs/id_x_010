@@ -13,8 +13,8 @@ from sqlalchemy import func, select
 
 from utils.log_util import get_request_id, logger, request_id_var
 from x_models.id_x_010.src.agents.x_langgraph_supervisor import (
-    LangGraphSupervisor,
     get_orchestrator,
+    get_supervisor,
 )
 from x_models.id_x_010.src.agents.x_sql_agent import SQLAgent
 from x_models.id_x_010.src.models.x_models import (
@@ -1031,9 +1031,16 @@ async def _get_bearer_user(request) -> Optional[User]:
     return await verify_token(auth_header[7:].strip())
 
 
-async def _get_bearer_settings(request) -> Optional[UserModelSettings]:
-    """解析请求属主用户并返回其模型设置；未登录或未配置时返回 None。"""
-    user = await _get_bearer_user(request)
+async def _get_bearer_settings(
+    request, user: Optional[User] = None
+) -> Optional[UserModelSettings]:
+    """解析请求属主用户并返回其模型设置；未登录或未配置时返回 None。
+
+    性能：调用方已完成 token 校验时传入 user，避免重复 verify_token
+    （每次 2 个 DB 往返）。
+    """
+    if user is None:
+        user = await _get_bearer_user(request)
     if user is None:
         return None
     return await get_user_model_settings(user.id)
@@ -1122,8 +1129,8 @@ class Mutation:
             await load_llm_provider_config()
 
             # 用户已保存自定义模型设置时，以其覆盖默认链路配置
-            request = _get_info_request(info)
-            user_settings = await _get_bearer_settings(request)
+            # （复用上方已校验的 user，避免重复 verify_token 的 2 次 DB 往返）
+            user_settings = await _get_bearer_settings(request, user=user)
 
             # 解析实际调用的模型端点：前端选中的 model_name 若命中系统预置模型，
             # 则使用该系统模型的 api_key / base_url；否则回退到用户级设置。
@@ -1158,7 +1165,9 @@ class Mutation:
                     )
 
             if chat_api_key is not None and chat_base_url is not None:
-                orchestrator = LangGraphSupervisor(
+                # 按（模型 + 端点）缓存复用 supervisor：每请求新建会重复付出
+                # Agent 实例化 / workflow 编译 / PG checkpointer 探测等开销
+                orchestrator = get_supervisor(
                     model_type=input.model_type,
                     model_name=effective_model_name,
                     api_key=chat_api_key,
@@ -1169,17 +1178,27 @@ class Mutation:
                 orchestrator = get_orchestrator()
                 chat_model_name = effective_model_name
 
-            # 自动注入用户当前选中的 Markdown 提示词（每轮对话均携带）
+            # 自动注入用户当前选中的 Markdown 提示词：
+            # - General Agent 模式：禁止携带，直接跳过查询
+            # - SQL/Code Agent 模式：强制携带（有选中文件即注入）
+            # - 自动路由（未指定 agent_type）：传入后由 supervisor 按命中
+            #   Agent 决定（general 节点不读取，sql/code 节点强制注入）
             active_prompt_content: Optional[str] = None
-            user = await _get_bearer_user(request)
-            if user is not None:
-                active_prompt = await get_active_markdown_prompt(user.id)
-                if active_prompt is not None:
-                    active_prompt_content = active_prompt.content
-                    logger.info(
-                        f"{get_request_id()}已注入提示词: filename={active_prompt.filename}, "
-                        f"chars={len(active_prompt.content)}"
-                    )
+            if input.agent_type == "general":
+                logger.info(
+                    f"{get_request_id()}General Agent 模式：跳过 Markdown 提示词注入"
+                )
+            else:
+                # 复用入口处已校验的 user，避免第三次 verify_token
+                if user is not None:
+                    active_prompt = await get_active_markdown_prompt(user.id)
+                    if active_prompt is not None:
+                        active_prompt_content = active_prompt.content
+                        logger.info(
+                            f"{get_request_id()}已携带提示词(agent_type={input.agent_type or 'auto'}): "
+                            f"filename={active_prompt.filename}, "
+                            f"chars={len(active_prompt.content)}"
+                        )
 
             result = await orchestrator.process(
                 query=input.query,
@@ -3787,10 +3806,6 @@ class Subscription:
                 except json.JSONDecodeError:
                     frontend_context = None
 
-            db_history = None
-            if conversation_id:
-                db_history = await get_conversation_history(conversation_id)
-
             # 优先使用长期记忆（TASK-005）：摘要 + 实体 + 最近 6 条原文；
             # conversation_id 为空或失败时回退 merge_context 原始全量截断行为
             merged_context: Optional[List[Dict[str, str]]] = None
@@ -3807,6 +3822,11 @@ class Subscription:
                     merged_context = None
 
             if not merged_context:
+                # 性能：get_conversation_history 仅在 get_context 未产出时才
+                # 需要——之前无条件先查导致 get_context 成功时该查询白做
+                db_history = None
+                if conversation_id:
+                    db_history = await get_conversation_history(conversation_id)
                 merged_context = merge_context(
                     db_history=db_history,
                     frontend_context=frontend_context,
@@ -3826,8 +3846,8 @@ class Subscription:
             #   2. 用户级模型设置（model_name_list 共享同一 base_url/api_key）
             #   3. 全局 provider 配置（external_provider 表）
             #   回退到 external_models 表（兼容旧数据）
-            request = _get_info_request(info)
-            user_settings = await _get_bearer_settings(request)
+            # （复用入口处已校验的 rl_user，避免重复 verify_token 的 2 次 DB 往返）
+            user_settings = await _get_bearer_settings(request, user=rl_user)
 
             override_api_key, override_base_url, resolved_model = (
                 await resolve_model_endpoint(
@@ -3874,7 +3894,9 @@ class Subscription:
                     f"{get_request_id()}模型端点已解析: "
                     f"model={model_name}, base_url={override_base_url}"
                 )
-                orchestrator = LangGraphSupervisor(
+                # 按（模型 + 端点）缓存复用 supervisor：每请求新建会重复付出
+                # Agent 实例化 / workflow 编译 / PG checkpointer 探测等开销
+                orchestrator = get_supervisor(
                     model_type=model_type,
                     model_name=model_name,
                     api_key=override_api_key,
@@ -3885,17 +3907,27 @@ class Subscription:
                 # 使用全局 provider 配置（external_provider 表）
                 orchestrator = get_orchestrator()
 
-            # 自动注入用户当前选中的 Markdown 提示词（每轮对话均携带）
+            # 自动注入用户当前选中的 Markdown 提示词：
+            # - General Agent 模式：禁止携带，直接跳过查询
+            # - SQL/Code Agent 模式：强制携带（有选中文件即注入）
+            # - 自动路由（未指定 agent_type）：传入后由 supervisor 按命中
+            #   Agent 决定（general 节点不读取，sql/code 节点强制注入）
             active_prompt_content: Optional[str] = None
-            user = await _get_bearer_user(request)
-            if user is not None:
-                active_prompt = await get_active_markdown_prompt(user.id)
-                if active_prompt is not None:
-                    active_prompt_content = active_prompt.content
-                    logger.info(
-                        f"{get_request_id()}已注入提示词: filename={active_prompt.filename}, "
-                        f"chars={len(active_prompt.content)}"
-                    )
+            if agent_type == "general":
+                logger.info(
+                    f"{get_request_id()}General Agent 模式：跳过 Markdown 提示词注入"
+                )
+            else:
+                # 复用入口处已校验的 rl_user，避免第三次 verify_token
+                if rl_user is not None:
+                    active_prompt = await get_active_markdown_prompt(rl_user.id)
+                    if active_prompt is not None:
+                        active_prompt_content = active_prompt.content
+                        logger.info(
+                            f"{get_request_id()}已携带提示词(agent_type={agent_type or 'auto'}): "
+                            f"filename={active_prompt.filename}, "
+                            f"chars={len(active_prompt.content)}"
+                        )
 
             full_response = []
             thinking_buffer = []
@@ -4005,7 +4037,9 @@ class Subscription:
             # 落库用量统计（token 消耗 + 估算花费），best-effort，不影响主链路
             try:
                 await save_usage_log(
-                    user_id=user.id if user is not None else None,
+                    # 修复：之前用的 user 变量仅在非 general 分支赋值，
+                    # general 模式下 NameError 被 except 吞掉导致用量日志丢失
+                    user_id=rl_user.id if rl_user is not None else None,
                     conversation_id=conversation_id or "",
                     model_type=model_type,
                     model_name=model_used or model_name or "",

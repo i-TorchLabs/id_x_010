@@ -9,6 +9,7 @@ import { ModelInfo, MarkdownPromptItem } from "@/api/graphql";
 import { AgentSelector, AgentType } from "./AgentSelector";
 import { DatabaseSelector } from "./DatabaseSelector";
 import { ModelSelector } from "./ModelSelector";
+import { FOOTER_DOCK_HEIGHT } from "./ChatSidebar";
 
 type Variant = "footer" | "hero";
 
@@ -88,9 +89,11 @@ export function MessageInput({
     }
   };
 
-  // 当前生效的提示词徽标（仅展示；选中态由侧边栏「提示词库」分区管理）
+  // 当前生效的提示词徽标（仅展示；选中态由侧边栏「提示词库」分区管理）。
+  // General Agent 模式禁止携带 Markdown 提示词，徽标同步隐藏；
+  // SQL/Code Agent 模式强制携带，徽标正常展示。
   const renderActivePromptBadge = () =>
-    activePrompt ? (
+    activePrompt && selectedAgent !== "general" ? (
       <div
         className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium"
         style={{
@@ -267,21 +270,24 @@ export function MessageInput({
   }
 
   // Footer variant
+  // minHeight 与侧边栏底部用户配置块共用 FOOTER_DOCK_HEIGHT，
+  // 保证两者的"上边缘线"保持水平（输入多行时本容器向上自然增高）
   return (
     <motion.div
       initial={{ y: 100 }}
       animate={{ y: 0 }}
-      className="w-full"
+      className="w-full flex flex-col"
       style={{
         background: "var(--nav-bg)",
         backdropFilter: "var(--backdrop)",
         WebkitBackdropFilter: "var(--backdrop)",
         borderTop: isDark ? "none" : "0.5px solid var(--divider)",
+        minHeight: `${FOOTER_DOCK_HEIGHT}px`,
       }}
     >
-      <div className="py-3 pb-4 px-4">
-        <div className="w-full">
-          <div className="flex items-end gap-3">
+      <div className="flex-1 flex flex-col py-3 pb-4 px-4">
+        <div className="w-full flex-1 flex flex-col">
+          <div className="flex-1 flex items-stretch gap-3">
             <div
               className="flex-1 relative transition-all duration-200"
               style={{

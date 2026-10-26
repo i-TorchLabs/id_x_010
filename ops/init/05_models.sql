@@ -10,20 +10,8 @@ SELECT 'claude-haiku-5-5', 'Anthropic', 'https://kjapi.botsmart.net/v1', 'sk-VHx
 WHERE NOT EXISTS (SELECT 1 FROM system_model_settings WHERE name = 'claude-haiku-5-5');
 
 INSERT INTO system_model_settings (name, provider, base_url, api_key, model_type, is_default, enabled, sort_order)
-SELECT 'claude-haiku-5-5', 'Anthropic', 'https://kjapi.botsmart.net/v1', 'sk-VHxaJGsLTlgvHJRYLMRLmyfjenaZgg3AsIp64mQfzDa75WLn', 'external', true, true, 1
-WHERE NOT EXISTS (SELECT 1 FROM system_model_settings WHERE name = 'claude-haiku-5-5');
-
-INSERT INTO system_model_settings (name, provider, base_url, api_key, model_type, is_default, enabled, sort_order)
 SELECT 'claude-opus-5', 'Anthropic', 'https://kjapi.botsmart.net/v1', 'sk-VHxaJGsLTlgvHJRYLMRLmyfjenaZgg3AsIp64mQfzDa75WLn', 'external', true, true, 1
 WHERE NOT EXISTS (SELECT 1 FROM system_model_settings WHERE name = 'claude-opus-5');
-
-INSERT INTO system_model_settings (name, provider, base_url, api_key, model_type, is_default, enabled, sort_order)
-SELECT 'deepseek-v4-pro', 'DeepSeek', 'https://kjapi.botsmart.net/v1', 'sk-VHxaJGsLTlgvHJRYLMRLmyfjenaZgg3AsIp64mQfzDa75WLn', 'external', true, true, 1
-WHERE NOT EXISTS (SELECT 1 FROM system_model_settings WHERE name = 'deepseek-v4-pro');
-
-INSERT INTO system_model_settings (name, provider, base_url, api_key, model_type, is_default, enabled, sort_order)
-SELECT 'deepseek-v4-flash', 'DeepSeek', 'https://kjapi.botsmart.net/v1', 'sk-VHxaJGsLTlgvHJRYLMRLmyfjenaZgg3AsIp64mQfzDa75WLn', 'external', true, true, 1
-WHERE NOT EXISTS (SELECT 1 FROM system_model_settings WHERE name = 'deepseek-v4-flash');
 
 INSERT INTO system_model_settings (name, provider, base_url, api_key, model_type, is_default, enabled, sort_order)
 SELECT 'gpt-6-astra', 'OpenAI', 'https://kjapi.botsmart.net/v1', 'sk-VHxaJGsLTlgvHJRYLMRLmyfjenaZgg3AsIp64mQfzDa75WLn', 'external', true, true, 1

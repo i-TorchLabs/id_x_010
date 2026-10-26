@@ -27,8 +27,6 @@ INSERT INTO model_prices (model_key, input_price_per_1m, output_price_per_1m) VA
     ('claude-fable-5',          9.0,     45.0),
     ('claude-haiku-5-5',        0.09,    0.45),
     ('claude-opus-5',           4.5,     22.5),
-    ('deepseek-v4-pro',         0.35296, 0.70592),
-    ('deepseek-v4-flash',       0.1176,  0.2352),
     ('gpt-5.5',                 4.0,     24.0),
     ('gpt-6-astra',             8.0,     40.0),
     ('gemini-3.1-flash-image',  0.4,     48.0),

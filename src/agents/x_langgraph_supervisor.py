@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import uuid
@@ -189,11 +190,22 @@ class SemanticRouter:
         openai_base_url: Optional[str] = None,
         embedding_model: Optional[str] = None,
     ):
-        # 初始化涉及 embedding 调用（route_layer.add 会立即计算语料向量），
-        # 端点缺 key 或不支持 embeddings 时不应让构造抛错——降级为
+        # 性能关键：初始化涉及 embedding 调用（route_layer.add 会立即对
+        # ~90 条语料计算向量，同步 HTTP、秒级耗时）。因此这里只保存参数，
+        # 真正的 route_layer 构建延迟到首次 route() 调用，并放入线程池执行
+        # ——前端显式指定 agent_type 的请求（UI 默认行为）完全不触发嵌入。
+        # 端点缺 key 或不支持 embeddings 时不让构造抛错——降级为
         # "始终路由到 general"，保证聊天主链路可用。
         self._ready = False
         self.route_layer = None
+        self._init_attempted = False
+        self._init_lock = asyncio.Lock()
+        self._openai_api_key = openai_api_key
+        self._openai_base_url = openai_base_url
+        self._embedding_model = embedding_model
+
+    def _initialize_sync(self) -> None:
+        """同步构建 route_layer（含语料嵌入）。只应在线程池中调用一次。"""
         if _SemanticRouter is None:
             logger.warning(
                 f"{get_request_id()}semantic_router 版本不兼容（未找到 "
@@ -204,17 +216,17 @@ class SemanticRouter:
             external_config = get_external_model_config()
 
             final_api_key = (
-                openai_api_key
+                self._openai_api_key
                 or external_config.get("api_key")
             )
             # embedding 端点优先取专用 EMBD 地址（external_provider 表），
             # 缺省时回退 LLM 地址
             final_base_url = (
-                openai_base_url
+                self._openai_base_url
                 or external_config.get("embd_base_url")
                 or external_config.get("base_url")
             )
-            final_embedding_model = embedding_model or os.getenv(
+            final_embedding_model = self._embedding_model or os.getenv(
                 "EXTERNAL_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-8B"
             )
 
@@ -240,21 +252,36 @@ class SemanticRouter:
                 )
             self._ready = True
 
-            logger.info(f"{get_request_id()}SemanticRouter 初始化完成")
+            logger.info(f"{get_request_id()}SemanticRouter 初始化完成（懒加载）")
         except Exception as e:
             logger.warning(
                 f"{get_request_id()}SemanticRouter 初始化失败，意图路由降级为 general: "
                 f"{type(e).__name__}: {e}"
             )
 
+    async def _ensure_initialized(self) -> None:
+        """首次 route() 前在线程池完成初始化；并发安全、只尝试一次。"""
+        if self._init_attempted:
+            return
+        async with self._init_lock:
+            if self._init_attempted:
+                return
+            try:
+                await asyncio.to_thread(self._initialize_sync)
+            finally:
+                self._init_attempted = True
+
     async def route(self, query: str) -> Tuple[str, float]:
+        await self._ensure_initialized()
         if not self._ready or self.route_layer is None:
             logger.info(
                 f"{get_request_id()}路由器不可用，使用默认 general: query='{query[:50]}...'"
             )
             return "general", 0.0
         try:
-            route_result = self.route_layer(query)
+            # route_layer 调用会同步请求 embedding 端点——放线程池，
+            # 避免阻塞事件循环拖慢其它并发请求
+            route_result = await asyncio.to_thread(self.route_layer, query)
 
             if route_result:
                 if isinstance(route_result, list) and route_result:
@@ -646,6 +673,9 @@ class SupervisorState(TypedDict):
     model_name: Optional[str]
     context: Optional[List[Dict[str, str]]]
     system_prompt: Optional[str]
+    # 用户上传的 Markdown 提示词内容：仅 sql_agent / code_agent 节点消费，
+    # general_agent 节点不读取（General Agent 不携带 Markdown 提示词）
+    prompt_content: Optional[str]
 
 
 def create_handoff_tool(*, agent_name: str, description: Optional[str] = None):
@@ -715,10 +745,12 @@ class LangGraphSupervisor:
             logger.info(f"{get_request_id()}使用 LLM 路由器进行意图识别")
         else:
             # 用户自定义配置存在时，路由器的 embedding 客户端同样使用之，
-            # 避免环境变量缺 key 时构造 OpenAI 客户端直接抛错
-            self.router = SemanticRouter(
-                openai_api_key=api_key,
-                openai_base_url=base_url,
+            # 避免环境变量缺 key 时构造 OpenAI 客户端直接抛错。
+            # 用模块级 get_router 缓存：同一 embedding 端点的路由器
+            # （及其懒加载的语料向量）跨 supervisor 实例复用
+            self.router = get_router(
+                api_key=api_key,
+                base_url=base_url,
             )
             logger.info(f"{get_request_id()}使用语义路由器（关键词匹配）进行意图识别")
 
@@ -934,6 +966,12 @@ class LangGraphSupervisor:
     async def _sql_agent_node(self, state: SupervisorState) -> dict:
         query = state.get("query", "")
 
+        # Data(SQL) Agent 必须携带用户上传的 Markdown 提示词：
+        # SQL Agent 使用固定系统提示词，将 Markdown 作为问题上下文前缀注入
+        prompt_content = state.get("prompt_content")
+        if prompt_content and prompt_content.strip():
+            query = f"【参考提示词】\n{prompt_content}\n\n【用户问题】\n{query}"
+
         try:
             result = await self.sql_agent.query(question=query)
 
@@ -984,6 +1022,11 @@ class LangGraphSupervisor:
 
 然后提供完整的代码实现。""",
         )
+
+        # Code Agent 必须携带用户上传的 Markdown 提示词：作为系统提示词前缀注入
+        injected = self._build_injected_prompt(state.get("prompt_content"))
+        if injected:
+            code_system_prompt = f"{injected}\n{code_system_prompt}"
 
         try:
             response, thinking = await self.code_agent.chat(
@@ -1099,7 +1142,10 @@ class LangGraphSupervisor:
 
     @staticmethod
     def _build_injected_prompt(prompt_content: Optional[str]) -> Optional[str]:
-        """用户上传的 Markdown 文件作为系统提示词注入；仅文本前缀，不破坏既有路由逻辑。"""
+        """用户上传的 Markdown 文件作为系统提示词注入；仅文本前缀，不破坏既有路由逻辑。
+
+        注入范围：仅 Data(SQL) Agent 与 Code Agent 携带；General Agent 不携带。
+        """
         if not prompt_content or not prompt_content.strip():
             return None
         return (
@@ -1127,6 +1173,11 @@ class LangGraphSupervisor:
 
         model_type = model_type or self.model_type
         model_name = model_name or self.model_name
+
+        # General Agent 模式禁止携带 Markdown 提示词（硬约束，防御任意调用方传入）；
+        # SQL/Code Agent 模式强制携带（下方各分支注入）
+        if agent_type == "general":
+            prompt_content = None
 
         # TASK-006：首次调用前尝试切到 PG checkpointer；失败降级 MemorySaver
         try:
@@ -1238,9 +1289,9 @@ class LangGraphSupervisor:
                     api_key=api_key,
                     base_url=base_url,
                 )
+                # General Agent 不携带用户上传的 Markdown 提示词
+                # （仅 Data/SQL Agent 与 Code Agent 注入）
                 general_system_prompt = DEFAULT_SYSTEM_PROMPT
-                if injected_system_prompt:
-                    general_system_prompt = f"{injected_system_prompt}\n{general_system_prompt}"
                 try:
                     response, thinking = await general_agent.chat(
                         query=query,
@@ -1285,6 +1336,8 @@ class LangGraphSupervisor:
             "model_name": model_name,
             "context": context or [],
             "system_prompt": DEFAULT_SYSTEM_PROMPT,
+            # 仅 sql_agent / code_agent 节点消费；general_agent 节点不读取
+            "prompt_content": prompt_content,
         }
 
         try:
@@ -1335,6 +1388,11 @@ class LangGraphSupervisor:
         model_type = model_type or self.model_type
         model_name = model_name or self.model_name
 
+        # General Agent 模式禁止携带 Markdown 提示词（硬约束，防御任意调用方传入）；
+        # SQL/Code Agent 模式强制携带（下方各分支注入）
+        if agent_type == "general":
+            prompt_content = None
+
         # TASK-006：首次调用前尝试切到 PG checkpointer；失败降级 MemorySaver
         try:
             await self._ensure_pg_checkpointer()
@@ -1344,7 +1402,7 @@ class LangGraphSupervisor:
                 f"{type(e).__name__}: {e}"
             )
 
-        # 用户上传的 Markdown 文件作为系统提示词注入；仅文本前缀，不破坏既有路由逻辑
+        # 用户上传的 Markdown 文件作为系统提示词注入（仅 SQL/Code 分支消费）
         injected_system_prompt = self._build_injected_prompt(prompt_content)
 
         if agent_type and agent_type in ["general", "sql", "code"]:
@@ -1438,9 +1496,9 @@ class LangGraphSupervisor:
                 base_url=base_url,
             )
 
+            # General Agent 不携带用户上传的 Markdown 提示词
+            # （仅 Data/SQL Agent 与 Code Agent 注入）
             base_system_prompt = route_info.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
-            if injected_system_prompt:
-                base_system_prompt = f"{injected_system_prompt}\n{base_system_prompt}"
             async for chunk in agent.stream_chat(
                 query=query,
                 context=context,
@@ -1453,10 +1511,23 @@ class LangGraphSupervisor:
 _supervisor_cache: Dict[str, LangGraphSupervisor] = {}
 _router_cache: Dict[str, SemanticRouter] = {}
 
+# 端点级 supervisor 缓存上限：防止大量不同 api_key/base_url 组合导致无界增长。
+# 超限时按插入顺序淘汰最老实例（dict 保序）。
+_SUPERVISOR_CACHE_MAX = 64
+
 
 def _make_cache_key(*args: str) -> str:
     """根据参数生成缓存键，确保相同参数复用实例，不同参数创建新实例。"""
     return "/".join(args) if args else "default"
+
+
+def _fingerprint(secret: Optional[str]) -> str:
+    """api_key 等敏感值的缓存键指纹：不可逆、不落日志明文。"""
+    if not secret:
+        return ""
+    import hashlib
+
+    return hashlib.sha256(secret.encode("utf-8")).hexdigest()[:16]
 
 
 def get_supervisor(
@@ -1464,17 +1535,40 @@ def get_supervisor(
     model_name: Optional[str] = None,
     use_llm_router: bool = False,
     force_new: bool = False,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
 ) -> LangGraphSupervisor:
-    key = _make_cache_key(model_type, model_name or "", str(use_llm_router))
+    """按（模型 + 端点）缓存 supervisor 实例。
+
+    性能关键：LangGraphSupervisor 构造含 Agent 实例化、workflow 编译，
+    且首次 process/stream_process 还要做 PG checkpointer 探测——每请求
+    新建会把这些开销叠加到每轮对话。缓存后仅首个请求付出一次成本。
+    api_key 以 sha256 指纹入键，避免明文滞留。
+    """
+    key = _make_cache_key(
+        model_type,
+        model_name or "",
+        str(use_llm_router),
+        _fingerprint(api_key),
+        base_url or "",
+    )
     if force_new or key not in _supervisor_cache:
         _supervisor_cache[key] = LangGraphSupervisor(
             model_type=model_type,
             model_name=model_name,
             use_llm_router=use_llm_router,
+            api_key=api_key,
+            base_url=base_url,
         )
+        # 超限淘汰最老实例（当前新建的不淘汰）
+        while len(_supervisor_cache) > _SUPERVISOR_CACHE_MAX:
+            oldest = next(iter(_supervisor_cache))
+            if oldest == key:
+                break
+            _supervisor_cache.pop(oldest, None)
         logger.info(
-            f"{get_request_id()}Supervisor 实例创建: key='{key}', "
-            f"当前缓存数={len(_supervisor_cache)}"
+            f"{get_request_id()}Supervisor 实例创建: model={model_name or 'default'}, "
+            f"base_url={base_url or 'default'}, 当前缓存数={len(_supervisor_cache)}"
         )
     return _supervisor_cache[key]
 
@@ -1485,7 +1579,9 @@ def get_router(
     embedding_model: Optional[str] = None,
     force_new: bool = False,
 ) -> SemanticRouter:
-    key = _make_cache_key(api_key or "", base_url or "", embedding_model or "")
+    key = _make_cache_key(
+        _fingerprint(api_key), base_url or "", embedding_model or ""
+    )
     if force_new or key not in _router_cache:
         _router_cache[key] = SemanticRouter(
             openai_api_key=api_key,
@@ -1493,7 +1589,7 @@ def get_router(
             embedding_model=embedding_model,
         )
         logger.info(
-            f"{get_request_id()}Router 实例创建: key='{key[:20]}...', "
+            f"{get_request_id()}Router 实例创建: base_url={base_url or 'default'}, "
             f"当前缓存数={len(_router_cache)}"
         )
     return _router_cache[key]

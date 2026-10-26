@@ -15,6 +15,10 @@ const MODEL_OPTIONS: { value: ModelType; label: string }[] = [
 
 const EXPANDED_WIDTH = 288;
 const COLLAPSED_WIDTH = 56;
+// 底部 dock 统一高度：侧边栏用户配置块与主区输入框（MessageInput footer 变体）
+// 共用此常量，保证两者的"上边缘线"（Separator / borderTop）保持水平。
+// 取值覆盖两侧自然内容高度（含提示词徽标行），留少量余量。
+const FOOTER_DOCK_HEIGHT = 188;
 
 interface ChatSidebarProps {
     onNewChat: () => void;
@@ -350,8 +354,13 @@ export function ChatSidebar({
 
                 {/* ── User Footer —— 底部分格：不用独立框体/图标簇，
                     而是以分隔线划出的一格，内部是与侧边栏同风格的
-                    整行菜单项：用户设置 / 使用统计 / 模型设置 / 登出 ── */}
-                <div className="px-2 pt-2 pb-2 shrink-0 flex flex-col gap-0.5">
+                    整行菜单项：用户设置 / 使用统计 / 模型设置 / 登出。
+                    定高 FOOTER_DOCK_HEIGHT：与主区输入框 footer 等高，
+                    使 Separator 与输入框 borderTop 保持水平 ── */}
+                <div
+                    className="px-2 pt-2 pb-2 shrink-0 flex flex-col justify-center gap-0.5"
+                    style={{ height: `${FOOTER_DOCK_HEIGHT}px` }}
+                >
                     {/* 用户设置：头像 + 姓名/邮箱整行可点，点击打开个人资料 */}
                     <button
                         type="button"
@@ -439,4 +448,4 @@ export function ChatSidebar({
     );
 }
 
-export { EXPANDED_WIDTH, COLLAPSED_WIDTH };
+export { EXPANDED_WIDTH, COLLAPSED_WIDTH, FOOTER_DOCK_HEIGHT };
