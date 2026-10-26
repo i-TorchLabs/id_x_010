@@ -12,6 +12,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Input, Label, Modal, TextField } from "@heroui/react";
 import { LangToggle } from "@/components/LangToggle";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { useI18n } from "@/context/I18nContext";
 import { useDraggableDialog } from "@/hooks/useDraggableDialog";
 import { API_BASE_URL, BASE_URL } from "@/utils/config";
@@ -111,6 +112,7 @@ export function AdminPanel() {
         <span style={{ fontSize: 16, fontWeight: 600 }}>{t("admin.headerTitle")}</span>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <LangToggle />
+          <ThemeToggle />
           <Button size="sm" variant="ghost" onPress={handleLogout} style={{ fontSize: 13 }}>{t("admin.logout")}</Button>
         </div>
       </div>
