@@ -673,8 +673,8 @@ class SupervisorState(TypedDict):
     model_name: Optional[str]
     context: Optional[List[Dict[str, str]]]
     system_prompt: Optional[str]
-    # 用户上传的 Markdown 提示词内容：仅 sql_agent / code_agent 节点消费，
-    # general_agent 节点不读取（General Agent 不携带 Markdown 提示词）
+    # 用户上传的 Markdown 提示词内容：三个 Agent 节点（general / sql / code）
+    # 全部消费；prompt_disabled 已在控制器层拦截，这里仅做透传与空值兜底
     prompt_content: Optional[str]
 
 
@@ -939,6 +939,12 @@ class LangGraphSupervisor:
         if not system_prompt:
             system_prompt = DEFAULT_SYSTEM_PROMPT
 
+        # General Agent 也注入用户上传的 Markdown 提示词（与其他 Agent 一致）；
+        # 仅在 prompt_disabled / 无 active prompt 时跳过
+        injected = self._build_injected_prompt(state.get("prompt_content"))
+        if injected:
+            system_prompt = f"{injected}\n{system_prompt}"
+
         try:
             response, thinking = await self.general_agent.chat(
                 query=query,
@@ -1142,9 +1148,12 @@ class LangGraphSupervisor:
 
     @staticmethod
     def _build_injected_prompt(prompt_content: Optional[str]) -> Optional[str]:
-        """用户上传的 Markdown 文件作为系统提示词注入；仅文本前缀，不破坏既有路由逻辑。
+        """用户上传的 Markdown 文件作为系统提示词前缀注入；仅文本前缀，不破坏既有路由逻辑。
 
-        注入范围：仅 Data(SQL) Agent 与 Code Agent 携带；General Agent 不携带。
+        注入范围：General / SQL / Code 三个 Agent 全部携带；
+        是否真正注入取决于调用方传入的 prompt_content 是否为空
+        （控制器层在 prompt_disabled=True 时不读取 active prompt，
+        因此 prompt_content 自然为 None）。
         """
         if not prompt_content or not prompt_content.strip():
             return None
@@ -1174,10 +1183,9 @@ class LangGraphSupervisor:
         model_type = model_type or self.model_type
         model_name = model_name or self.model_name
 
-        # General Agent 模式禁止携带 Markdown 提示词（硬约束，防御任意调用方传入）；
-        # SQL/Code Agent 模式强制携带（下方各分支注入）
-        if agent_type == "general":
-            prompt_content = None
+        # 三种 Agent 模式 + 自动路由全部默认携带 Markdown 提示词；
+        # prompt_disabled 已在控制器层处理（不读取 active prompt），
+        # 这里不再做额外硬约束——prompt_content 为 None 时各 Agent 节点自然跳过
 
         # TASK-006：首次调用前尝试切到 PG checkpointer；失败降级 MemorySaver
         try:
@@ -1289,9 +1297,13 @@ class LangGraphSupervisor:
                     api_key=api_key,
                     base_url=base_url,
                 )
-                # General Agent 不携带用户上传的 Markdown 提示词
-                # （仅 Data/SQL Agent 与 Code Agent 注入）
+                # General Agent 默认携带 Markdown 提示词（与其他 Agent 一致）；
+                # prompt_disabled / 无 active prompt 时 injected 为 None，自然不注入
                 general_system_prompt = DEFAULT_SYSTEM_PROMPT
+                if injected_system_prompt:
+                    general_system_prompt = (
+                        f"{injected_system_prompt}\n{general_system_prompt}"
+                    )
                 try:
                     response, thinking = await general_agent.chat(
                         query=query,
@@ -1336,7 +1348,8 @@ class LangGraphSupervisor:
             "model_name": model_name,
             "context": context or [],
             "system_prompt": DEFAULT_SYSTEM_PROMPT,
-            # 仅 sql_agent / code_agent 节点消费；general_agent 节点不读取
+            # 三个 Agent 节点（general / sql / code）全部消费；
+            # 是否真正注入取决于 prompt_content 是否为空
             "prompt_content": prompt_content,
         }
 
@@ -1388,10 +1401,9 @@ class LangGraphSupervisor:
         model_type = model_type or self.model_type
         model_name = model_name or self.model_name
 
-        # General Agent 模式禁止携带 Markdown 提示词（硬约束，防御任意调用方传入）；
-        # SQL/Code Agent 模式强制携带（下方各分支注入）
-        if agent_type == "general":
-            prompt_content = None
+        # 三种 Agent 模式 + 自动路由全部默认携带 Markdown 提示词；
+        # prompt_disabled 已在控制器层处理（不读取 active prompt），
+        # 这里不再做额外硬约束——prompt_content 为 None 时各 Agent 节点自然跳过
 
         # TASK-006：首次调用前尝试切到 PG checkpointer；失败降级 MemorySaver
         try:
@@ -1402,7 +1414,7 @@ class LangGraphSupervisor:
                 f"{type(e).__name__}: {e}"
             )
 
-        # 用户上传的 Markdown 文件作为系统提示词注入（仅 SQL/Code 分支消费）
+        # 用户上传的 Markdown 文件作为系统提示词注入（三个 Agent 全部消费）
         injected_system_prompt = self._build_injected_prompt(prompt_content)
 
         if agent_type and agent_type in ["general", "sql", "code"]:
@@ -1496,9 +1508,11 @@ class LangGraphSupervisor:
                 base_url=base_url,
             )
 
-            # General Agent 不携带用户上传的 Markdown 提示词
-            # （仅 Data/SQL Agent 与 Code Agent 注入）
+            # General Agent 默认携带 Markdown 提示词（与其他 Agent 一致）；
+            # prompt_disabled / 无 active prompt 时 injected 为 None，自然不注入
             base_system_prompt = route_info.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
+            if injected_system_prompt:
+                base_system_prompt = f"{injected_system_prompt}\n{base_system_prompt}"
             async for chunk in agent.stream_chat(
                 query=query,
                 context=context,

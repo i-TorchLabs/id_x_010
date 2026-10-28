@@ -1179,14 +1179,13 @@ class Mutation:
                 chat_model_name = effective_model_name
 
             # 自动注入用户当前选中的 Markdown 提示词：
-            # - General Agent 模式：禁止携带，直接跳过查询
-            # - SQL/Code Agent 模式：强制携带（有选中文件即注入）
-            # - 自动路由（未指定 agent_type）：传入后由 supervisor 按命中
-            #   Agent 决定（general 节点不读取，sql/code 节点强制注入）
+            # - prompt_disabled=True（用户在前端点击取消）：本轮不携带，直接跳过查询
+            # - 其它情况（默认）：三种 Agent 模式 + 自动路由全部携带；
+            #   总线层仅读取并透传，是否注入由各 Agent 节点自行决定
             active_prompt_content: Optional[str] = None
-            if input.agent_type == "general":
+            if input.prompt_disabled:
                 logger.info(
-                    f"{get_request_id()}General Agent 模式：跳过 Markdown 提示词注入"
+                    f"{get_request_id()}用户已取消提示词注入(agent_type={input.agent_type or 'auto'})"
                 )
             else:
                 # 复用入口处已校验的 user，避免第三次 verify_token
@@ -3757,6 +3756,7 @@ class Subscription:
         conversation_id: Optional[str] = None,
         context: Optional[List[str]] = None,
         db_name: Optional[str] = None,
+        prompt_disabled: bool = False,
     ) -> AsyncGenerator[StreamChunkType, None]:
         try:
             logger.info(
@@ -3908,14 +3908,13 @@ class Subscription:
                 orchestrator = get_orchestrator()
 
             # 自动注入用户当前选中的 Markdown 提示词：
-            # - General Agent 模式：禁止携带，直接跳过查询
-            # - SQL/Code Agent 模式：强制携带（有选中文件即注入）
-            # - 自动路由（未指定 agent_type）：传入后由 supervisor 按命中
-            #   Agent 决定（general 节点不读取，sql/code 节点强制注入）
+            # - prompt_disabled=True（用户在前端点击取消）：本轮不携带，直接跳过查询
+            # - 其它情况（默认）：三种 Agent 模式 + 自动路由全部携带；
+            #   总线层仅读取并透传，是否注入由各 Agent 节点自行决定
             active_prompt_content: Optional[str] = None
-            if agent_type == "general":
+            if prompt_disabled:
                 logger.info(
-                    f"{get_request_id()}General Agent 模式：跳过 Markdown 提示词注入"
+                    f"{get_request_id()}用户已取消提示词注入(agent_type={agent_type or 'auto'})"
                 )
             else:
                 # 复用入口处已校验的 rl_user，避免第三次 verify_token

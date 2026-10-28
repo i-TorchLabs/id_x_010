@@ -425,6 +425,10 @@ class ChatInput:
     db_name: Optional[str] = strawberry.field(
         default=None, description="数据库名称，用于 SQL Agent 指定查询的数据库"
     )
+    prompt_disabled: bool = strawberry.field(
+        default=False,
+        description="用户在前端主动取消携带提示词时置 True；为 True 时本轮不注入 Markdown 提示词",
+    )
 
 
 # ---------------------------------------------------------------------------

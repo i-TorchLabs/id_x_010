@@ -135,6 +135,13 @@ export default function ChatHome() {
   const [activePrompt, setActivePrompt] = useState<MarkdownPromptItem | null>(
     null,
   );
+  // 用户主动取消提示词注入：默认 false（携带）；切换 activePrompt 时自动复位。
+  // 三种 Agent 模式 + 自动路由均默认携带；用户在 MessageInput 徽标上点 × 后置 true。
+  const [promptDismissed, setPromptDismissed] = useState(false);
+  useEffect(() => {
+    // 切换提示词（含置空）时复位取消状态，让新提示词默认携带
+    setPromptDismissed(false);
+  }, [activePrompt?.id]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // 加载模型列表（应用级别，初次加载 + 设置保存后刷新复用）
@@ -222,6 +229,7 @@ export default function ChatHome() {
       selectedModel?: any,
       agentType?: AgentType,
       dbName?: string | null,
+      promptDisabled?: boolean,
     ) => {
       if (!content.trim()) return;
 
@@ -270,6 +278,7 @@ export default function ChatHome() {
         agentType: agentType, // 传递 Agent 类型
         dbName: dbName,
         conversationId: currentConversationId,
+        promptDisabled,
         onChunk: (chunk: StreamChunk) => {
           switch (chunk.type) {
             case "intent":
@@ -1210,15 +1219,17 @@ export default function ChatHome() {
       const updatedMessages = messages.slice(0, messageIndex);
       setMessages(updatedMessages);
 
-      // 重新发送该用户消息（透传当前选中的模型/Agent/数据库，避免回退默认值）
+      // 重新发送该用户消息（透传当前选中的模型/Agent/数据库/提示词取消状态，
+      // 避免回退默认值与按钮上展示的"已取消/已携带"不一致）
       handleSendMessage(
         messageContent,
         selectedModel || undefined,
         selectedAgent,
         selectedDb,
+        promptDismissed,
       );
     },
-    [messages, handleSendMessage, selectedModel, selectedAgent, selectedDb],
+    [messages, handleSendMessage, selectedModel, selectedAgent, selectedDb, promptDismissed],
   );
 
   const isEmpty = messages.length === 0;
@@ -1268,6 +1279,8 @@ export default function ChatHome() {
               isLoadingModels={isLoadingModels}
               onModelChange={setSelectedModel}
               activePrompt={activePrompt}
+              promptDismissed={promptDismissed}
+              onPromptDismissedChange={setPromptDismissed}
             />
           </>
         ) : (
@@ -1381,6 +1394,8 @@ export default function ChatHome() {
               isLoadingModels={isLoadingModels}
               onModelChange={setSelectedModel}
               activePrompt={activePrompt}
+              promptDismissed={promptDismissed}
+              onPromptDismissedChange={setPromptDismissed}
             />
           </>
         )}

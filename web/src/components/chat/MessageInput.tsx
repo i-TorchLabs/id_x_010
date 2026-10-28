@@ -22,6 +22,7 @@ interface MessageInputProps {
     selectedModel?: ModelInfo,
     agentType?: AgentType,
     dbName?: string | null,
+    promptDisabled?: boolean,
   ) => void;
   onStop?: () => void;
   variant?: Variant;
@@ -40,6 +41,10 @@ interface MessageInputProps {
   onModelChange?: (m: ModelInfo | null) => void;
   /** 当前生效的提示词（由后端每轮对话自动注入）；仅作展示徽标用 */
   activePrompt?: MarkdownPromptItem | null;
+  /** 用户是否已主动取消携带提示词（受控状态，由 ChatHome 持有） */
+  promptDismissed?: boolean;
+  /** 用户点击 × 取消 / 点击"恢复"时回调 */
+  onPromptDismissedChange?: (dismissed: boolean) => void;
 }
 
 export function MessageInput({
@@ -56,10 +61,14 @@ export function MessageInput({
   isLoadingModels = false,
   onModelChange,
   activePrompt,
+  promptDismissed = false,
+  onPromptDismissedChange,
 }: MessageInputProps) {
   const [input, setInput] = useState("");
   const [internalSelectedAgent, setInternalSelectedAgent] =
     useState<AgentType>("general");
+  // dismiss 受控由 ChatHome 持有；local setter 仅做透传，避免受控/非受控混用告警
+  const setPromptDismissed = (v: boolean) => onPromptDismissedChange?.(v);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { theme } = useTheme();
   const { t } = useI18n();
@@ -78,7 +87,13 @@ export function MessageInput({
 
   const handleSend = () => {
     if (!input.trim() || isStreaming) return;
-    onSendMessage(input, selectedModel || undefined, selectedAgent, selectedDb);
+    onSendMessage(
+      input,
+      selectedModel || undefined,
+      selectedAgent,
+      selectedDb,
+      promptDismissed,
+    );
     setInput("");
   };
 
@@ -90,10 +105,57 @@ export function MessageInput({
   };
 
   // 当前生效的提示词徽标（仅展示；选中态由侧边栏「提示词库」分区管理）。
-  // General Agent 模式禁止携带 Markdown 提示词，徽标同步隐藏；
-  // SQL/Code Agent 模式强制携带，徽标正常展示。
-  const renderActivePromptBadge = () =>
-    activePrompt && selectedAgent !== "general" ? (
+  // 三种 Agent 模式 + 自动路由全部默认携带；用户可点 × 主动取消，
+  // 取消后展示"已取消 · 恢复"灰阶按钮，点击可重新携带。
+  const renderActivePromptBadge = () => {
+    if (!activePrompt) return null;
+
+    if (promptDismissed) {
+      return (
+        <button
+          type="button"
+          onClick={() => setPromptDismissed(false)}
+          aria-label={t("chat.ariaRestorePrompt")}
+          title={t("chat.ariaRestorePrompt")}
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors"
+          style={{
+            background: "transparent",
+            border: "0.5px solid var(--divider)",
+            color: "var(--fg4)",
+            cursor: "pointer",
+          }}
+        >
+          <svg
+            className="w-3 h-3 shrink-0"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.8}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            viewBox="0 0 24 24"
+          >
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+            <path d="M14 2v6h6" />
+            <path d="M9 14l3 3 3-3M12 8v9" />
+          </svg>
+          <span className="truncate max-w-[200px]">
+            {activePrompt.noteName ?? activePrompt.filename}
+          </span>
+          <span className="shrink-0">{t("chat.promptDismissed")}</span>
+          <span
+            className="shrink-0 px-1.5 py-0.5 rounded-md"
+            style={{
+              color: "var(--fg2)",
+              background: "var(--surface-1)",
+            }}
+          >
+            {t("chat.promptRestore")}
+          </span>
+        </button>
+      );
+    }
+
+    return (
       <div
         className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium"
         style={{
@@ -115,9 +177,47 @@ export function MessageInput({
         <span className="truncate max-w-[200px]">
           {activePrompt.noteName ?? activePrompt.filename}
         </span>
-        <span style={{ color: "var(--fg4)" }} className="shrink-0">{t("chat.promptInjected")}</span>
+        <span style={{ color: "var(--fg4)" }} className="shrink-0">
+          {t("chat.promptInjected")}
+        </span>
+        <button
+          type="button"
+          onClick={() => setPromptDismissed(true)}
+          aria-label={t("chat.ariaDismissPrompt")}
+          title={t("chat.ariaDismissPrompt")}
+          className="flex items-center justify-center shrink-0 rounded-md transition-colors"
+          style={{
+            width: 16,
+            height: 16,
+            color: "var(--fg4)",
+            background: "transparent",
+            border: "none",
+            cursor: "pointer",
+            padding: 0,
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = "var(--fg1)";
+            e.currentTarget.style.background = "var(--hover-bg)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = "var(--fg4)";
+            e.currentTarget.style.background = "transparent";
+          }}
+        >
+          <svg
+            className="w-3 h-3"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2.2}
+            strokeLinecap="round"
+            viewBox="0 0 24 24"
+          >
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
       </div>
-    ) : null;
+    );
+  };
 
   const renderSendButton = (isSmall: boolean) => (
     <Button

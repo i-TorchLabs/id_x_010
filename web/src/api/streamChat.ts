@@ -68,6 +68,8 @@ export interface StreamChatParams {
   dbName?: string | null;
   conversationId?: string | null;
   context?: string[] | null;
+  /** 用户在前端点击取消提示词时置 true；为 true 时本轮不注入 Markdown 提示词 */
+  promptDisabled?: boolean;
   onChunk: (chunk: StreamChunk) => void;
   onError?: (error: Error) => void;
   onComplete?: () => void;
@@ -121,6 +123,7 @@ class StreamChatClient {
       dbName = null,
       conversationId = null,
       context = null,
+      promptDisabled = false,
       onChunk,
       onError,
       onComplete,
@@ -135,8 +138,8 @@ class StreamChatClient {
     // toolName/toolOutput 字段——之前只查 4 个字段，导致审核气泡的 sql、SQL 阐述气泡的
     // sqlMeaning、result chunk 的数据、chart 配置等全部丢失。
     const graphqlQuery = `
-      subscription StreamChat($query: String!, $modelType: String, $modelName: String, $agentType: String, $dbName: String, $conversationId: String, $context: [String!]) {
-        streamChat(query: $query, modelType: $modelType, modelName: $modelName, agentType: $agentType, dbName: $dbName, conversationId: $conversationId, context: $context) {
+      subscription StreamChat($query: String!, $modelType: String, $modelName: String, $agentType: String, $dbName: String, $conversationId: String, $context: [String!], $promptDisabled: Boolean) {
+        streamChat(query: $query, modelType: $modelType, modelName: $modelName, agentType: $agentType, dbName: $dbName, conversationId: $conversationId, context: $context, promptDisabled: $promptDisabled) {
           type
           content
           modelUsed
@@ -164,6 +167,7 @@ class StreamChatClient {
       dbName,
       conversationId,
       context,
+      promptDisabled,
     };
 
     try {
