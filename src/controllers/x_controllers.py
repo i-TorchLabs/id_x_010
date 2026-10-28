@@ -4730,21 +4730,34 @@ def register_routers(route_prefix: str) -> Router:
         # 按 LLM_PROVIDER 加载提供商表配置（external_provider / local_provider）
         await load_llm_provider_config()
 
-        # 用户已保存自定义模型设置时，以其覆盖默认链路配置；
-        # 前端传入的 model_name 优先，仅在其为空时回退到用户默认模型
-        user_settings = await _get_bearer_settings(request)
-        if user_settings is not None and not model_name:
-            model_name = user_settings.model_name
+        # 模型解析（与 stream_chat 一致，统一走 resolve_model_endpoint）：
+        #   1. model_name 命中 system_model_settings → 系统模型 base_url/api_key
+        #      （有 per-user mapping 时用用户自己的 key）
+        #   2. 用户自定义 Provider（model_name_list）→ 该 Provider 端点
+        #   3. 旧版 user_settings 单 endpoint 兼容回退
+        #   4. 均未命中再查 external_models 表（兼容旧数据）
+        # 修复：此前只查 external_models + user_settings，选中系统预置模型时
+        # 解析不到端点，SQLAgent 回退到环境变量默认 base_url——SQL 照常执行
+        # 成功，但审批后的"结果解读"LLM 调用连不上模型服务，前端气泡显示
+        # "无法连接模型服务，请检查访问地址（base_url）…"。
+        approval_user = await _get_bearer_user(request)
+        user_settings = await _get_bearer_settings(request, user=approval_user)
+        override_api_key, override_base_url, resolved_model_name = (
+            await resolve_model_endpoint(
+                model_name,
+                user_settings,
+                approval_user.id if approval_user else None,
+            )
+        )
+        if resolved_model_name:
+            model_name = resolved_model_name
 
-        # 模型解析：前端选中的 model_name → external_models 表查 base_url/api_key
-        # 用户级模型（不在 external_models 表内）回退到 user_settings 的共享凭据
-        ext_model = await get_external_model_by_name(model_name or "")
-        if ext_model is not None:
-            override_api_key = ext_model.api_key
-            override_base_url = ext_model.base_url
-        else:
-            override_api_key = user_settings.api_key if user_settings else None
-            override_base_url = user_settings.base_url if user_settings else None
+        if override_api_key is None and model_name:
+            # 兼容旧数据：未命中系统模型/用户 Provider 时查 external_models
+            ext_model = await get_external_model_by_name(model_name)
+            if ext_model is not None:
+                override_api_key = ext_model.api_key
+                override_base_url = ext_model.base_url
 
         # db_name 为空时从 agent_db_settings 表取首行作为默认目标库，
         # 避免 DatabaseConnection 因无配置而连接失败

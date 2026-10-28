@@ -14,6 +14,8 @@ type Message = {
   thinkingTime?: number;
   modelUsed?: string;
   pendingSql?: string;
+  // 本轮最终 SQL（持久）：供 ChatMessage 的"SQL 内容"子气泡强制展示
+  executedSql?: string;
   // TASK-015：sqlMeaning 由 sql_explanation / sql_approval / sql_generated chunk 携带，
   // 独立 SqlExplanationBubble 据此渲染。审核状态变化时不应被清除。
   sqlMeaning?: string;

@@ -39,6 +39,9 @@ type ChatMessage = {
   thinkingTime?: number; // 思考时间（秒）
   modelUsed?: string; // 使用的模型
   pendingSql?: string; // SQL waiting for approval
+  // 本轮最终 SQL（持久）：sql_generated / sql_approval / 审批通过 / done 时写入，
+  // 不随审核状态流转或回答覆盖而丢失——"SQL 内容"子气泡据此强制展示
+  executedSql?: string;
   sqlMeaning?: string; // SQL 的一句话自然语言含义
   sqlApprovalStatus?: "pending" | "approved" | "rejected" | "cancelled"; // approval status
   contentType?: "sql"; // when set to "sql", content is SQL code
@@ -358,6 +361,7 @@ export default function ChatHome() {
                           ...msg,
                           content: sqlBuffer,
                           contentType: "sql" as const,
+                          executedSql: sqlBuffer,
                           modelUsed: modelUsed,
                           sqlMeaning: chunk.sqlMeaning || undefined,
                         }
@@ -416,6 +420,8 @@ export default function ChatHome() {
                     ? {
                         ...msg,
                         pendingSql: chunk.sql || chunk.content || "",
+                        executedSql:
+                          chunk.sql || chunk.content || msg.executedSql,
                         sqlMeaning: chunk.sqlMeaning || undefined,
                         sqlApprovalStatus: "pending" as const,
                         thinkingTime: Math.max(
@@ -464,6 +470,7 @@ export default function ChatHome() {
                         ...msg,
                         sqlApprovalStatus: "cancelled" as const,
                         pendingSql: undefined,
+                        contentType: undefined,
                         content: chunk.content || t("chat.messageQueryCancelled"),
                       }
                     : msg,
@@ -524,6 +531,7 @@ export default function ChatHome() {
                     msg.id === (responseMessageId || assistantMessageId)
                       ? {
                           ...msg,
+                          ...(chunk.sql ? { executedSql: chunk.sql } : {}),
                           ...(isEmptyResponse &&
                           !msg.pendingSql &&
                           !msg.resultData &&
@@ -738,7 +746,11 @@ export default function ChatHome() {
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === messageId
-            ? { ...msg, sqlApprovalStatus: "approved" as const }
+            ? {
+                ...msg,
+                sqlApprovalStatus: "approved" as const,
+                executedSql: sql,
+              }
             : msg,
         ),
       );
@@ -892,6 +904,10 @@ export default function ChatHome() {
                         content: chunk.content || t("chat.errorExecutionFailed"),
                         pendingSql: undefined,
                         sqlApprovalStatus: undefined,
+                        // 与主流程 error 分支一致：必须清掉 contentType——
+                        // sql_generated 已把 contentType 置为 "sql"，不清会把
+                        // 错误文本渲染进"SQL 内容"代码块
+                        contentType: undefined,
                         thinkingTime: Math.max(
                           0.1,
                           Math.round(
@@ -997,6 +1013,8 @@ export default function ChatHome() {
                     ? {
                         ...msg,
                         pendingSql: chunk.sql || chunk.content || "",
+                        executedSql:
+                          chunk.sql || chunk.content || msg.executedSql,
                         sqlMeaning: chunk.sqlMeaning || undefined,
                         sqlApprovalStatus: "pending" as const,
                         content: "",
@@ -1119,6 +1137,9 @@ export default function ChatHome() {
                         content: chunk.content || t("chat.errorRegenerationFailed"),
                         pendingSql: undefined,
                         sqlApprovalStatus: undefined,
+                        // 同 approve 流：清掉 contentType，避免错误文本渲染进
+                        // "SQL 内容"代码块
+                        contentType: undefined,
                         thinkingTime: Math.max(
                           0.1,
                           Math.round((Date.now() - rejectStartTime) / 100) / 10,
@@ -1179,6 +1200,7 @@ export default function ChatHome() {
                 ...msg,
                 sqlApprovalStatus: "cancelled" as const,
                 content: msg.content || "Query cancelled",
+                contentType: undefined,
                 pendingSql: undefined,
               }
             : msg,

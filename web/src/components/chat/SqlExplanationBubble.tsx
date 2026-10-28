@@ -1,6 +1,7 @@
 "use client";
 
 import { useTheme } from "@/context/ThemeContext";
+import { useI18n } from "@/context/I18nContext";
 import { motion } from "framer-motion";
 
 /**
@@ -21,6 +22,7 @@ interface SqlExplanationBubbleProps {
 
 export function SqlExplanationBubble({ sqlMeaning }: SqlExplanationBubbleProps) {
   const { theme } = useTheme();
+  const { t } = useI18n();
   const isDark = theme === "dark";
 
   if (!sqlMeaning) {
@@ -68,7 +70,7 @@ export function SqlExplanationBubble({ sqlMeaning }: SqlExplanationBubbleProps) 
               color: isDark ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.4)",
             }}
           >
-            SQL Overview
+            {t("chat.message.sqlOverviewTitle")}
           </span>
           <p
             className="font-text leading-relaxed"

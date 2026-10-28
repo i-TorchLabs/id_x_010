@@ -2255,6 +2255,10 @@ class SQLAgent:
             data = []
             columns = []
             error = None
+            # 终态判定标记：human_approval 挂起 / 安全拦截时，流在对应分支已
+            # 自行收尾（或等待审批续流），结尾不再补发空结果的回答与 done
+            approval_requested = False
+            security_blocked = False
             # 复用前置节点识别出的意图，传给 _generate_chart_config 避免重复 LLM 调用
             captured_intent: Optional[Dict[str, str]] = None
 
@@ -2357,6 +2361,7 @@ class SQLAgent:
                         # —— 否则用户看到告警被埋在灰色 thinking 区，且 loading 不消失
                         check_error = node_output.get("error")
                         if check_error:
+                            security_blocked = True
                             yield {
                                 "type": "thinking",
                                 "content": f"SQL 校验未通过：{check_error}",
@@ -2392,6 +2397,7 @@ class SQLAgent:
                         approval_status = node_output.get("approval_status", "")
                         sql_meaning = node_output.get("sql_meaning", "")
                         if approval_status == "pending":
+                            approval_requested = True
                             # TASK-012：落库 ApprovalTask + 推送 WS 事件，
                             # 让管理员能在 Approval Center 看到（即使关闭浏览器）
                             try:
@@ -2524,6 +2530,27 @@ class SQLAgent:
                     "sql": sql,
                     "answer": f"查询失败: {error}",
                     "error": error,
+                    "model_used": self.model_name,
+                    "usage": self._usage_snapshot(),
+                }
+            elif sql and not approval_requested and not security_blocked:
+                # 查询执行成功但结果为空（run_query 已发过 0 行 result chunk）：
+                # 补发"回答"正文与 done——前端 done 不读取 answer 字段，
+                # 缺 content chunk 会让四段式气泡的"回答"部分空缺
+                empty_answer = "查询结果为空，没有找到相关数据。"
+                yield {
+                    "type": "content",
+                    "content": empty_answer,
+                    "model_used": self.model_name,
+                }
+                _observe_llm(
+                    self.model_name, "sql", "success", time.perf_counter() - _started
+                )
+                yield {
+                    "type": "done",
+                    "sql": sql,
+                    "answer": empty_answer,
+                    "row_count": 0,
                     "model_used": self.model_name,
                     "usage": self._usage_snapshot(),
                 }
@@ -3035,10 +3062,17 @@ class SQLAgent:
                         self.model_name, "sql", "success", time.perf_counter() - _started
                     )
                 else:
+                    # 空结果也要给"回答"子气泡正文——前端 done 不读取 answer 字段
+                    empty_answer = "查询结果为空，没有找到相关数据。"
+                    yield {
+                        "type": "content",
+                        "content": empty_answer,
+                        "model_used": self.model_name,
+                    }
                     yield {
                         "type": "done",
                         "sql": sql,
-                        "answer": "查询结果为空",
+                        "answer": empty_answer,
                         "row_count": 0,
                         "model_used": self.model_name,
                         "usage": self._usage_snapshot(),

@@ -18,6 +18,9 @@ type Message = {
   thinkingTime?: number;
   modelUsed?: string;
   pendingSql?: string;
+  /** 本轮最终 SQL（持久）：sql_generated / sql_approval / 审批通过时写入，
+      不随审核状态流转或回答覆盖而丢失，供"SQL 内容"子气泡强制展示 */
+  executedSql?: string;
   sqlMeaning?: string;
   sqlApprovalStatus?: "pending" | "approved" | "rejected" | "cancelled";
   contentType?: "sql";
@@ -442,6 +445,27 @@ export function ChatMessage({
 
   const hasThinking = !!(parsedContent.thinking || message.thinkingTime);
 
+  // SQL Agent 轮次判定：命中后四个子气泡（思考 / SQL 概述 / SQL 内容 / 回答）
+  // 强制全部渲染——缺数据的部分用占位文案兜底，保证结构完整。
+  const isSqlFlow = !!(
+    message.executedSql ||
+    message.pendingSql ||
+    message.sqlMeaning ||
+    message.contentType === "sql" ||
+    message.resultData !== undefined
+  );
+  const isApprovalPending =
+    !!message.pendingSql && message.sqlApprovalStatus === "pending";
+  // "SQL 内容"展示源：持久化的 executedSql 优先；pending 的 SQL 与
+  // contentType==="sql" 的流式中间态兜底
+  const sqlText =
+    message.executedSql ||
+    message.pendingSql ||
+    (message.contentType === "sql" ? message.content : "");
+  // contentType === "sql" 时 content 是 SQL 流式中间态，不作为回答正文
+  const answerText =
+    message.contentType === "sql" ? "" : parsedContent.mainContent;
+
   const isExecuting =
     isStreaming ||
     (isSqlProcessing &&
@@ -596,7 +620,7 @@ export function ChatMessage({
                   顶 padding 12px 直接给视觉呼吸空间（Header 已移除）。
                   气泡内顺序：Thinking → SQL 概述 → SQL 内容 → 回答内容，
                   四部分共用 subBubbleStyle 统一风格。 */}
-              {hasThinking && parsedContent.thinking && (
+              {(parsedContent.thinking || isSqlFlow) && (
                 <div style={{ padding: "12px 16px 0 16px" }}>
                   <div style={subBubbleStyle}>
                     <div
@@ -756,7 +780,10 @@ export function ChatMessage({
                                   lineHeight: 1.55,
                                 }}
                               >
-                                {formatThinkingContent(parsedContent.thinking)}
+                                {formatThinkingContent(
+                                  parsedContent.thinking ||
+                                    t("chat.message.noThinking"),
+                                )}
                               </div>
                             </div>
                           </div>
@@ -769,7 +796,14 @@ export function ChatMessage({
 
               {/* SQL 概述 —— 气泡内 4 部分之二：SQL 语句功能概述。
                   与审核状态解耦：审核期间/通过/拒绝后只要有 sqlMeaning 就显示。 */}
-              <SqlExplanationBubble sqlMeaning={message.sqlMeaning} />
+              <SqlExplanationBubble
+                sqlMeaning={
+                  message.sqlMeaning ||
+                  (isSqlFlow
+                    ? t("chat.message.sqlOverviewUnavailable")
+                    : undefined)
+                }
+              />
 
               {/* SQL 内容 + 人工确认 —— 气泡内 4 部分之三：SQL 语句人工确认。
                   展示 SQL 代码 + Approve/Regenerate/Cancel 按钮，仅在 pending 状态显示。 */}
@@ -784,17 +818,11 @@ export function ChatMessage({
                   />
                 )}
 
-              {/* 回答内容 —— 气泡内 4 部分之四：正文回答。
-                  streaming 中无内容时显示加载点；有内容时包装进统一子气泡。
-                  contentType === "sql" 是 SQL 流式生成中间态，预览 SQL 代码。 */}
-              {!parsedContent.mainContent ? (
-                isStreaming ? (
-                  <div style={{ padding: "12px 16px 12px 16px" }}>
-                    <ThinkingDots visible label={t("chat.message.thinkingLabel")} />
-                  </div>
-                ) : null
-              ) : message.contentType === "sql" ? (
-                <div style={{ padding: "12px 16px 12px 16px" }}>
+              {/* SQL 内容（持久）—— 审核面板仅在 pending 时承担此角色；
+                  其余状态（生成中 / 已批准执行 / 已拒绝 / 已取消 / 执行完成）
+                  由此块持久展示本轮 SQL，保证"SQL 内容"子气泡强制存在。 */}
+              {isSqlFlow && !isApprovalPending && (
+                <div style={{ padding: "12px 16px 0 16px" }}>
                   <div style={subBubbleStyle}>
                     <div
                       className="font-text"
@@ -807,12 +835,54 @@ export function ChatMessage({
                         className="whitespace-pre-wrap wrap-break-word"
                         style={codeTextStyle}
                       >
-                        {parsedContent.mainContent}
+                        {sqlText ||
+                          (isStreaming
+                            ? t("chat.message.sqlContentGenerating")
+                            : t("chat.message.sqlContentEmpty"))}
                       </pre>
                     </div>
-                    <ThinkingDots visible={!!isStreaming} label={t("chat.message.thinkingLabel")} />
+                    {message.contentType === "sql" && (
+                      <ThinkingDots
+                        visible={!!isStreaming}
+                        label={t("chat.message.thinkingLabel")}
+                      />
+                    )}
                   </div>
                 </div>
+              )}
+
+              {/* 回答内容 —— 气泡内 4 部分之四：正文回答。
+                  streaming 中无内容时显示加载点；SQL 轮次无正文时用占位
+                  文案强制渲染该子气泡（待审核 / 本轮无回答）。 */}
+              {!answerText ? (
+                isStreaming || isSqlProcessing ? (
+                  <div style={{ padding: "12px 16px 12px 16px" }}>
+                    <ThinkingDots visible label={t("chat.message.thinkingLabel")} />
+                  </div>
+                ) : isSqlFlow && !message.securityBlock ? (
+                  <div style={{ padding: "12px 16px 12px 16px" }}>
+                    <div style={subBubbleStyle}>
+                      <div
+                        className="font-text"
+                        style={{ ...subBubbleTitleStyle, marginBottom: 6 }}
+                      >
+                        {t("chat.message.answerTitle")}
+                      </div>
+                      <p
+                        className="font-text"
+                        style={{
+                          fontSize: "13px",
+                          color: "var(--fg3)",
+                          margin: 0,
+                        }}
+                      >
+                        {isApprovalPending
+                          ? t("chat.message.answerPending")
+                          : t("chat.message.answerEmpty")}
+                      </p>
+                    </div>
+                  </div>
+                ) : null
               ) : (
                 <div style={{ padding: "12px 16px 12px 16px" }}>
                   <div style={subBubbleStyle}>
@@ -831,7 +901,7 @@ export function ChatMessage({
                         color: "var(--fg1)",
                       }}
                     >
-                      {parsedContent.mainContent
+                      {answerText
                         .split("\n")
                         .map((paragraph, index) => {
                           if (!paragraph.trim()) return <br key={index} />;
