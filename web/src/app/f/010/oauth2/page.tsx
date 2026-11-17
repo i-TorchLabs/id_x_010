@@ -52,6 +52,12 @@ export default function OAuthCallbackPage() {
         }
         localStorage.setItem("token", resp.token);
         localStorage.setItem("user", JSON.stringify(resp.user));
+        // 未配置个人 API-Key：登录后由 ChatHome 弹窗提示联系管理员
+        if (resp.user.hasApiKey === false) {
+          localStorage.setItem("apiKeyNotice", "1");
+        } else {
+          localStorage.removeItem("apiKeyNotice");
+        }
         // 标记当前会话由 SSO 建立，登出时一并退出 ADFS
         setSsoLoginFlag();
         // SSO 默认建立普通用户：管理员若经 SSO 登录则按 role 跳转。

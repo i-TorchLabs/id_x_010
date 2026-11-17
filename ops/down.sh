@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # ====================================================================
-# id_x_010 一体化容器部署停止/清理脚本（podman）
+# id_x_010 容器部署停止/清理脚本（podman，外部第三方 PostgreSQL 模式）
+#
+# 数据不在本机（外部第三方库），--volumes 仅清理日志卷。
 #
 # 用法：
 #   bash down.sh              # 移除容器与 Pod（保留镜像与数据卷）
-#   bash down.sh --volumes    # 同时删除数据卷（数据库与日志，不可恢复！）
+#   bash down.sh --volumes    # 同时删除日志卷（不可恢复！）
 #   bash down.sh --images     # 同时删除本项目构建的镜像
 #   bash down.sh --all        # 同时删除数据卷与镜像（完全清理）
 # ====================================================================
@@ -22,7 +24,7 @@ for arg in "$@"; do
     -a|--all)     REMOVE_VOLUMES=1; REMOVE_IMAGES=1 ;;
     -h|--help)
       echo "用法: bash down.sh [--volumes|--images|--all]"
-      echo "  --volumes, -v   同时删除数据卷（${PROJECT_NAME}_db / ${PROJECT_NAME}_logs，不可恢复）"
+      echo "  --volumes, -v   同时删除数据卷（${PROJECT_NAME}_logs，不可恢复）"
       echo "  --images,  -i   同时删除本项目构建的镜像（service / web）"
       echo "  --all,     -a   同时删除数据卷与镜像（完全清理）"
       exit 0
@@ -35,9 +37,9 @@ for arg in "$@"; do
 done
 
 # ============================================
-# 1. 移除容器（顺序与启动相反）
+# 1. 移除容器（顺序与启动相反；无 db 容器——数据库为外部第三方库）
 # ============================================
-for name in "${PROJECT_NAME}-haproxy" "${PROJECT_NAME}-web" "${PROJECT_NAME}-service" "${PROJECT_NAME}-db"; do
+for name in "${PROJECT_NAME}-haproxy" "${PROJECT_NAME}-web" "${PROJECT_NAME}-service"; do
   if podman container exists "$name"; then
     podman rm -f "$name" >/dev/null
     echo "[down] 容器 $name 已移除"
@@ -54,7 +56,7 @@ fi
 
 # ============================================
 # 3. 可选：删除本项目构建的镜像（默认保留）
-#    官方镜像（postgres / haproxy）为共享依赖，始终不删
+#    官方镜像（haproxy）为共享依赖，始终不删
 # ============================================
 if [ "$REMOVE_IMAGES" = "1" ]; then
   for image in "localhost/${PROJECT_NAME}-service" "localhost/${PROJECT_NAME}-web"; do
@@ -71,17 +73,18 @@ else
 fi
 
 # ============================================
-# 4. 可选：删除数据卷（默认保留，数据库不丢）
+# 4. 可选：删除数据卷（默认保留）
+#    数据库数据在外部第三方库上，不在本机卷内
 # ============================================
 if [ "$REMOVE_VOLUMES" = "1" ]; then
-  for vol in "${PROJECT_NAME}_db" "${PROJECT_NAME}_logs"; do
+  for vol in "${PROJECT_NAME}_logs"; do
     if podman volume exists "$vol"; then
       podman volume rm "$vol" >/dev/null
       echo "[down] 数据卷 $vol 已删除"
     fi
   done
 else
-  echo "[down] 数据卷 ${PROJECT_NAME}_db / ${PROJECT_NAME}_logs 已保留（如需清除: bash down.sh --volumes）"
+  echo "[down] 数据卷 ${PROJECT_NAME}_logs 已保留（如需清除: bash down.sh --volumes）"
 fi
 
 echo "[down] 清理完成"

@@ -30,9 +30,8 @@ litellm==1.97.0
 strawberry-graphql
 matplotlib
 psycopg2
-# pgvector：供 table_comments / document_chunks 等表向量列使用，
-# 配合 ops/compose.yaml 的 pgvector/pgvector:pg18 镜像。
-pgvector>=0.3.0
+# pgvector 已移除：外部第三方 PostgreSQL 部署不依赖 vector 扩展，
+# embedding 列恒为 JSON（见 src/models/x_models.py 的 EmbeddingType）。
 # General Agent 工具链（TASK-004）：numexpr 用于安全求值数学表达式；
 # tavily-python 提供联网搜索（缺 API key 时工具降级返回提示）。
 # 注意：numexpr 3.x 要求 Python ≥ 3.11；当前 Dockerfile 用 python:3.10-slim，

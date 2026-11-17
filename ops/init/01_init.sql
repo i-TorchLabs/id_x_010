@@ -1,7 +1,7 @@
--- PostgreSQL 初始化脚本
--- 由 db 容器 docker-entrypoint-initdb.d 在首次启动时自动执行。
--- entrypoint 已在 POSTGRES_DB 指定的库内建立连接，本脚本不再
--- 硬编码库名（改 POSTGRES_DB 即可整体切换目标库）。
+-- PostgreSQL 初始化脚本（手动初始化外部第三方库参考）
+-- 默认部署（外部第三方 PostgreSQL）由应用启动时 create_all + x_seed
+-- 幂等建表/播种，本脚本无须执行；仅作人工审阅 / 手动初始化备用，
+-- 连接目标库后按文件名顺序执行 init/01~09 即可。
 
 -- ============================================
 -- 1. 用户表 (users)
@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
     role VARCHAR(64) NOT NULL DEFAULT 'user',
     password_algo VARCHAR(16) DEFAULT 'bcrypt',
     system_model_quota_usd DOUBLE PRECISION,
+    api_key VARCHAR(512),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -31,6 +32,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(64) NOT NULL DEFAULT 'user';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_algo VARCHAR(16) DEFAULT 'bcrypt';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS system_model_quota_usd DOUBLE PRECISION;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS api_key VARCHAR(512);
 
 -- 用户表索引
 CREATE INDEX IF NOT EXISTS ix_users_email ON users(email);
@@ -49,6 +51,7 @@ COMMENT ON COLUMN users.is_admin IS '是否管理员（admin ∈ role 的派生�
 COMMENT ON COLUMN users.role IS '用户角色（逗号分隔多角色）：user / admin / user,admin';
 COMMENT ON COLUMN users.password_algo IS '密码哈希算法：bcrypt / sha256（老数据）';
 COMMENT ON COLUMN users.system_model_quota_usd IS '系统预置模型月度配额上限（USD）；NULL 不限额，仅限系统模型';
+COMMENT ON COLUMN users.api_key IS '用户个人 API-Key（调用系统预置模型计费凭据）；NULL 表示未配置，登录后弹窗提示联系管理员';
 COMMENT ON COLUMN users.created_at IS '创建时间';
 COMMENT ON COLUMN users.updated_at IS '更新时间';
 
@@ -255,7 +258,6 @@ CREATE TABLE IF NOT EXISTS system_model_settings (
     name VARCHAR(128) NOT NULL UNIQUE,
     provider VARCHAR(64) NOT NULL,
     base_url VARCHAR(256) NOT NULL,
-    api_key VARCHAR(512) NOT NULL,
     model_type VARCHAR(32) NOT NULL DEFAULT 'external',
     is_default BOOLEAN NOT NULL DEFAULT FALSE,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -271,33 +273,16 @@ COMMENT ON TABLE system_model_settings IS '系统预置模型表（管理员维�
 COMMENT ON COLUMN system_model_settings.name IS '模型名称';
 COMMENT ON COLUMN system_model_settings.provider IS '模型厂商';
 COMMENT ON COLUMN system_model_settings.base_url IS '访问地址';
-COMMENT ON COLUMN system_model_settings.api_key IS 'API-KEY';
 COMMENT ON COLUMN system_model_settings.model_type IS '模型类型: local 或 external';
 COMMENT ON COLUMN system_model_settings.is_default IS '是否为系统默认模型（用户未配置时的回退默认）';
 COMMENT ON COLUMN system_model_settings.enabled IS '是否启用（禁用后不在选择器展示）';
 COMMENT ON COLUMN system_model_settings.sort_order IS '排序序号（小在前）';
 
--- ============================================
--- 7c. 用户对系统预置模型的 API Key 映射表 (system_model_user_mappings)
---    每用户可为每个系统预置模型覆盖自己的 api_key，用于按用户统计用量
--- ============================================
-CREATE TABLE IF NOT EXISTS system_model_user_mappings (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id),
-    system_model_id INTEGER NOT NULL REFERENCES system_model_settings(id) ON DELETE CASCADE,
-    api_key VARCHAR(512) NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    CONSTRAINT uq_user_system_model UNIQUE (user_id, system_model_id)
-);
+-- 老库迁移：api_key 已移至 users.api_key（每用户独立计费），移除本表遗留列
+ALTER TABLE system_model_settings DROP COLUMN IF EXISTS api_key;
 
-CREATE INDEX IF NOT EXISTS ix_system_model_user_mappings_user_id ON system_model_user_mappings(user_id);
-CREATE INDEX IF NOT EXISTS ix_system_model_user_mappings_system_model_id ON system_model_user_mappings(system_model_id);
-
-COMMENT ON TABLE system_model_user_mappings IS '用户对系统预置模型的 API Key 映射表';
-COMMENT ON COLUMN system_model_user_mappings.user_id IS '用户 ID';
-COMMENT ON COLUMN system_model_user_mappings.system_model_id IS '系统预置模型 ID';
-COMMENT ON COLUMN system_model_user_mappings.api_key IS '用户个人 API Key（覆盖系统模型全局 key）';
+-- 老库迁移：system_model_user_mappings 表已废弃（api_key 统一存 users.api_key），安全删除
+DROP TABLE IF EXISTS system_model_user_mappings;
 
 -- ============================================
 -- 8. SQL Agent 目标库配置表 (agent_db_settings)

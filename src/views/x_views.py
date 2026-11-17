@@ -18,7 +18,6 @@ from x_models.id_x_010.src.models.x_models import (
     ModelPrice,
     SsoSettings,
     SystemModelSettings,
-    SystemModelUserMapping,
     UsageLog,
     User,
     UserMarkdownPrompt,
@@ -170,6 +169,7 @@ def build_user_info(user: User) -> "UserInfoType":
         role=getattr(user, "role", None) or (
             "admin" if getattr(user, "is_admin", False) else "user"
         ),
+        has_api_key=bool(getattr(user, "api_key", None)),
         created_at=user.created_at.isoformat() if user.created_at else None,
     )
 
@@ -718,7 +718,8 @@ async def get_system_model_by_name(name: str) -> Optional[SystemModelSettings]:
     """按模型名称查询单行系统预置模型。
 
     供 chat / sql_approval 等流程判断前端选中的 model_name 是否为系统模型：
-    命中则用该行的 base_url / api_key 发起 LLM 调用，覆盖用户级设置。
+    命中则用该行的 base_url 发起 LLM 调用（api_key 取用户个人 key，见
+    resolve_model_endpoint），覆盖用户级设置。
     """
     if not name:
         return None
@@ -737,7 +738,6 @@ async def upsert_system_model(
     name: str,
     provider: str,
     base_url: str,
-    api_key: str,
     model_type: str = "external",
     is_default: bool = False,
     enabled: bool = True,
@@ -769,7 +769,6 @@ async def upsert_system_model(
                         name=name,
                         provider=provider,
                         base_url=base_url,
-                        api_key=api_key,
                         model_type=model_type or "external",
                         is_default=is_default,
                         enabled=enabled,
@@ -780,7 +779,6 @@ async def upsert_system_model(
             model.name = name
             model.provider = provider
             model.base_url = base_url
-            model.api_key = api_key
             model.model_type = model_type or "external"
             model.enabled = enabled
             model.sort_order = sort_order
@@ -940,117 +938,51 @@ async def delete_model_price(price_id: int) -> bool:
 
 
 # ==========================================
-# 用户对系统预置模型的 API Key 映射
-# (system_model_user_mappings 表)
+# 用户个人 API-Key（users.api_key）
+# 调用系统预置模型的独立计费凭据，管理员经
+# adminSetUserApiKey mutation 设置/清除
 # ==========================================
 
 
-async def get_user_system_model_mapping(
-    user_id: int, system_model_id: int
-) -> Optional[SystemModelUserMapping]:
-    """查询单个用户对单个系统模型的 API Key 覆盖记录。"""
+async def get_user_api_key(user_id: int) -> Optional[str]:
+    """读取用户个人 API-Key；用户不存在或未配置时返回 None。"""
+    if user_id is None:
+        return None
     try:
         async with get_session()() as session:
             result = await session.execute(
-                select(SystemModelUserMapping).where(
-                    SystemModelUserMapping.user_id == user_id,
-                    SystemModelUserMapping.system_model_id == system_model_id,
-                )
+                select(User.api_key).where(User.id == user_id)
             )
             return result.scalar_one_or_none()
     except Exception as e:
-        logger.error(f"{get_request_id()}查询用户系统模型映射失败: {e}", exc_info=True)
+        logger.error(f"{get_request_id()}读取用户 API-Key 失败: {e}", exc_info=True)
         return None
 
 
-async def list_user_system_model_mappings(
-    user_id: int,
-) -> List[SystemModelUserMapping]:
-    """列出指定用户对全部系统模型的 API Key 映射。"""
-    try:
-        async with get_session()() as session:
-            result = await session.execute(
-                select(SystemModelUserMapping)
-                .where(SystemModelUserMapping.user_id == user_id)
-                .order_by(SystemModelUserMapping.id.asc())
-            )
-            return list(result.scalars().all())
-    except Exception as e:
-        logger.error(
-            f"{get_request_id()}列出用户系统模型映射失败: {e}", exc_info=True
-        )
-        return []
+async def set_user_api_key(user_id: int, api_key: str) -> bool:
+    """设置/清除用户个人 API-Key。
 
-
-async def upsert_user_system_model_mapping(
-    user_id: int,
-    system_model_id: int,
-    api_key: str,
-) -> Optional[SystemModelUserMapping]:
-    """新建或更新用户对系统模型的 API Key 映射。
-
-    (user_id, system_model_id) 唯一——已存在则更新 api_key，不存在则插入。
+    ``api_key`` 去首尾空白后为空串视为清除（写 NULL）；否则覆盖写入。
+    返回是否成功（用户不存在或 DB 异常返回 False）。
     """
+    key = (api_key or "").strip()
     try:
         async with get_session()() as session:
             result = await session.execute(
-                select(SystemModelUserMapping).where(
-                    SystemModelUserMapping.user_id == user_id,
-                    SystemModelUserMapping.system_model_id == system_model_id,
-                )
+                select(User).where(User.id == user_id)
             )
-            mapping = result.scalar_one_or_none()
-
-            if mapping is None:
-                mapping = SystemModelUserMapping(
-                    user_id=user_id,
-                    system_model_id=system_model_id,
-                    api_key=api_key,
-                )
-                session.add(mapping)
-            else:
-                mapping.api_key = api_key
-
-            await session.commit()
-            await session.refresh(mapping)
-            logger.info(
-                f"{get_request_id()}用户系统模型映射已保存: "
-                f"user_id={user_id}, system_model_id={system_model_id}"
-            )
-            return mapping
-    except Exception as e:
-        logger.error(
-            f"{get_request_id()}保存用户系统模型映射失败: {e}", exc_info=True
-        )
-        return None
-
-
-async def delete_user_system_model_mapping(
-    user_id: int, system_model_id: int
-) -> bool:
-    """删除用户对系统模型的 API Key 映射（回退到全局 key）。"""
-    try:
-        async with get_session()() as session:
-            result = await session.execute(
-                select(SystemModelUserMapping).where(
-                    SystemModelUserMapping.user_id == user_id,
-                    SystemModelUserMapping.system_model_id == system_model_id,
-                )
-            )
-            mapping = result.scalar_one_or_none()
-            if mapping is None:
+            user = result.scalar_one_or_none()
+            if user is None:
                 return False
-            await session.delete(mapping)
+            user.api_key = key if key else None
             await session.commit()
             logger.info(
-                f"{get_request_id()}用户系统模型映射已删除: "
-                f"user_id={user_id}, system_model_id={system_model_id}"
+                f"{get_request_id()}用户 API-Key 已{'清除' if not key else '设置'}: "
+                f"user_id={user_id}"
             )
             return True
     except Exception as e:
-        logger.error(
-            f"{get_request_id()}删除用户系统模型映射失败: {e}", exc_info=True
-        )
+        logger.error(f"{get_request_id()}设置用户 API-Key 失败: {e}", exc_info=True)
         return False
 
 
@@ -1062,38 +994,35 @@ async def resolve_model_endpoint(
     """解析实际调用的模型端点（api_key, base_url, model_name）。
 
     优先级：
-    1. ``model_name`` 命中 ``system_model_settings`` 且该用户有 per-user mapping →
-       使用用户的 api_key + 系统模型的 base_url
-    2. ``model_name`` 命中 ``system_model_settings`` 但无 per-user mapping →
-       使用系统模型的全局 api_key
-    3. ``user_id`` 非空且 ``model_name`` 在用户的某个 UserModelProperty.model_name_list 中 →
+    1. ``model_name`` 命中 ``system_model_settings`` →
+       使用系统模型的 base_url + 用户个人 key（``users.api_key``，按用户独立计费）；
+       未配置个人 key 时 api_key 返回 None，由调用方决定拦截或回退
+    2. ``user_id`` 非空且 ``model_name`` 在用户的某个 UserModelProperty.model_name_list 中 →
        使用该 Provider 的 base_url / api_key
-    4. ``user_settings`` 非空 → 使用旧版单 endpoint（兼容）
-    5. ``model_name`` 为空时回退到系统默认模型（``system_model_settings.is_default=True``）
-    6. 均无 → 返回全 None（由调用方回退到全局 orchestrator）
+    3. ``user_settings`` 非空 → 使用旧版单 endpoint（兼容）
+    4. ``model_name`` 为空时回退到系统默认模型（``system_model_settings.is_default=True``），
+       api_key 同样取自 ``users.api_key``
+    5. 均无 → 返回全 None（由调用方回退到全局 orchestrator）
 
     Args:
-        user_id: 当前用户 ID；传入时查 per-user mapping 和多 Provider。
+        user_id: 当前用户 ID；传入时查个人 api_key 和多 Provider。
         model_name: 旧版用户设置（兼容回退）；model_name 用于取默认模型名。
 
     Returns:
         (api_key, base_url, effective_model_name)
     """
     if model_name:
-        # 1) 系统预置模型
+        # 1) 系统预置模型：base_url 共享，api_key 取用户个人 key
         sys_model = await get_system_model_by_name(model_name)
         if sys_model is not None and sys_model.enabled:
-            api_key = sys_model.api_key
-            if user_id is not None:
-                user_mapping = await get_user_system_model_mapping(
-                    user_id, sys_model.id
+            api_key = (
+                await get_user_api_key(user_id) if user_id is not None else None
+            )
+            if api_key:
+                logger.info(
+                    f"{get_request_id()}使用用户个人 API-Key: "
+                    f"user_id={user_id}, model={model_name}"
                 )
-                if user_mapping is not None:
-                    api_key = user_mapping.api_key
-                    logger.info(
-                        f"{get_request_id()}使用 per-user 系统模型 key: "
-                        f"user_id={user_id}, model={model_name}"
-                    )
             return api_key, sys_model.base_url, model_name
 
         # 2) 用户自定义 Provider（多 Provider 模式）
@@ -1117,7 +1046,10 @@ async def resolve_model_endpoint(
             logger.info(
                 f"{get_request_id()}model_name 为空，回退到系统默认模型: {default_model.name}"
             )
-            return default_model.api_key, default_model.base_url, default_model.name
+            api_key = (
+                await get_user_api_key(user_id) if user_id is not None else None
+            )
+            return api_key, default_model.base_url, default_model.name
 
     return None, None, model_name
 

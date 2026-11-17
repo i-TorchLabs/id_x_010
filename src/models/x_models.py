@@ -18,13 +18,16 @@ from sqlalchemy import (
 )
 
 try:
-    # pgvector 提供向量列类型，用于 RAG 召回 / Few-Shot 检索。
-    # 缺失时退回 JSON，保证模型可在未启用扩展的环境下导入。
-    from pgvector.sqlalchemy import Vector
+    # 外部第三方 PostgreSQL 部署：不依赖 pgvector 扩展（库上通常无权安装）。
+    # embedding 一律用 JSON 列表存储，向量召回在应用层计算余弦相似度
+    # （见 x_vectorstore.search_tables / x_fewshot 的既有降级路径，
+    # 召回链路与 JSON 列天然兼容）。此 try/except 保留兼容：万一环境
+    # 装了 pgvector 包也仍走 JSON，保证任何外部库都能建表。
+    raise ImportError  # 强制 JSON 路径，不引入 vector 列类型
+except ImportError:  # pragma: no cover - 恒走本分支
+    from sqlalchemy import JSON
 
-    EMBEDDING_DIM = 1024  # Qwen3-Embedding-8B 维度
-    EmbeddingType = Vector(EMBEDDING_DIM)
-except ImportError:  # pragma: no cover - 仅在缺失依赖时触发
+    EMBEDDING_DIM = 1024  # Qwen3-Embedding-8B 维度（应用层召回时校验用）
     EmbeddingType = JSON()
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import (
@@ -378,6 +381,15 @@ class User(Base):
         default=None,
         comment="系统预置模型月度配额上限（USD）；NULL 不限额，仅限系统模型",
     )
+    # 个人 API Key：系统预置模型共享 base_url/名称等配置，凭此 key 调用并单独计费。
+    # 由管理员统一分发（adminSetUserApiKey），用户不可自助修改；
+    # 为空表示未配置，登录后前端弹窗提示联系管理员获取。
+    api_key: Mapped[Optional[str]] = mapped_column(
+        String(512),
+        nullable=True,
+        default=None,
+        comment="个人 API Key（系统模型调用凭据，按用户单独计费；管理员配置）",
+    )
     created_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -673,7 +685,7 @@ class UserModelProperty(Base):
 
 
 class SystemModelSettings(Base):
-    """系统预置模型配置（管理员维护，用户只读）。
+    """系统预置模型配置（管理员维护，用户只读；模型列表全员共享）。
 
     每行一个模型；``enabled=True`` 的行出现在所有用户的模型选择器中，
     与 ``user_model_settings.model_name_list`` 合并展示。用户可在选择器中
@@ -683,11 +695,12 @@ class SystemModelSettings(Base):
     与 ``user_model_settings`` 的差异：
     - ``user_model_settings`` 每用户一行，``model_name_list`` 存多条模型名，
       共享同一 endpoint（provider/base_url/api_key）。
-    - ``system_model_settings`` 每模型一行，各自携带独立 endpoint，
+    - ``system_model_settings`` 每模型一行，各自携带独立 base_url，
       便于不同系统模型接入不同提供商。
 
-    选中系统模型发起对话时，后端按 ``name`` 查表取该行的
-    ``base_url`` / ``api_key``，覆盖用户级设置的同名字段。
+    本表不再存储 api_key：调用凭据统一来自 ``users.api_key``（个人 key，
+    按用户单独计费），选中系统模型时后端按 ``name`` 查表取 ``base_url``，
+    并叠加当前登录用户的个人 key 发起调用（见 resolve_model_endpoint）。
     """
 
     __tablename__ = "system_model_settings"
@@ -701,7 +714,6 @@ class SystemModelSettings(Base):
     base_url: Mapped[str] = mapped_column(
         String(256), nullable=False, comment="访问地址"
     )
-    api_key: Mapped[str] = mapped_column(String(512), nullable=False, comment="API-KEY")
     model_type: Mapped[str] = mapped_column(
         String(32), default="external", nullable=False, comment="模型类型: local 或 external"
     )
@@ -732,76 +744,10 @@ class SystemModelSettings(Base):
             "name": self.name,
             "provider": self.provider,
             "base_url": self.base_url,
-            "api_key": self.api_key,
             "model_type": self.model_type,
             "is_default": bool(self.is_default),
             "enabled": bool(self.enabled),
             "sort_order": self.sort_order,
-            "created_at": self.created_at.isoformat()
-            if self.created_at is not None
-            else None,
-            "updated_at": self.updated_at.isoformat()
-            if self.updated_at is not None
-            else None,
-        }
-
-
-class SystemModelUserMapping(Base):
-    """用户对系统预置模型的个人 API Key 映射。
-
-    管理员在 ``system_model_settings`` 中定义全局系统模型（含全局默认 api_key）；
-    每个用户可在此表覆盖为自己的 api_key，便于按用户统计系统模型调用花费与用量。
-
-    解析优先级（``resolve_model_endpoint``）：
-    1. 命中系统模型且有 per-user mapping → 使用用户的 api_key + 系统模型的 base_url
-    2. 命中系统模型但无 per-user mapping → 使用系统模型的全局 api_key
-    3. 都未命中 → 回退到 user_model_settings
-
-    (user_id, system_model_id) 唯一：同一用户对同一系统模型仅一条覆盖记录。
-    用户可经 ``saveSystemModelUserKey`` mutation 设置自己的 key，
-    也可经 ``deleteSystemModelUserKey`` 删除（回退到全局 key）。
-    """
-
-    __tablename__ = "system_model_user_mappings"
-    __table_args__ = (
-        UniqueConstraint(
-            "user_id", "system_model_id", name="uq_user_system_model"
-        ),
-        {"comment": "用户对系统预置模型的 API Key 映射表"},
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("users.id"), nullable=False, index=True, comment="用户ID"
-    )
-    system_model_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("system_model_settings.id"),
-        nullable=False,
-        index=True,
-        comment="系统预置模型ID",
-    )
-    api_key: Mapped[str] = mapped_column(
-        String(512), nullable=False, comment="用户个人 API Key（覆盖系统模型全局 key）"
-    )
-    created_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        comment="创建时间",
-    )
-    updated_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
-        comment="更新时间",
-    )
-
-    def to_dict(self):
-        return {
-            "id": self.id,
-            "user_id": self.user_id,
-            "system_model_id": self.system_model_id,
-            "api_key": self.api_key,
             "created_at": self.created_at.isoformat()
             if self.created_at is not None
             else None,
@@ -1132,7 +1078,7 @@ class TableComment(Base):
     columns_desc: Mapped[Optional[dict]] = mapped_column(
         JSON, comment="列名→列描述的字典"
     )
-    embedding = mapped_column(EmbeddingType, nullable=True, comment="表描述向量（pgvector）")
+    embedding = mapped_column(EmbeddingType, nullable=True, comment="表描述向量（JSON，应用层余弦召回）")
     last_indexed_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), comment="最后一次索引时间"
     )
@@ -1155,7 +1101,7 @@ class DocumentChunk(Base):
     doc_name: Mapped[str] = mapped_column(String(256), nullable=False, comment="文档名（含扩展名）")
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False, comment="文档内分片序号")
     content: Mapped[str] = mapped_column(Text, nullable=False, comment="分片文本内容")
-    embedding = mapped_column(EmbeddingType, nullable=True, comment="分片向量（pgvector）")
+    embedding = mapped_column(EmbeddingType, nullable=True, comment="分片向量（JSON，应用层余弦召回）")
     created_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

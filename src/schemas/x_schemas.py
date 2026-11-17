@@ -114,11 +114,16 @@ class DatabaseListResponseType:
 
 @strawberry.type
 class ChatResponseType:
-    response: str = strawberry.field(description="模型的回答")
+    # 错误路径（限流/配额/未配置个人 API-Key 等）只填 response="" + message，
+    # 故 conversation_id / model_used / response 均带默认值，避免构造时 TypeError。
+    response: str = strawberry.field(default="", description="模型的回答")
     thinking: Optional[str] = strawberry.field(default=None, description="思考过程")
-    conversation_id: str = strawberry.field(description="会话 ID")
-    model_used: str = strawberry.field(description="使用的模型名称")
+    conversation_id: str = strawberry.field(default="", description="会话 ID")
+    model_used: str = strawberry.field(default="", description="使用的模型名称")
     success: bool = strawberry.field(default=True, description="是否成功")
+    message: Optional[str] = strawberry.field(
+        default=None, description="错误/提示消息（success=False 时携带原因）"
+    )
 
 
 @strawberry.type
@@ -170,6 +175,10 @@ class UserInfoType:
     )
     role: Optional[str] = strawberry.field(
         default=None, description="用户角色（逗号分隔多角色）：user / admin / user,admin"
+    )
+    has_api_key: bool = strawberry.field(
+        default=False,
+        description="是否已配置个人 API-Key（False 时前端登录后弹窗提示联系管理员）",
     )
     created_at: Optional[str] = strawberry.field(default=None, description="创建时间")
 
@@ -628,6 +637,12 @@ class AdminUserType:
     is_active: bool = strawberry.field(description="是否激活")
     is_admin: bool = strawberry.field(description="是否管理员（admin ∈ role 的派生标志）")
     role: str = strawberry.field(description="用户角色（逗号分隔多角色）：user / admin / user,admin")
+    has_api_key: bool = strawberry.field(
+        default=False, description="是否已配置个人 API-Key（users.api_key）"
+    )
+    api_key_masked: Optional[str] = strawberry.field(
+        default=None, description="个人 API-Key 掩码（前6后4）；未配置为 None"
+    )
     created_at: Optional[str] = strawberry.field(default=None, description="创建时间 ISO")
     updated_at: Optional[str] = strawberry.field(default=None, description="更新时间 ISO")
 
@@ -805,12 +820,11 @@ class UserFeedbackMutationResponseType:
 
 @strawberry.type
 class SystemModelType:
-    """system_model_settings 表的展示视图。"""
+    """system_model_settings 表的展示视图（不含 api_key：个人 key 存 users.api_key）。"""
     id: int = strawberry.field(description="模型记录 ID")
     name: str = strawberry.field(description="模型名称")
     provider: str = strawberry.field(description="模型厂商")
     base_url: str = strawberry.field(description="访问地址")
-    api_key: str = strawberry.field(description="API-KEY（含密钥，供管理员编辑回填）")
     model_type: str = strawberry.field(description="模型类型: local 或 external")
     is_default: bool = strawberry.field(description="是否为系统默认模型")
     enabled: bool = strawberry.field(description="是否启用")
@@ -835,7 +849,6 @@ class SystemModelInput:
     name: str = strawberry.field(description="模型名称")
     provider: str = strawberry.field(description="模型厂商")
     base_url: str = strawberry.field(description="OpenAI 兼容接口地址")
-    api_key: str = strawberry.field(description="API-KEY")
     model_type: str = strawberry.field(
         default="external", description="模型类型: local 或 external"
     )
@@ -920,60 +933,16 @@ class DeleteModelPriceResponseType:
 
 
 # ---------------------------------------------------------------------------
-# 用户对系统预置模型的 API Key 映射（system_model_user_mappings 表）
+# 用户个人 API-Key（users.api_key，管理员经 adminSetUserApiKey 设置/清除）
 # ---------------------------------------------------------------------------
 
 
-@strawberry.type
-class SystemModelUserMappingType:
-    """system_model_user_mappings 表的展示视图。"""
-    id: int = strawberry.field(description="映射记录 ID")
-    user_id: int = strawberry.field(description="用户 ID")
-    system_model_id: int = strawberry.field(description="系统预置模型 ID")
-    system_model_name: Optional[str] = strawberry.field(
-        default=None, description="系统预置模型名称（JOIN 回填）"
-    )
-    api_key: str = strawberry.field(description="用户个人 API Key（覆盖全局 key）")
-    created_at: Optional[str] = strawberry.field(default=None, description="创建时间 ISO")
-    updated_at: Optional[str] = strawberry.field(default=None, description="更新时间 ISO")
-
-
-@strawberry.type
-class SystemModelUserMappingListResponseType:
-    success: bool = strawberry.field(description="是否成功")
-    message: str = strawberry.field(description="消息")
-    mappings: List[SystemModelUserMappingType] = strawberry.field(
-        default_factory=list, description="用户系统模型映射列表"
-    )
-
-
 @strawberry.input
-class SystemModelUserKeyInput:
-    """用户保存/更新自己对系统预置模型 API Key 的入参。"""
-    system_model_id: int = strawberry.field(description="系统预置模型 ID")
-    api_key: str = strawberry.field(description="用户个人 API Key")
-    test_connection: bool = strawberry.field(
-        default=True, description="保存前是否做连通性检测"
-    )
-
-
-@strawberry.type
-class SystemModelUserKeyMutationResponseType:
-    success: bool = strawberry.field(description="是否成功")
-    message: str = strawberry.field(description="消息")
-    mapping: Optional[SystemModelUserMappingType] = strawberry.field(
-        default=None, description="保存后的映射记录"
-    )
-
-
-@strawberry.input
-class AdminSystemModelUserKeyInput:
-    """管理员为指定用户保存系统预置模型 API Key 的入参。"""
+class AdminSetUserApiKeyInput:
+    """管理员为指定用户设置/清除个人 API-Key 的入参（api_key 传空串表示清除）。"""
     user_id: int = strawberry.field(description="目标用户 ID")
-    system_model_id: int = strawberry.field(description="系统预置模型 ID")
-    api_key: str = strawberry.field(description="该用户的个人 API Key")
-    test_connection: bool = strawberry.field(
-        default=True, description="保存前是否做连通性检测"
+    api_key: str = strawberry.field(
+        description="该用户的个人 API-Key；传空串表示清除"
     )
 
 

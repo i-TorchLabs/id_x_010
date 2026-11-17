@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, Fragment } from "react";
 import { useRouter } from "next/navigation";
 import { MessageList } from "@/components/chat/MessageList";
 import { MessageInput } from "@/components/chat/MessageInput";
@@ -121,6 +121,23 @@ function SidebarToggle({
 // NOTE: SidebarToggle is no longer used — the ChatSidebar component now handles
 // collapse/expand internally via isCollapsed + onToggleCollapse props.
 // Keeping the import-compatible shape in case IntelligentQueryHome still references it.
+
+// API-Key 弹窗正文中需高亮（红色加粗）的管理员邮箱
+const API_KEY_ADMIN_EMAIL = "smeit@cuhk.edu.cn";
+
+// 将 i18n 正文按邮箱分段渲染，邮箱部分红色加粗；正文未含邮箱时原样返回
+function renderApiKeyNoticeBody(text: string) {
+  const parts = text.split(API_KEY_ADMIN_EMAIL);
+  if (parts.length === 1) return text;
+  return parts.map((part, index) => (
+    <Fragment key={index}>
+      {part}
+      {index < parts.length - 1 && (
+        <span className="font-bold text-danger">{API_KEY_ADMIN_EMAIL}</span>
+      )}
+    </Fragment>
+  ));
+}
 
 export default function ChatHome() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -652,6 +669,8 @@ export default function ChatHome() {
   const [showProfile, setShowProfile] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [userInfo, setUserInfo] = useState<User | null>(null);
+  // 未配置个人 API-Key 提示弹窗（登录页检测 hasApiKey 后经 localStorage 传递）
+  const [showApiKeyNotice, setShowApiKeyNotice] = useState(false);
 
   // 读取本地存储的用户信息（仅客户端）
   useEffect(() => {
@@ -666,12 +685,23 @@ export default function ChatHome() {
           displayName: parsed.displayName ?? null,
           avatarUrl: parsed.avatarUrl ?? null,
           role: parsed.role ?? null,
+          hasApiKey: parsed.hasApiKey ?? false,
           createdAt: parsed.createdAt ?? null,
         });
       }
     } catch {
       // 忽略解析错误，使用默认展示
     }
+    // 登录时未配置个人 API-Key：弹窗提示联系管理员获取
+    if (localStorage.getItem("apiKeyNotice") === "1") {
+      setShowApiKeyNotice(true);
+    }
+  }, []);
+
+  // 关闭 API-Key 提示弹窗并清除标记（下次登录重新检测）
+  const handleApiKeyNoticeClose = useCallback(() => {
+    setShowApiKeyNotice(false);
+    localStorage.removeItem("apiKeyNotice");
   }, []);
 
   // 个人资料更新回调：刷新侧边栏展示（同时 ProfileDialog 已同步 localStorage）
@@ -1445,6 +1475,32 @@ export default function ChatHome() {
         user={userInfo}
         onSaved={handleProfileSaved}
       />
+
+      {/* API-Key Notice Dialog (未配置个人 API-Key 时登录后提示) */}
+      <AlertDialog.Backdrop
+        isOpen={showApiKeyNotice}
+        onOpenChange={(open) => {
+          if (!open) handleApiKeyNoticeClose();
+        }}
+      >
+        <AlertDialog.Container>
+          <AlertDialog.Dialog className="sm:max-w-[440px]">
+            <AlertDialog.CloseTrigger />
+            <AlertDialog.Header {...logoutDragHandleProps}>
+              <AlertDialog.Icon status="warning" />
+              <AlertDialog.Heading>{t("chat.apiKeyNoticeTitle")}</AlertDialog.Heading>
+            </AlertDialog.Header>
+            <AlertDialog.Body>
+              <p className="whitespace-pre-line">{renderApiKeyNoticeBody(t("chat.apiKeyNoticeBody"))}</p>
+            </AlertDialog.Body>
+            <AlertDialog.Footer>
+              <Button slot="close" variant="primary" onPress={handleApiKeyNoticeClose}>
+                {t("common.confirm")}
+              </Button>
+            </AlertDialog.Footer>
+          </AlertDialog.Dialog>
+        </AlertDialog.Container>
+      </AlertDialog.Backdrop>
 
       {/* Logout Confirmation Dialog (HeroUI) */}
       <AlertDialog.Backdrop

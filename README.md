@@ -17,7 +17,7 @@
 ## 1. 简介 (Introduction)
 
 - **Slogan**: 以问代查 —— 自然语言即查询语言，意图路由、SQL 安全校验与人工审批全程在状态图中显式可观测。
-- **Description**: id_x_010（AI 通用计算智能体）是 **i-Core 平台**的业务插件模块，通过 `x_plugin.py` 暴露的 `PluginInterface` 契约挂载至 i-Core 内核（ORM 元数据注册、会话工厂注入、pgvector 扩展声明与建表均由内核托管）。模块以 **LangGraph 状态图**为核心编排 general / sql / code 三类智能体，采用「Semantic Router 语义路由毫秒级命中高频意图 + 大模型路由兜底长尾」的双路由意图识别机制；SQL 智能体内置白名单静态校验（`SQLSecurityChecker` + `PROTECTED_TABLES`），非 SELECT 等高风险操作自动挂起进入 `human_approval` 节点并经 WebSocket 推送人工审批；查询目标库（`agent_db_settings` 表托管连接）与插件业务库物理隔离。对外提供 **GraphQL + SSE 双通道**：查询变更走 GraphQL，思考过程（thinking）与最终答案（content）经 SSE 分离流式推送，多轮上下文通过「摘要 + 实体 + 最近原文」固化（`conversation_summaries`）。LLM 经 LangChain 接入，模型配置支持热更新与失败自动回退；前端为 Next.js 16 + React 19 + HeroUI，入口由 HAProxy 统一分流。适用于科研级知识库问答与业务数据查询场景，相比通用 Text-to-SQL 方案，差异在于「安全闭环 + 过程可观测 + 平台插件化」三位一体。
+- **Description**: id_x_010（AI 通用计算智能体）是 **i-Core 平台**的业务插件模块，通过 `x_plugin.py` 暴露的 `PluginInterface` 契约挂载至 i-Core 内核（ORM 元数据注册、会话工厂注入与建表均由内核托管，业务库为外部第三方 PostgreSQL，连接参数经 `.env` 注入，无任何扩展依赖）。模块以 **LangGraph 状态图**为核心编排 general / sql / code 三类智能体，采用「Semantic Router 语义路由毫秒级命中高频意图 + 大模型路由兜底长尾」的双路由意图识别机制；SQL 智能体内置白名单静态校验（`SQLSecurityChecker` + `PROTECTED_TABLES`），非 SELECT 等高风险操作自动挂起进入 `human_approval` 节点并经 WebSocket 推送人工审批；查询目标库（`agent_db_settings` 表托管连接）与插件业务库物理隔离。对外提供 **GraphQL + SSE 双通道**：查询变更走 GraphQL，思考过程（thinking）与最终答案（content）经 SSE 分离流式推送，多轮上下文通过「摘要 + 实体 + 最近原文」固化（`conversation_summaries`）。LLM 经 LangChain 接入，模型配置支持热更新与失败自动回退；前端为 Next.js 16 + React 19 + HeroUI，入口由 HAProxy 统一分流。适用于科研级知识库问答与业务数据查询场景，相比通用 Text-to-SQL 方案，差异在于「安全闭环 + 过程可观测 + 平台插件化」三位一体。
 
 ## 2. 核心特性 (Features)
 
@@ -31,7 +31,7 @@
 
 1. **安全纵深的 Text-to-SQL 执行链** —— 生成 SQL 后依次经过：首关键字白名单（仅 SELECT 直通）→ 危险模式检测 → `PROTECTED_TABLES` 受保护表/列拒绝（支持 `SQL_AGENT_PROTECTED_TABLES` 环境变量扩展）→ `information_schema` 结构性视图白名单放行 → 人工审批兜底，与 prompt 层表名过滤形成双保险。
 2. **双路由协同的意图识别** —— 语义路由承担高频意图的毫秒级匹配（general / sql / code 三组语料），LLM 路由以 Pydantic 结构化输出兜底，JSON 解析失败时还有关键词启发式三级降级，误判率与时延同时收敛。
-3. **插件化零侵入接入** —— 仅实现 `PluginInterface`（`base` / `set_session_maker` / `required_extensions` / `build_tables`）与 `register_routers(prefix)` 即挂载至 i-Core 内核，内核不感知插件内部包结构；pgvector 扩展缺失时 embedding 列自动降级 JSON 建表，应用启动不被阻塞。
+3. **插件化零侵入接入** —— 仅实现 `PluginInterface`（`base` / `set_session_maker` / `required_extensions` / `build_tables`）与 `register_routers(prefix)` 即挂载至 i-Core 内核，内核不感知插件内部包结构；业务库为外部第三方 PostgreSQL（无扩展依赖），向量召回在应用层计算余弦相似度（embedding 列 JSON 存储）。
 4. **思考与答案分离的流式体验** —— 推理链路（thinking）与最终答案（content）以独立 SSE 块类型推送，前端可分区渲染「思考中 / 回答中」；SQL 审批面板、结果表格、图表配置（chart_config）均为独立块类型。
 5. **实例缓存避免重复构图** —— Supervisor 按「模型 + 端点」指纹缓存，SQLAgent 连接按配置缓存（`_sql_agent_cache`），配置未变更时复用已编译状态图，省去每请求的 Agent 实例化 / workflow 编译 / PG checkpointer 探测开销。
 6. **多轮上下文固化** —— 长期记忆以「会话摘要 + 实体 + 最近 6 条原文」组装（`conversation_summaries` 表），失败时回退全量截断合并，跨轮指代消解可靠。
@@ -52,7 +52,7 @@
 | Web 框架 | Litestar + Granian | — | ASGI 应用框架与高性能服务器（由 i-Core 内核托管，监听 7000） |
 | API 协议 | Strawberry GraphQL | — | GraphQL Schema / Query / Mutation / Subscription |
 | ORM | SQLAlchemy (async) + asyncpg | 2.0 | 业务库异步数据访问 |
-| 数据库 | PostgreSQL + pgvector | pg18 镜像 | 业务库存储与向量检索（table_comments / document_chunks） |
+| 数据库 | PostgreSQL（外部第三方库） | ≥ 14 | 业务库存储与向量检索（embedding 列 JSON 存储，应用层余弦召回，无扩展依赖） |
 | 前端框架 | Next.js / React | 16.2.3 / 19.2.4 | Web 应用框架与界面构建（dev 端口 2000） |
 | UI 组件 | HeroUI (@heroui/react) | 3.2.2 | 组件库与交互体系 |
 | 样式方案 | Tailwind CSS | 4 | 原子化样式 |
@@ -97,7 +97,7 @@ graph TD
     end
 
     subgraph L7["L7 数据层"]
-        BDB[("业务库 id_x_010<br/>PostgreSQL + pgvector")]
+        BDB[("业务库 id_x_010<br/>外部第三方 PostgreSQL")]
         TDB[("目标库（物理隔离）<br/>连接托管于 agent_db_settings")]
     end
 
@@ -199,7 +199,7 @@ sequenceDiagram
 
 ```text
 id_x_010/
-├── x_plugin.py                     # PluginInterface 插件入口（load_plugin / 建表 / pgvector 降级）
+├── x_plugin.py                     # PluginInterface 插件入口（load_plugin / 建表 / 预置数据播种）
 ├── src/                            # 后端源码
 │   ├── agents/                     # 智能体与编排
 │   │   ├── x_langgraph_supervisor.py   # LangGraph 状态图编排 + 双路由意图识别
@@ -227,15 +227,15 @@ id_x_010/
 │   ├── Dockerfile                  # 前端镜像构建
 │   └── .env.local.example          # 前端环境变量声明（NEXT_PUBLIC_*）
 ├── ops/                            # 运维与部署
-│   ├── up.sh / down.sh                 # Podman 单 Pod 四容器一键启停
+│   ├── up.sh / down.sh                 # Podman 单 Pod 三容器一键启停（直连外部第三方 PostgreSQL）
 │   ├── compose.yaml                    # podman-compose 等价编排（含 prometheus）
 │   ├── Dockerfile.service              # 后端镜像（以 i-Core 仓库根为构建上下文）
 │   ├── haproxy.cfg / haproxy.compose.cfg   # 入口分流配置
-│   ├── init/                           # 数据库初始化 SQL（01~08）
+│   ├── init/                           # 数据库初始化 SQL（01~09，仅手动初始化参考）
 │   ├── prometheus.yml                  # 指标抓取配置
 │   └── id_x_010_service.service / id_x_010_web.service   # systemd 单元（可选）
 ├── docs/                           # 架构描述 / 意图识别分析 / 实现要求等文档
-├── .env.template                   # 模块环境变量模板（DB_* 加密项 / LLM_PROVIDER）
+├── .env.template                   # 模块环境变量模板（外部库 DB_* / LLM_PROVIDER / 初始管理员）
 ├── requirements.txt                # Python 依赖清单（覆盖引擎层依赖）
 ├── pyproject.toml                  # ruff 配置与工具元数据
 ├── .pre-commit-config.yaml         # 提交钩子
@@ -356,7 +356,7 @@ curl -N -X POST <BASE_URL>/b/id_x_010/sql-approval \
 
 - Python ≥ 3.10（容器镜像为 `python:3.10-slim`；本地开发建议 3.11）
 - Node.js ≥ 20（前端 Next.js 16 构建）
-- PostgreSQL 18 + pgvector 扩展（容器部署使用 `pgvector/pgvector:pg18` 镜像；扩展缺失时向量列自动降级 JSON）
+- 外部第三方 PostgreSQL ≥ 14（连接参数见 `.env` 的 `DB_*`，库须预先 `CREATE DATABASE`；不依赖 pgvector 等任何扩展，表结构与预置数据由应用启动时幂等创建/播种）
 - Podman 与 podman-compose（容器化部署）
 - i-Core 主程序仓库（本模块为其插件，不可脱离内核独立运行）
 
@@ -369,7 +369,8 @@ pip install -r x_models/id_x_010/requirements.txt
 # 2. 在 config/base_config.toml 的 [EXTEND].MODELS 中声明模块挂载
 #    MODELS = [ ["id_x_010", "/id_x_010"] ]  → 路由自动挂载于 /b/id_x_010
 
-# 3. 配置模块环境变量（DB_* 加密项用主程序 utils/encrypt_util.py 生成）
+# 3. 配置模块环境变量（外部库连接参数 DB_*；本地运行用主程序
+#    utils/encrypt_util.py 生成加密项，容器部署由 up.sh 注入明文覆盖）
 cp x_models/id_x_010/.env.template x_models/id_x_010/.env
 
 # 4. 安装前端依赖
@@ -380,7 +381,7 @@ cd x_models/id_x_010/web && npm install && cp .env.local.example .env.local
 
 ```bash
 # 启动后端：在 i-Core 仓库根运行内核（Litestar + Granian，监听 7000）
-#   内核自动装载插件、创建 vector 扩展、建表并注入会话工厂
+#   内核自动装载插件、连接外部第三方库建表（无扩展依赖）并注入会话工厂
 python main.py
 
 # 启动前端开发服务（端口 2000）
@@ -394,12 +395,14 @@ curl -X POST http://127.0.0.1:7000/b/id_x_010/graphql \
 
 ### 9.4 容器部署 (Podman)
 
-方式一：`up.sh` 单 Pod 四容器（db :5432→宿主机 54321 / service :7000 / web :2000 / haproxy :8080→宿主机 8010）：
+容器拓扑不包含数据库——service 直连 `ops/.env` 中 `DB_*` 指定的外部第三方 PostgreSQL（与 id_x_007 的部署模式一致）；表结构与预置数据（提供商 / 目标库 / 系统模型 / SSO / 初始管理员 / 模型价格）由应用启动时幂等创建/播种，`ops/init/*.sql` 仅作手动初始化参考。
+
+方式一：`up.sh` 单 Pod 三容器（service :7000 / web :2000 / haproxy :8080→宿主机 8010）：
 
 ```bash
 cd x_models/id_x_010/ops
-cp .env.example .env        # 设置 POSTGRES_PASSWORD 等必填项
-bash up.sh                  # 首次构建镜像并启动（幂等）
+cp .env.example .env        # 填写外部数据库 DB_* 等必填项
+bash up.sh                  # 首次构建镜像并启动（幂等，含数据库连通性预检）
 bash up.sh --build          # 强制重建 service / web 镜像
 
 bash down.sh                # 停止并移除容器与 Pod（保留镜像与数据卷）
@@ -414,7 +417,7 @@ podman-compose up -d --build
 podman-compose down
 ```
 
-启动后访问入口 `http://localhost:8010/`：HAProxy 将 `/b/id_x_010/` 前缀分流至后端 service，其余路径转发前端 web。数据库首次启动自动执行 `ops/init/` 下 01~08 初始化脚本；Prometheus 经 `/b/id_x_010/metrics` 抓取服务指标。
+启动后访问入口 `http://localhost:8010/`：HAProxy 将 `/b/id_x_010/` 前缀分流至后端 service，其余路径转发前端 web；数据库为外部第三方 PostgreSQL，`ops/init/` 下 01~09 初始化脚本仅在手动初始化场景按需执行；Prometheus 经 `/b/id_x_010/metrics` 抓取服务指标。
 
 ---
 

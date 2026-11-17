@@ -15,14 +15,22 @@
 ``x_models._contracts.plugin_interface``，本插件与其它插件均从那里导入，
 插件之间互不依赖。
 
-与 id_x_002_c2 的差异：本插件模型表使用基础类型，并启用 pgvector 扩展
-（供 ``table_comments`` / ``document_chunks`` 等向量检索表），故
-``required_extensions`` 声明为 ``("vector",)``，由主程序在 build_tables 前
-创建扩展。
+与 id_x_007 的部署模式对齐：连接外部第三方 PostgreSQL（连接参数见
+``x_models/id_x_010/.env`` 的 ``DB_*``），不再内置 db 容器 / pgvector
+镜像。因此：
+
+- ``required_extensions`` 返回空元组——建表不再依赖任何 PG 扩展；
+- 向量检索全部走应用层余弦相似度（embedding 列恒为 JSON 类型，
+  ``x_vectorstore`` / ``x_fewshot`` 已有降级路径本就支持纯 Python 召回），
+  外部库无须安装 pgvector 扩展；
+- 预置数据（提供商 / 目标库 / 系统模型 / SSO / 初始管理员）由
+  ``build_tables`` 建表后经 ``x_seed`` 幂等播种（等价于原
+  ops/init/02~09 的能力），外部库无须手动执行 init SQL。
 """
 from __future__ import annotations
 
 import atexit
+import logging
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
@@ -69,54 +77,53 @@ class _Idx010Plugin:
 
     @property
     def required_extensions(self) -> tuple[str, ...]:
-        # 启用 pgvector 扩展，供 table_comments / document_chunks 等向量检索表使用。
-        # 主程序在 build_tables 之前会CREATE EXTENSION IF NOT EXISTS vector。
-        return ("vector",)
+        # 外部第三方 PostgreSQL 部署：不依赖任何 PG 扩展（含 pgvector）。
+        # embedding 列恒为 JSON 类型，向量召回在应用层计算余弦相似度
+        #（见 x_vectorstore.search_tables / x_fewshot 的既有降级路径），
+        # 建表无须 superuser 权限。
+        return ()
 
     def set_session_maker(self, maker: async_sessionmaker[AsyncSession]) -> None:
         from x_models.id_x_010.src.models.x_models import set_session_maker
         set_session_maker(maker)
 
     async def build_tables(self, conn: AsyncConnection) -> None:
-        """建表，带 pgvector 扩展缺失的运行时降级。
+        """建表 + 幂等播种（外部第三方 PostgreSQL，无扩展依赖）。
 
-        策略：
-        1. 先尝试用 ``Vector(1024)`` 类型建表（pgvector 扩展已安装的情况）；
-        2. 若 PG 报 ``type "vector" does not exist``（扩展未安装），降级把
-           ``TableComment.embedding`` / ``DocumentChunk.embedding`` 等列改为
-           ``JSON`` 类型重新建表——保证应用能启动，向量检索功能 best-effort
-           退化到全表扫描（见 x_vectorstore.search_tables 已有降级逻辑）。
+        1. embedding 列恒用 JSON 类型（``x_models.EmbeddingType`` 在缺失
+           pgvector 依赖时自动退回 JSON，requirements 已移除 pgvector），
+           建表不依赖 vector 扩展；
+        2. ``create_all`` 建表（幂等，已有表跳过）；
+        3. ``_apply_compat_patches`` 补齐老表增量字段；
+        4. ``_seed_model_prices`` / ``x_seed`` 幂等播种预置数据——取代原
+           db 容器 docker-entrypoint-initdb.d 自动执行的 ops/init/02~09，
+           外部库无须手动跑 init SQL。
         """
-        import logging
-
-        from sqlalchemy import JSON
-
         logger = logging.getLogger("x_models.id_x_010.x_plugin")
-        try:
-            await conn.run_sync(self.base.metadata.create_all)
-        except Exception as e:
-            msg = str(e).lower()
-            # 仅当错误明确指向 vector 类型不存在时降级
-            if "vector" not in msg and "does not exist" not in msg:
-                raise  # 其它异常向上抛
-            logger.warning(
-                "[id_x_010] pgvector 扩展未启用或 Vector 类型不可用，"
-                "embedding 列降级为 JSON 重建表（向量检索功能降级，主流程不受影响）。"
-                f"原始异常: {type(e).__name__}: {e}"
-            )
-            # 把所有用 EmbeddingType 的列改成 JSON，重建 metadata
-            from x_models.id_x_010.src.models import x_models as _m
 
-            for table in self.base.metadata.tables.values():
-                for col in table.columns:
-                    if col.name == "embedding":
-                        # 直接改 type 为 JSON（兼容已有数据；新表也能建）
-                        col.type = JSON()
-            # 重新建表
-            await conn.run_sync(self.base.metadata.create_all)
+        await conn.run_sync(self.base.metadata.create_all)
 
         await self._apply_compat_patches(conn)
         await self._seed_model_prices(conn)
+        # 预置数据播种（取代原 db 容器 docker-entrypoint-initdb.d 的
+        # ops/init/02~09）；延迟导入保持插件懒加载约定
+        from x_models.id_x_010.src.utils.x_seed import (
+            seed_initial_admin,
+            seed_reference_data,
+        )
+
+        for seed_name, seeder in (
+            ("reference_data", seed_reference_data),
+            ("initial_admin", seed_initial_admin),
+        ):
+            try:
+                async with conn.begin_nested():
+                    await seeder(conn)
+            except Exception as e:
+                logger.warning(
+                    f"[id_x_010] 预置数据播种失败（{seed_name}，不阻塞启动）: "
+                    f"{type(e).__name__}: {e}"
+                )
 
     async def _apply_compat_patches(self, conn: AsyncConnection) -> None:
         """幂等补齐老表的增量字段（create_all 不会 ALTER 已有表）。

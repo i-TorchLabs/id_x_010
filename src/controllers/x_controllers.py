@@ -25,7 +25,6 @@ from x_models.id_x_010.src.models.x_models import (
     SqlEvalCase,
     SqlEvalResult,
     SqlExample,
-    SystemModelSettings,
     UsageLog,
     User,
     UserFeedback,
@@ -47,11 +46,6 @@ from x_models.id_x_010.src.schemas.x_schemas import (
     ModelPriceMutationResponseType,
     ModelPriceType,
     ForgotPasswordInput,
-    SystemModelUserKeyInput,
-    SystemModelUserKeyMutationResponseType,
-    SystemModelUserMappingListResponseType,
-    SystemModelUserMappingType,
-    AdminSystemModelUserKeyInput,
     ForgotPasswordResponseType,
     HealthType,
     LoginInput,
@@ -113,6 +107,7 @@ from x_models.id_x_010.src.schemas.x_schemas import (
     UserModelPropertyMutationResponseType,
     UserModelPropertyType,
     AdminUsageStatsResponseType,
+    AdminSetUserApiKeyInput,
 )
 from x_models.id_x_010.src.views.x_views import (
     build_user_info,
@@ -132,14 +127,12 @@ from x_models.id_x_010.src.views.x_views import (
     get_user_avatar,
     get_user_model_provider,
     get_user_model_settings,
-    get_user_system_model_mapping,
     list_agent_db_settings,
     list_external_models,
     list_system_models,
     list_model_prices,
     list_user_markdown_prompts,
     list_user_model_providers,
-    list_user_system_model_mappings,
     load_llm_provider_config,
     merge_context,
     rename_markdown_prompt,
@@ -147,6 +140,7 @@ from x_models.id_x_010.src.views.x_views import (
     save_conversation_log,
     save_usage_log,
     select_markdown_prompt,
+    set_user_api_key,
     set_user_avatar,
     test_model_connectivity,
     update_markdown_content,
@@ -156,8 +150,6 @@ from x_models.id_x_010.src.views.x_views import (
     upsert_model_price,
     upsert_user_model_provider,
     upsert_user_model_settings,
-    upsert_user_system_model_mapping,
-    delete_user_system_model_mapping,
     view_sso_login,
 )
 
@@ -667,7 +659,7 @@ class Query:
                 success=False, message=f"获取失败: {str(e)}", models=[]
             )
 
-    @strawberry.field(description="获取系统预置模型列表（含 api_key，供管理员编辑；普通用户只读）")
+    @strawberry.field(description="获取系统预置模型列表（模型列表全局共享；api_key 已改为每用户独立，存 users.api_key）")
     async def system_models(self, info: strawberry.Info) -> SystemModelListResponseType:
         from x_models.id_x_010.src.middleware.x_admin import (
             AdminRequiredError,
@@ -683,7 +675,6 @@ class Query:
                     name=r.name,
                     provider=r.provider,
                     base_url=r.base_url,
-                    api_key=r.api_key,
                     model_type=r.model_type or "external",
                     is_default=bool(r.is_default),
                     enabled=bool(r.enabled),
@@ -891,12 +882,20 @@ class Query:
                 success=False, message=f"失败: {str(e)}", users=[]
             )
 
-    @strawberry.field(description="管理员：列出全部用户（含 role/is_admin/is_active）")
+    @strawberry.field(description="管理员：列出全部用户（含 role/is_admin/is_active/api_key 状态）")
     async def list_users(self, info: strawberry.Info) -> AdminUserListResponseType:
         from x_models.id_x_010.src.middleware.x_admin import (
             AdminRequiredError,
             require_admin,
         )
+
+        def _mask_key(key: Optional[str]) -> Optional[str]:
+            """个人 API-Key 掩码：前6后4；过短则全部掩码，避免泄露。"""
+            if not key:
+                return None
+            if len(key) <= 12:
+                return "******"
+            return f"{key[:6]}...{key[-4:]}"
 
         try:
             await require_admin(_get_info_request(info))
@@ -916,6 +915,8 @@ class Query:
                         is_admin=bool(getattr(u, "is_admin", False))
                         or u.has_role("admin"),
                         role=u.role or "user",
+                        has_api_key=bool(getattr(u, "api_key", None)),
+                        api_key_masked=_mask_key(getattr(u, "api_key", None)),
                         created_at=(
                             u.created_at.isoformat() if u.created_at else None
                         ),
@@ -1133,8 +1134,8 @@ class Mutation:
             user_settings = await _get_bearer_settings(request, user=user)
 
             # 解析实际调用的模型端点：前端选中的 model_name 若命中系统预置模型，
-            # 则使用该系统模型的 api_key / base_url；否则回退到用户级设置。
-            # 若用户已设置 per-user 系统模型 key，则用其覆盖全局 key。
+            # 则使用该系统模型的 base_url + 用户个人 api_key（users.api_key，独立计费）；
+            # 否则回退到用户级设置。
             chat_api_key, chat_base_url, effective_model_name = (
                 await resolve_model_endpoint(
                     input.model_name, user_settings, user.id if user else None
@@ -1148,6 +1149,24 @@ class Mutation:
             if effective_model_name:
                 _sys_model = await get_system_model_by_name(effective_model_name)
                 _is_system_model = _sys_model is not None and _sys_model.enabled
+
+            # 个人 API-Key 检查：系统预置模型的 api_key 已改为每用户独立（users.api_key），
+            # 登录用户命中系统模型但未配置个人 key 时直接拦截并引导联系管理员；
+            # 匿名用户不拦截，回退全局 orchestrator。
+            _api_key_missing_msg = (
+                "尚未配置个人 API-Key，请联系系统管理员获取（smeit@cuhk.edu.cn）"
+            )
+            if user is not None and _is_system_model and not chat_api_key:
+                logger.warning(
+                    f"{get_request_id()}用户未配置个人 API-Key: user_id={user.id}, "
+                    f"model={effective_model_name}"
+                )
+                return ChatResponseType(
+                    success=False,
+                    message=_api_key_missing_msg,
+                    response="",
+                    thinking="",
+                )
 
             if user is not None and _is_system_model:
                 from x_models.id_x_010.src.utils.x_quota import check_user_quota
@@ -3064,7 +3083,7 @@ class Mutation:
     # 系统预置模型管理（system_model_settings 表，管理员 CRUD）
     # ------------------------------------------------------------------
 
-    @strawberry.mutation(description="管理员：新增/更新系统预置模型（保存前可选连通性检测）")
+    @strawberry.mutation(description="管理员：新增/更新系统预置模型（模型列表全局共享；api_key 已改为每用户独立，不做连通性检测）")
     async def save_system_model(
         self, info: strawberry.Info, input: SystemModelInput
     ) -> SystemModelMutationResponseType:
@@ -3082,37 +3101,20 @@ class Mutation:
 
         provider = input.provider.strip()
         base_url = input.base_url.strip().rstrip("/")
-        api_key = input.api_key.strip()
         name = input.name.strip()
         model_type = (input.model_type or "external").strip()
 
-        if not all([name, provider, base_url, api_key]):
+        if not all([name, provider, base_url]):
             return SystemModelMutationResponseType(
                 success=False,
-                message="模型名称、厂商、访问地址、API-KEY 均为必填项",
+                message="模型名称、厂商、访问地址均为必填项",
                 model=None,
             )
-
-        if input.test_connection:
-            logger.info(
-                f"{get_request_id()}保存系统模型前连通性检测: "
-                f"provider={provider}, model={name}"
-            )
-            ok, msg = await test_model_connectivity(
-                base_url=base_url, api_key=api_key, model_name=name
-            )
-            if not ok:
-                return SystemModelMutationResponseType(
-                    success=False,
-                    message=f"连通性检测未通过，模型未保存: {msg}",
-                    model=None,
-                )
 
         saved = await upsert_system_model(
             name=name,
             provider=provider,
             base_url=base_url,
-            api_key=api_key,
             model_type=model_type,
             is_default=input.is_default,
             enabled=input.enabled,
@@ -3129,7 +3131,6 @@ class Mutation:
             name=saved.name,
             provider=saved.provider,
             base_url=saved.base_url,
-            api_key=saved.api_key,
             model_type=saved.model_type or "external",
             is_default=bool(saved.is_default),
             enabled=bool(saved.enabled),
@@ -3137,9 +3138,8 @@ class Mutation:
             created_at=saved.created_at.isoformat() if saved.created_at else None,
             updated_at=saved.updated_at.isoformat() if saved.updated_at else None,
         )
-        msg = "连通性检测通过，系统模型已保存" if input.test_connection else "系统模型已保存"
         return SystemModelMutationResponseType(
-            success=True, message=msg, model=result_model
+            success=True, message="系统模型已保存", model=result_model
         )
 
     @strawberry.mutation(description="管理员：删除系统预置模型")
@@ -3263,304 +3263,16 @@ class Mutation:
             )
 
     # ------------------------------------------------------------------
-    # 用户对系统预置模型的 API Key 映射（system_model_user_mappings 表）
-    # 用户可保存自己的 key 覆盖系统模型的全局 key，便于按用户统计用量
+    # 用户个人 API-Key（users.api_key，每用户一个 key，独立计费）
+    # 普通用户不能自助配置，由管理员在后台逐用户设置/清除；
+    # 登录态的 key 状态经 UserInfoType.has_api_key 返回，前端弹窗提示
     # ------------------------------------------------------------------
 
-    @strawberry.field(description="获取当前用户对系统预置模型的 API Key 映射列表")
-    async def my_system_model_keys(
-        self, info: strawberry.Info
-    ) -> SystemModelUserMappingListResponseType:
-        try:
-            request = _get_info_request(info)
-            user = await _get_bearer_user(request)
-            if user is None:
-                return SystemModelUserMappingListResponseType(
-                    success=False, message="未登录或登录已过期", mappings=[]
-                )
-
-            mappings = await list_user_system_model_mappings(user.id)
-            # JOIN 回填 system_model_name
-            sys_models = {m.id: m for m in await list_system_models(enabled_only=False)}
-            result = []
-            for mp in mappings:
-                sm = sys_models.get(mp.system_model_id)
-                result.append(
-                    SystemModelUserMappingType(
-                        id=mp.id,
-                        user_id=mp.user_id,
-                        system_model_id=mp.system_model_id,
-                        system_model_name=sm.name if sm else None,
-                        api_key=mp.api_key,
-                        created_at=(
-                            mp.created_at.isoformat() if mp.created_at else None
-                        ),
-                        updated_at=(
-                            mp.updated_at.isoformat() if mp.updated_at else None
-                        ),
-                    )
-                )
-            return SystemModelUserMappingListResponseType(
-                success=True,
-                message=f"查询到 {len(result)} 条映射",
-                mappings=result,
-            )
-        except Exception as e:
-            logger.error(
-                f"{get_request_id()}获取用户系统模型映射失败: {e}", exc_info=True
-            )
-            return SystemModelUserMappingListResponseType(
-                success=False, message=f"失败: {str(e)}", mappings=[]
-            )
-
-    @strawberry.mutation(description="保存当前用户对系统预置模型的个人 API Key")
-    async def save_system_model_user_key(
-        self, info: strawberry.Info, input: SystemModelUserKeyInput
-    ) -> SystemModelUserKeyMutationResponseType:
-        try:
-            request = _get_info_request(info)
-            user = await _get_bearer_user(request)
-            if user is None:
-                return SystemModelUserKeyMutationResponseType(
-                    success=False, message="未登录或登录已过期", mapping=None
-                )
-
-            api_key = input.api_key.strip()
-            if not api_key:
-                return SystemModelUserKeyMutationResponseType(
-                    success=False, message="API Key 不能为空", mapping=None
-                )
-
-            systemModelBlockMsg = (
-                "系统预置模型 API Key 由管理员统一配置，禁止普通用户自助设置"
-            )
-            if not (user.has_role("admin") or bool(getattr(user, "is_admin", False))):
-                return SystemModelUserKeyMutationResponseType(
-                    success=False, message=systemModelBlockMsg, mapping=None
-                )
-
-            # 校验 system_model_id 存在且 enabled
-            sys_models = await list_system_models(enabled_only=True)
-            sm = next((m for m in sys_models if m.id == input.system_model_id), None)
-            if sm is None:
-                return SystemModelUserKeyMutationResponseType(
-                    success=False,
-                    message=f"系统预置模型不存在或未启用: id={input.system_model_id}",
-                    mapping=None,
-                )
-
-            # 可选连通性检测
-            if input.test_connection:
-                ok, msg = await test_model_connectivity(
-                    base_url=sm.base_url, api_key=api_key, model_name=sm.name
-                )
-                if not ok:
-                    return SystemModelUserKeyMutationResponseType(
-                        success=False,
-                        message=f"连通性检测未通过: {msg}",
-                        mapping=None,
-                    )
-
-            mapping = await upsert_user_system_model_mapping(
-                user_id=user.id,
-                system_model_id=input.system_model_id,
-                api_key=api_key,
-            )
-            if mapping is None:
-                return SystemModelUserKeyMutationResponseType(
-                    success=False, message="保存失败", mapping=None
-                )
-
-            return SystemModelUserKeyMutationResponseType(
-                success=True,
-                message="用户的系统模型 API Key 已保存",
-                mapping=SystemModelUserMappingType(
-                    id=mapping.id,
-                    user_id=mapping.user_id,
-                    system_model_id=mapping.system_model_id,
-                    system_model_name=sm.name,
-                    api_key=mapping.api_key,
-                    created_at=(
-                        mapping.created_at.isoformat() if mapping.created_at else None
-                    ),
-                    updated_at=(
-                        mapping.updated_at.isoformat() if mapping.updated_at else None
-                    ),
-                ),
-            )
-        except Exception as e:
-            logger.error(
-                f"{get_request_id()}保存用户系统模型映射失败: {e}", exc_info=True
-            )
-            return SystemModelUserKeyMutationResponseType(
-                success=False, message=f"失败: {str(e)}", mapping=None
-            )
-
-    @strawberry.mutation(description="删除当前用户对系统预置模型的个人 API Key（回退到全局 key）")
-    async def delete_system_model_user_key(
-        self, info: strawberry.Info, system_model_id: int
-    ) -> SystemModelUserKeyMutationResponseType:
-        try:
-            request = _get_info_request(info)
-            user = await _get_bearer_user(request)
-            if user is None:
-                return SystemModelUserKeyMutationResponseType(
-                    success=False, message="未登录或登录已过期", mapping=None
-                )
-
-            if not (user.has_role("admin") or bool(getattr(user, "is_admin", False))):
-                return SystemModelUserKeyMutationResponseType(
-                    success=False,
-                    message="系统预置模型 API Key 由管理员统一配置，禁止普通用户自助删除",
-                    mapping=None,
-                )
-
-            ok = await delete_user_system_model_mapping(user.id, system_model_id)
-            if not ok:
-                return SystemModelUserKeyMutationResponseType(
-                    success=False,
-                    message="映射不存在或已被删除",
-                    mapping=None,
-                )
-            return SystemModelUserKeyMutationResponseType(
-                success=True,
-                message="已删除个人 Key，将回退到系统模型的全局 Key",
-                mapping=None,
-            )
-        except Exception as e:
-            logger.error(
-                f"{get_request_id()}删除用户系统模型映射失败: {e}", exc_info=True
-            )
-            return SystemModelUserKeyMutationResponseType(
-                success=False, message=f"失败: {str(e)}", mapping=None
-            )
-
-    # ------------------------------------------------------------------
-    # 管理员：替指定用户管理系统预置模型的 API Key
-    # 普通用户不能自助配置系统模型 API Key，由管理员在后台逐用户配置。
-    # ------------------------------------------------------------------
-
-    @strawberry.field(description="管理员：列出指定用户对系统预置模型的 API Key 映射")
-    async def admin_list_user_system_model_keys(
-        self, info: strawberry.Info, user_id: int
-    ) -> SystemModelUserMappingListResponseType:
-        from x_models.id_x_010.src.middleware.x_admin import (
-            AdminRequiredError,
-            require_admin,
-        )
-
-        try:
-            await require_admin(_get_info_request(info))
-            mappings = await list_user_system_model_mappings(user_id)
-            sys_models = {m.id: m for m in await list_system_models(enabled_only=False)}
-            result = []
-            for mp in mappings:
-                sm = sys_models.get(mp.system_model_id)
-                result.append(
-                    SystemModelUserMappingType(
-                        id=mp.id,
-                        user_id=mp.user_id,
-                        system_model_id=mp.system_model_id,
-                        system_model_name=sm.name if sm else None,
-                        api_key=mp.api_key,
-                        created_at=mp.created_at.isoformat() if mp.created_at else None,
-                        updated_at=mp.updated_at.isoformat() if mp.updated_at else None,
-                    )
-                )
-            return SystemModelUserMappingListResponseType(
-                success=True,
-                message=f"查询到 {len(result)} 条映射",
-                mappings=result,
-            )
-        except AdminRequiredError as e:
-            return SystemModelUserMappingListResponseType(
-                success=False, message=e.message, mappings=[]
-            )
-        except Exception as e:
-            logger.error(
-                f"{get_request_id()}管理员查询用户系统模型映射失败: {e}",
-                exc_info=True,
-            )
-            return SystemModelUserMappingListResponseType(
-                success=False, message=f"失败: {str(e)}", mappings=[]
-            )
-
-    @strawberry.mutation(description="管理员：为指定用户保存系统预置模型的 API Key")
-    async def admin_save_user_system_model_key(
-        self, info: strawberry.Info, input: AdminSystemModelUserKeyInput
-    ) -> SystemModelUserKeyMutationResponseType:
-        from x_models.id_x_010.src.middleware.x_admin import (
-            AdminRequiredError,
-            require_admin,
-        )
-
-        try:
-            await require_admin(_get_info_request(info))
-
-            api_key = input.api_key.strip()
-            if not api_key:
-                return SystemModelUserKeyMutationResponseType(
-                    success=False, message="API Key 不能为空", mapping=None
-                )
-
-            sys_models = await list_system_models(enabled_only=False)
-            sm = next((m for m in sys_models if m.id == input.system_model_id), None)
-            if sm is None:
-                return SystemModelUserKeyMutationResponseType(
-                    success=False,
-                    message=f"系统预置模型不存在: id={input.system_model_id}",
-                    mapping=None,
-                )
-
-            if input.test_connection:
-                ok, msg = await test_model_connectivity(
-                    base_url=sm.base_url, api_key=api_key, model_name=sm.name
-                )
-                if not ok:
-                    return SystemModelUserKeyMutationResponseType(
-                        success=False,
-                        message=f"连通性检测未通过: {msg}",
-                        mapping=None,
-                    )
-
-            mapping = await upsert_user_system_model_mapping(
-                user_id=input.user_id,
-                system_model_id=input.system_model_id,
-                api_key=api_key,
-            )
-            if mapping is None:
-                return SystemModelUserKeyMutationResponseType(
-                    success=False, message="保存失败", mapping=None
-                )
-            return SystemModelUserKeyMutationResponseType(
-                success=True,
-                message="已保存该用户的系统模型 API Key",
-                mapping=SystemModelUserMappingType(
-                    id=mapping.id,
-                    user_id=mapping.user_id,
-                    system_model_id=mapping.system_model_id,
-                    system_model_name=sm.name,
-                    api_key=mapping.api_key,
-                    created_at=mapping.created_at.isoformat() if mapping.created_at else None,
-                    updated_at=mapping.updated_at.isoformat() if mapping.updated_at else None,
-                ),
-            )
-        except AdminRequiredError as e:
-            return SystemModelUserKeyMutationResponseType(
-                success=False, message=e.message, mapping=None
-            )
-        except Exception as e:
-            logger.error(
-                f"{get_request_id()}管理员保存用户系统模型映射失败: {e}",
-                exc_info=True,
-            )
-            return SystemModelUserKeyMutationResponseType(
-                success=False, message=f"失败: {str(e)}", mapping=None
-            )
-
-    @strawberry.mutation(description="管理员：删除指定用户对系统预置模型的个人 API Key")
-    async def admin_delete_user_system_model_key(
-        self, info: strawberry.Info, user_id: int, system_model_id: int
+    @strawberry.mutation(
+        description="管理员：为指定用户设置/清除个人 API-Key（api_key 传空串表示清除）"
+    )
+    async def admin_set_user_api_key(
+        self, info: strawberry.Info, input: AdminSetUserApiKeyInput
     ) -> AdminMutationResponseType:
         from x_models.id_x_010.src.middleware.x_admin import (
             AdminRequiredError,
@@ -3569,19 +3281,29 @@ class Mutation:
 
         try:
             await require_admin(_get_info_request(info))
-            ok = await delete_user_system_model_mapping(user_id, system_model_id)
+
+            api_key = input.api_key.strip()
+            if len(api_key) > 512:
+                return AdminMutationResponseType(
+                    success=False, message="API-Key 长度不能超过 512 字符"
+                )
+
+            ok = await set_user_api_key(input.user_id, api_key)
             if not ok:
                 return AdminMutationResponseType(
-                    success=False, message="映射不存在或已被删除"
+                    success=False, message="用户不存在或保存失败"
                 )
-            return AdminMutationResponseType(
-                success=True, message="已删除该用户的个人 Key"
+            message = (
+                "已清除该用户的个人 API-Key"
+                if not api_key
+                else "已保存该用户的个人 API-Key"
             )
+            return AdminMutationResponseType(success=True, message=message)
         except AdminRequiredError as e:
             return AdminMutationResponseType(success=False, message=e.message)
         except Exception as e:
             logger.error(
-                f"{get_request_id()}管理员删除用户系统模型映射失败: {e}",
+                f"{get_request_id()}管理员设置用户 API-Key 失败: {e}",
                 exc_info=True,
             )
             return AdminMutationResponseType(
@@ -3842,7 +3564,8 @@ class Subscription:
             await load_llm_provider_config()
 
             # 模型解析优先级（通过 resolve_model_endpoint 统一处理）：
-            #   1. 前端选中的 model_name → system_model_settings 表查 base_url/api_key
+            #   1. 前端选中的 model_name → system_model_settings 表查 base_url，
+            #      api_key 取用户个人 key（users.api_key，独立计费）
             #   2. 用户级模型设置（model_name_list 共享同一 base_url/api_key）
             #   3. 全局 provider 配置（external_provider 表）
             #   回退到 external_models 表（兼容旧数据）
@@ -3866,6 +3589,20 @@ class Subscription:
             if model_name:
                 _sys_model_s = await get_system_model_by_name(model_name)
                 _is_system_model_stream = _sys_model_s is not None and _sys_model_s.enabled
+
+            # 个人 API-Key 检查：须在 external_models 兼容回退之前，
+            # 否则旧全局 key 会绕过拦截；登录用户命中系统模型但无个人 key
+            # 时直接报错引导，匿名用户不拦截（回退全局 orchestrator）。
+            if rl_user is not None and _is_system_model_stream and not override_api_key:
+                logger.warning(
+                    f"{get_request_id()}用户未配置个人 API-Key: "
+                    f"user_id={rl_user.id}, model={model_name}"
+                )
+                yield StreamChunkType(
+                    type="error",
+                    content="尚未配置个人 API-Key，请联系系统管理员获取（smeit@cuhk.edu.cn）",
+                )
+                return
 
             if rl_user is not None and _is_system_model_stream:
                 from x_models.id_x_010.src.utils.x_quota import check_user_quota

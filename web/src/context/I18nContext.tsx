@@ -14,6 +14,11 @@ import enUS from "@/i18n/en-US.json";
 
 export type Lang = "zh-CN" | "en-US";
 
+// v2：默认语言改为英文；旧键 "lang" 存的多为 navigator 自动探测结果，
+// 不再继承（一次性重置为英文默认），用户切换后写入新键并持久化。
+const LANG_STORAGE_KEY = "lang.v2";
+const LEGACY_LANG_STORAGE_KEY = "lang";
+
 type Dict = Record<string, string>;
 const DICTS: Record<Lang, Dict> = {
   "zh-CN": zhCN,
@@ -29,12 +34,11 @@ interface I18nContextValue {
 const I18nContext = createContext<I18nContextValue | null>(null);
 
 function getInitialLang(): Lang {
-  if (typeof window === "undefined") return "zh-CN";
-  const stored = localStorage.getItem("lang");
+  // 默认语言：英文（en-US）；用户手动切换后以 localStorage 为准
+  if (typeof window === "undefined") return "en-US";
+  const stored = localStorage.getItem(LANG_STORAGE_KEY);
   if (stored === "zh-CN" || stored === "en-US") return stored;
-  // 按 navigator.language 自动选择
-  const nav = navigator.language || "";
-  return nav.startsWith("en") ? "en-US" : "zh-CN";
+  return "en-US";
 }
 
 export function I18nProvider({ children }: { children: ReactNode }) {
@@ -42,15 +46,16 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (typeof window !== "undefined") {
-      localStorage.setItem("lang", lang);
+      localStorage.setItem(LANG_STORAGE_KEY, lang);
+      localStorage.removeItem(LEGACY_LANG_STORAGE_KEY);
     }
   }, [lang]);
 
   const setLang = (next: Lang) => setLangState(next);
 
   const t = (key: string, vars?: Record<string, string | number>): string => {
-    const dict = DICTS[lang] || DICTS["zh-CN"];
-    let text = dict[key] || DICTS["zh-CN"][key] || key;
+    const dict = DICTS[lang] || DICTS["en-US"];
+    let text = dict[key] || DICTS["en-US"][key] || key;
     if (vars) {
       for (const [k, v] of Object.entries(vars)) {
         text = text.replace(new RegExp(`\\{${k}\\}`, "g"), String(v));
@@ -69,11 +74,11 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 export function useI18n(): I18nContextValue {
   const ctx = useContext(I18nContext);
   if (!ctx) {
-    // 未在 Provider 内：返回默认 zh-CN，避免 SSR 报错
+    // 未在 Provider 内：返回默认 en-US，避免 SSR 报错
     return {
-      lang: "zh-CN",
+      lang: "en-US",
       setLang: () => {},
-      t: (key) => DICTS["zh-CN"][key] || key,
+      t: (key) => DICTS["en-US"][key] || key,
     };
   }
   return ctx;

@@ -127,6 +127,12 @@ export default function LoginPage({ mode = "user" }: LoginPageProps) {
                         "user",
                         JSON.stringify(result.login.user),
                     );
+                    // 未配置个人 API-Key：登录后由 ChatHome 弹窗提示联系管理员
+                    if (result.login.user.hasApiKey === false) {
+                        localStorage.setItem("apiKeyNotice", "1");
+                    } else {
+                        localStorage.removeItem("apiKeyNotice");
+                    }
                     // 密码登录清除 SSO 标记（当前会话不再由 SSO 建立）
                     clearSsoLoginFlag();
                 }

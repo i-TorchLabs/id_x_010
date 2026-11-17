@@ -139,6 +139,8 @@ export interface User {
   displayName: string | null;
   avatarUrl: string | null;
   role: string | null;
+  /** 是否已配置个人 API-Key（false 时登录后弹窗提示联系管理员） */
+  hasApiKey: boolean;
   createdAt: string | null;
 }
 
@@ -244,6 +246,7 @@ export const userGraphqlApi = {
             displayName
             avatarUrl
             role
+            hasApiKey
             createdAt
           }
         }
@@ -273,6 +276,7 @@ export const userGraphqlApi = {
             displayName
             avatarUrl
             role
+            hasApiKey
             createdAt
           }
         }
@@ -347,6 +351,7 @@ export const userGraphqlApi = {
             displayName
             avatarUrl
             role
+            hasApiKey
             createdAt
           }
         }
@@ -378,6 +383,7 @@ export const userGraphqlApi = {
             displayName
             avatarUrl
             role
+            hasApiKey
             createdAt
           }
         }
@@ -880,7 +886,6 @@ export interface SystemModelItem {
   name: string;
   provider: string;
   baseUrl: string;
-  apiKey: string;
   modelType: string;
   isDefault: boolean;
   enabled: boolean;
@@ -902,7 +907,6 @@ export interface SystemModelSaveInput {
   name: string;
   provider: string;
   baseUrl: string;
-  apiKey: string;
   modelType?: string;
   isDefault?: boolean;
   enabled?: boolean;
@@ -938,7 +942,6 @@ export const systemModelGraphqlApi = {
             name
             provider
             baseUrl
-            apiKey
             modelType
             isDefault
             enabled
@@ -966,7 +969,6 @@ export const systemModelGraphqlApi = {
             name
             provider
             baseUrl
-            apiKey
             modelType
             isDefault
             enabled
@@ -1002,219 +1004,37 @@ export const systemModelGraphqlApi = {
   },
 };
 
-// ── 用户对系统预置模型的 API Key 映射（per-user key override）──
+// ── 管理员：为指定用户设置/清除个人 API-Key（users.api_key，每用户独立计费）──
 
-export interface SystemModelUserMappingItem {
-  id: number;
+export interface AdminSetUserApiKeyInput {
   userId: number;
-  systemModelId: number;
-  systemModelName?: string | null;
+  /** 传空串表示清除该用户的个人 API-Key */
   apiKey: string;
-  createdAt?: string | null;
-  updatedAt?: string | null;
 }
 
-export interface SystemModelUserKeyListPayload {
-  mySystemModelKeys: {
-    success: boolean;
-    message: string;
-    mappings: SystemModelUserMappingItem[];
-  };
-}
-
-export interface SystemModelUserKeySaveInput {
-  systemModelId: number;
-  apiKey: string;
-  testConnection?: boolean;
-}
-
-export interface SystemModelUserKeyMutationPayload {
-  saveSystemModelUserKey: {
-    success: boolean;
-    message: string;
-    mapping: SystemModelUserMappingItem | null;
-  };
-}
-
-export interface DeleteSystemModelUserKeyPayload {
-  deleteSystemModelUserKey: {
+export interface AdminSetUserApiKeyPayload {
+  adminSetUserApiKey: {
     success: boolean;
     message: string;
   };
 }
 
-export const systemModelUserKeyGraphqlApi = {
-  /** 获取当前用户对系统预置模型的 API Key 映射列表 */
-  mySystemModelKeys: async (): Promise<SystemModelUserKeyListPayload> => {
-    const query = `
-      query MySystemModelKeys {
-        mySystemModelKeys {
-          success
-          message
-          mappings {
-            id
-            userId
-            systemModelId
-            systemModelName
-            apiKey
-            createdAt
-            updatedAt
-          }
-        }
-      }
-    `;
-    return graphqlClient.request<SystemModelUserKeyListPayload>({ query });
-  },
-
-  /** 保存当前用户对系统预置模型的个人 API Key */
-  saveSystemModelUserKey: async (
-    input: SystemModelUserKeySaveInput,
-  ): Promise<SystemModelUserKeyMutationPayload> => {
+export const adminUserApiKeyGraphqlApi = {
+  /** 管理员：为指定用户设置/清除个人 API-Key */
+  adminSetUserApiKey: async (
+    input: AdminSetUserApiKeyInput,
+  ): Promise<AdminSetUserApiKeyPayload> => {
     const mutation = `
-      mutation SaveSystemModelUserKey($input: SystemModelUserKeyInput!) {
-        saveSystemModelUserKey(input: $input) {
+      mutation AdminSetUserApiKey($input: AdminSetUserApiKeyInput!) {
+        adminSetUserApiKey(input: $input) {
           success
           message
-          mapping {
-            id
-            userId
-            systemModelId
-            systemModelName
-            apiKey
-            createdAt
-            updatedAt
-          }
         }
       }
     `;
-    return graphqlClient.request<SystemModelUserKeyMutationPayload>({
+    return graphqlClient.request<AdminSetUserApiKeyPayload>({
       query: mutation,
       variables: { input },
-    });
-  },
-
-  /** 删除当前用户对系统预置模型的个人 API Key（回退到全局 key） */
-  deleteSystemModelUserKey: async (
-    systemModelId: number,
-  ): Promise<DeleteSystemModelUserKeyPayload> => {
-    const mutation = `
-      mutation DeleteSystemModelUserKey($systemModelId: Int!) {
-        deleteSystemModelUserKey(systemModelId: $systemModelId) {
-          success
-          message
-        }
-      }
-    `;
-    return graphqlClient.request<DeleteSystemModelUserKeyPayload>({
-      query: mutation,
-      variables: { systemModelId },
-    });
-  },
-};
-
-// ── 管理员：替指定用户管理系统预置模型的 API Key ──
-
-export interface AdminUserSystemModelKeyListPayload {
-  adminListUserSystemModelKeys: {
-    success: boolean;
-    message: string;
-    mappings: SystemModelUserMappingItem[];
-  };
-}
-
-export interface AdminSystemModelUserKeySaveInput {
-  userId: number;
-  systemModelId: number;
-  apiKey: string;
-  testConnection?: boolean;
-}
-
-export interface AdminSaveUserSystemModelKeyPayload {
-  adminSaveUserSystemModelKey: {
-    success: boolean;
-    message: string;
-    mapping: SystemModelUserMappingItem | null;
-  };
-}
-
-export interface AdminDeleteUserSystemModelKeyPayload {
-  adminDeleteUserSystemModelKey: {
-    success: boolean;
-    message: string;
-  };
-}
-
-export const adminSystemModelUserKeyGraphqlApi = {
-  /** 管理员：列出指定用户对系统预置模型的 API Key 映射 */
-  adminListUserSystemModelKeys: async (
-    userId: number,
-  ): Promise<AdminUserSystemModelKeyListPayload> => {
-    const query = `
-      query AdminListUserSystemModelKeys($userId: Int!) {
-        adminListUserSystemModelKeys(userId: $userId) {
-          success
-          message
-          mappings {
-            id
-            userId
-            systemModelId
-            systemModelName
-            apiKey
-            createdAt
-            updatedAt
-          }
-        }
-      }
-    `;
-    return graphqlClient.request<AdminUserSystemModelKeyListPayload>({
-      query,
-      variables: { userId },
-    });
-  },
-
-  /** 管理员：为指定用户保存系统预置模型的个人 API Key */
-  adminSaveUserSystemModelKey: async (
-    input: AdminSystemModelUserKeySaveInput,
-  ): Promise<AdminSaveUserSystemModelKeyPayload> => {
-    const mutation = `
-      mutation AdminSaveUserSystemModelKey($input: AdminSystemModelUserKeyInput!) {
-        adminSaveUserSystemModelKey(input: $input) {
-          success
-          message
-          mapping {
-            id
-            userId
-            systemModelId
-            systemModelName
-            apiKey
-            createdAt
-            updatedAt
-          }
-        }
-      }
-    `;
-    return graphqlClient.request<AdminSaveUserSystemModelKeyPayload>({
-      query: mutation,
-      variables: { input },
-    });
-  },
-
-  /** 管理员：删除指定用户对系统预置模型的个人 API Key */
-  adminDeleteUserSystemModelKey: async (
-    userId: number,
-    systemModelId: number,
-  ): Promise<AdminDeleteUserSystemModelKeyPayload> => {
-    const mutation = `
-      mutation AdminDeleteUserSystemModelKey($userId: Int!, $systemModelId: Int!) {
-        adminDeleteUserSystemModelKey(userId: $userId, systemModelId: $systemModelId) {
-          success
-          message
-        }
-      }
-    `;
-    return graphqlClient.request<AdminDeleteUserSystemModelKeyPayload>({
-      query: mutation,
-      variables: { userId, systemModelId },
     });
   },
 };

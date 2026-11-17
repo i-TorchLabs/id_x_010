@@ -5,7 +5,10 @@
 
 embedding 客户端复用 ``external_provider`` / ``local_provider`` 表中已配置的
 embd_base_url 与 api_key；模型名走环境变量 ``EXTERNAL_EMBEDDING_MODEL``，
-默认 ``Qwen/Qwen3-Embedding-8B``（1024 维，匹配 TableComment.EmbeddingType）。
+默认 ``Qwen/Qwen3-Embedding-8B``（1024 维，与 EMBEDDING_DIM 对齐）。
+
+外部第三方 PostgreSQL 部署：embedding 列为 JSON 列表存储（无 pgvector
+扩展），召回统一在应用层计算余弦相似度（``_search_rows_json``）。
 
 模块对外只暴露极少数异步 API，所有失败均 try/except 后降级，
 不向上抛错——调用方决策"降级返回空还是回退全表"。
@@ -120,12 +123,33 @@ async def upsert_table_comment(
         await session.commit()
 
 
+async def _search_rows_json(model, filters, top_k: int, label_fn):
+    """应用层余弦相似度召回（外部第三方 PostgreSQL 部署的统一路径）。
+
+    embedding 列为 JSON 列表（无 pgvector 扩展），先取满足过滤条件的行，
+    再在 Python 内计算余弦相似度排序取 top_k。embedding 缺失的行
+    score=0.0 保留在末尾（与降级路径行为一致）。
+    """
+    from x_models.id_x_010.src.utils.x_fewshot import _cosine
+
+    async with get_session()() as session:
+        rows = await session.execute(select(model).where(*filters))
+        entities = rows.scalars().all()
+    scored = []
+    for r in entities:
+        rvec = r.embedding if isinstance(r.embedding, list) else None
+        scored.append((_cosine(label_fn(r), rvec) if rvec else 0.0, r))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return scored[:top_k]
+
+
 async def search_tables(
     query: str, db_name: str, top_k: int = 5
 ) -> List[Dict[str, object]]:
     """从 table_comments 召回相关表。
 
-    优先使用 pgvector cosine_distance 向量召回；任一环节失败均降级返回
+    embedding 列为 JSON 存储（外部第三方 PostgreSQL，无 pgvector 扩展），
+    召回在应用层计算余弦相似度；任一环节失败均降级返回
     top_k 行无 score 数据（score=0.0），保证调用方链路不中断。
     """
     if not query or not db_name:
@@ -149,31 +173,23 @@ async def search_tables(
                 for r in rows.all()
             ]
 
-    async with get_session()() as session:
-        try:
-            stmt = (
-                select(
-                    TableComment,
-                    TableComment.embedding.cosine_distance(qvec).label("dist"),
-                )
-                .where(TableComment.db_name == db_name)
-                .order_by("dist")
-                .limit(top_k)
-            )
-            rows = await session.execute(stmt)
-            return [
-                {
-                    "table_name": r[0].table_name,
-                    "comment": r[0].comment,
-                    "score": 1.0 - r[1],
-                }
-                for r in rows.all()
-            ]
-        except Exception as e:
-            logger.warning(
-                f"{get_request_id()}search_tables 向量检索失败，降级取前 N 行: "
-                f"{type(e).__name__}: {e}"
-            )
+    try:
+        scored = await _search_rows_json(
+            TableComment,
+            [TableComment.db_name == db_name],
+            top_k,
+            lambda _r: qvec,
+        )
+        return [
+            {"table_name": r.table_name, "comment": r.comment, "score": score}
+            for score, r in scored
+        ]
+    except Exception as e:
+        logger.warning(
+            f"{get_request_id()}search_tables 向量检索失败，降级取前 N 行: "
+            f"{type(e).__name__}: {e}"
+        )
+        async with get_session()() as session:
             rows = await session.execute(
                 select(TableComment).where(TableComment.db_name == db_name)
             )
@@ -234,36 +250,27 @@ async def search_documents(
         )
         return []
 
-    async with get_session()() as session:
-        try:
-            from sqlalchemy import or_
+    try:
+        from sqlalchemy import or_
 
-            stmt = (
-                select(
-                    DocumentChunk,
-                    DocumentChunk.embedding.cosine_distance(qvec).label("dist"),
+        scored = await _search_rows_json(
+            DocumentChunk,
+            [
+                or_(
+                    DocumentChunk.user_id.is_(None),
+                    DocumentChunk.user_id == user_id,
                 )
-                .where(
-                    or_(
-                        DocumentChunk.user_id.is_(None),
-                        DocumentChunk.user_id == user_id,
-                    )
-                )
-                .order_by("dist")
-                .limit(top_k)
-            )
-            rows = await session.execute(stmt)
-            return [
-                {
-                    "doc_name": r[0].doc_name,
-                    "content": r[0].content,
-                    "score": 1.0 - r[1],
-                }
-                for r in rows.all()
-            ]
-        except Exception as e:
-            logger.warning(
-                f"{get_request_id()}search_documents 向量检索失败,返回空: "
-                f"{type(e).__name__}: {e}"
-            )
-            return []
+            ],
+            top_k,
+            lambda _r: qvec,
+        )
+        return [
+            {"doc_name": r.doc_name, "content": r.content, "score": score}
+            for score, r in scored
+        ]
+    except Exception as e:
+        logger.warning(
+            f"{get_request_id()}search_documents 向量检索失败,返回空: "
+            f"{type(e).__name__}: {e}"
+        )
+        return []

@@ -2,8 +2,8 @@
 
 /**
  * 后台管理面板 — 4 个页签
- * 1. 系统模型管理：CRUD system_model_settings
- * 2. 用户管理：用户列表 + 系统模型配额设置 + 密码重置
+ * 1. 系统模型管理：CRUD system_model_settings（模型列表全局共享，不含 api_key）
+ * 2. 用户管理：用户列表 + 个人 API-Key（users.api_key）+ 配额 + 密码重置
  * 3. 资费管理：按用户查看系统模型用量与配额使用情况
  * 4. 模型价格：CRUD model_prices（input / output 单价，USD / 1M tokens）
  */
@@ -17,8 +17,7 @@ import { useI18n } from "@/context/I18nContext";
 import { useDraggableDialog } from "@/hooks/useDraggableDialog";
 import { API_BASE_URL, BASE_URL } from "@/utils/config";
 import {
-  adminSystemModelUserKeyGraphqlApi,
-  type SystemModelUserMappingItem,
+  adminUserApiKeyGraphqlApi,
 } from "@/api/graphql";
 import {
   clearSsoLoginFlag,
@@ -43,11 +42,12 @@ async function gql<T = any>(query: string, variables?: Record<string, unknown>):
 interface AdminUser {
   id: number; email: string; displayName?: string | null;
   isActive: boolean; isAdmin: boolean; role: string;
+  hasApiKey: boolean; apiKeyMasked?: string | null;
   createdAt?: string | null; updatedAt?: string | null;
 }
 interface SystemModel {
   id: number; name: string; provider: string; baseUrl: string;
-  apiKey: string; modelType: string; isDefault: boolean;
+  modelType: string; isDefault: boolean;
   enabled: boolean; sortOrder: number;
 }
 interface AdminUsage {
@@ -183,7 +183,7 @@ function SystemModelsTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) 
     setLoading(true);
     try {
       const data = await gql<{ systemModels: { success: boolean; models: SystemModel[] } }>(
-        `query { systemModels { success models { id name provider baseUrl apiKey modelType isDefault enabled sortOrder } } }`,
+        `query { systemModels { success models { id name provider baseUrl modelType isDefault enabled sortOrder } } }`,
       );
       setModels(data.systemModels.models);
     } catch (e) { onFeedback({ kind: "err", text: (e as Error).message }); }
@@ -193,21 +193,21 @@ function SystemModelsTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) 
   useEffect(() => { refresh(); }, [refresh]);
 
   const openAdd = () => {
-    setEditing({ id: 0, name: "", provider: "", baseUrl: "", apiKey: "", modelType: "external", isDefault: false, enabled: true, sortOrder: 0 });
+    setEditing({ id: 0, name: "", provider: "", baseUrl: "", modelType: "external", isDefault: false, enabled: true, sortOrder: 0 });
     setIsModalOpen(true);
   };
   const openEdit = (m: SystemModel) => { setEditing(m); setIsModalOpen(true); };
 
   const handleSave = async () => {
     if (!editing) return;
-    if (!editing.name || !editing.provider || !editing.baseUrl || !editing.apiKey) {
+    if (!editing.name || !editing.provider || !editing.baseUrl) {
       onFeedback({ kind: "err", text: t("admin.models.errorAllFieldsRequired") });
       return;
     }
     try {
       await gql(
         `mutation($input: SystemModelInput!) { saveSystemModel(input: $input) { success message } }`,
-        { input: { id: editing.id || null, name: editing.name, provider: editing.provider, baseUrl: editing.baseUrl, apiKey: editing.apiKey, modelType: editing.modelType, isDefault: editing.isDefault, enabled: editing.enabled, sortOrder: editing.sortOrder, testConnection: false } },
+        { input: { id: editing.id || null, name: editing.name, provider: editing.provider, baseUrl: editing.baseUrl, modelType: editing.modelType, isDefault: editing.isDefault, enabled: editing.enabled, sortOrder: editing.sortOrder, testConnection: false } },
       );
       onFeedback({ kind: "ok", text: t("admin.models.modelSaved") });
       setIsModalOpen(false);
@@ -288,10 +288,6 @@ function SystemModelsTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) 
                     <Label className="text-sm font-medium">{t("admin.models.fieldBaseUrl")}</Label>
                     <Input value={editing.baseUrl} onChange={(e) => setEditing({ ...editing, baseUrl: e.target.value })} placeholder={t("admin.models.fieldBaseUrlPlaceholder")} />
                   </TextField>
-                  <TextField fullWidth className="flex flex-col gap-1.5">
-                    <Label className="text-sm font-medium">{t("admin.models.fieldApiKey")}</Label>
-                    <Input value={editing.apiKey} onChange={(e) => setEditing({ ...editing, apiKey: e.target.value })} placeholder={t("admin.models.fieldApiKeyPlaceholder")} />
-                  </TextField>
                   <div style={{ display: "flex", gap: 16 }}>
                     <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
                       <input type="checkbox" checked={editing.isDefault} onChange={(e) => setEditing({ ...editing, isDefault: e.target.checked })} />
@@ -331,13 +327,13 @@ function UsersTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) {
   const [quotaValue, setQuotaValue] = useState("");
   const [resetModal, setResetModal] = useState<AdminUser | null>(null);
   const [newPassword, setNewPassword] = useState("");
-  const [modelKeysModal, setModelKeysModal] = useState<AdminUser | null>(null);
+  const [apiKeyModal, setApiKeyModal] = useState<AdminUser | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
       const data = await gql<{ listUsers: { success: boolean; users: AdminUser[] } }>(
-        `query { listUsers { success users { id email displayName isActive isAdmin role createdAt updatedAt } } }`,
+        `query { listUsers { success users { id email displayName isActive isAdmin role hasApiKey apiKeyMasked createdAt updatedAt } } }`,
       );
       setUsers(data.listUsers.users);
     } catch (e) { onFeedback({ kind: "err", text: (e as Error).message }); }
@@ -400,6 +396,7 @@ function UsersTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) {
               <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.users.colActive")}</th>
               <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.users.colRole")}</th>
               <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.users.colAdmin")}</th>
+              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.users.colApiKey")}</th>
               <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.colActions")}</th>
             </tr>
           </thead>
@@ -421,10 +418,13 @@ function UsersTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) {
                   </span>
                 </td>
                 <td style={{ padding: "8px 12px" }}><input type="checkbox" checked={u.isAdmin} onChange={(e) => handleSetAdmin(u, e.target.checked)} /></td>
+                <td style={{ padding: "8px 12px", fontSize: 12, color: u.hasApiKey ? "var(--fg2)" : "var(--fg4)", whiteSpace: "nowrap" }}>
+                  {u.hasApiKey ? (u.apiKeyMasked || t("admin.users.configured")) : t("admin.users.apiKeyNotSet")}
+                </td>
                 <td style={{ padding: "8px 12px" }}>
                   <Button size="sm" variant="ghost" onPress={() => { setQuotaModal({ userId: u.id, email: u.email }); setQuotaValue(""); }}>{t("admin.users.setQuota")}</Button>
                   <Button size="sm" variant="ghost" onPress={() => { setResetModal(u); setNewPassword(""); }}>{t("admin.users.resetPassword")}</Button>
-                  <Button size="sm" variant="ghost" onPress={() => setModelKeysModal(u)}>{t("admin.users.modelKeys")}</Button>
+                  <Button size="sm" variant="ghost" onPress={() => setApiKeyModal(u)}>{t("admin.users.modelKeys")}</Button>
                 </td>
               </tr>
             ))}
@@ -477,11 +477,11 @@ function UsersTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) {
         </Modal.Backdrop>
       )}
 
-      {/* System Model API Keys Modal */}
-      {modelKeysModal && (
-        <ModelKeysModal
-          user={modelKeysModal}
-          onClose={() => setModelKeysModal(null)}
+      {/* Personal API-Key Modal */}
+      {apiKeyModal && (
+        <ApiKeyModal
+          user={apiKeyModal}
+          onClose={() => setApiKeyModal(null)}
           onFeedback={onFeedback}
         />
       )}
@@ -490,17 +490,10 @@ function UsersTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) {
 }
 
 // ════════════════════════════════════════════════════════════
-// Model Keys Modal — 管理员为指定用户配置系统预置模型的 API Key
+// API-Key Modal — 管理员为指定用户设置/清除个人 API-Key（users.api_key）
 // ════════════════════════════════════════════════════════════
 
-interface SystemModelBrief {
-  id: number;
-  name: string;
-  provider: string;
-  enabled: boolean;
-}
-
-function ModelKeysModal({
+function ApiKeyModal({
   user,
   onClose,
   onFeedback,
@@ -511,137 +504,72 @@ function ModelKeysModal({
 }) {
   const { t } = useI18n();
   const { handleProps: dragHandleProps } = useDraggableDialog();
-  const [models, setModels] = useState<SystemModelBrief[]>([]);
-  const [mappings, setMappings] = useState<Map<number, SystemModelUserMappingItem>>(new Map());
-  const [editing, setEditing] = useState<Record<number, string>>({});
-  const [loading, setLoading] = useState(false);
-  const [savingId, setSavingId] = useState<number | null>(null);
+  const [apiKeyValue, setApiKeyValue] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
+  const handleSave = async () => {
+    const val = apiKeyValue.trim();
+    setSaving(true);
     try {
-      const [sysRes, keyRes] = await Promise.all([
-        gql<{ systemModels: { success: boolean; models: SystemModelBrief[] } }>(
-          `query { systemModels { success models { id name provider enabled } } }`,
-        ),
-        adminSystemModelUserKeyGraphqlApi.adminListUserSystemModelKeys(user.id),
-      ]);
-      setModels(sysRes.systemModels.models ?? []);
-      const map = new Map<number, SystemModelUserMappingItem>();
-      for (const m of keyRes.adminListUserSystemModelKeys.mappings ?? []) {
-        map.set(m.systemModelId, m);
-      }
-      setMappings(map);
-      setEditing({});
-    } catch (e) {
-      onFeedback({ kind: "err", text: (e as Error).message });
-    } finally {
-      setLoading(false);
-    }
-  }, [user.id, onFeedback]);
-
-  useEffect(() => { refresh(); }, [refresh]);
-
-  const handleSave = async (smId: number, testConnection: boolean) => {
-    const val = (editing[smId] ?? "").trim();
-    if (!val) return;
-    setSavingId(smId);
-    try {
-      const r = await adminSystemModelUserKeyGraphqlApi.adminSaveUserSystemModelKey({
+      const r = await adminUserApiKeyGraphqlApi.adminSetUserApiKey({
         userId: user.id,
-        systemModelId: smId,
         apiKey: val,
-        testConnection,
       });
-      if (r.adminSaveUserSystemModelKey.success && r.adminSaveUserSystemModelKey.mapping) {
-        const next = new Map(mappings);
-        next.set(smId, r.adminSaveUserSystemModelKey.mapping);
-        setMappings(next);
-        setEditing((e) => { const n = { ...e }; delete n[smId]; return n; });
-        onFeedback({ kind: "ok", text: `${user.email} key saved for ${models.find((m) => m.id === smId)?.name ?? smId}` });
+      if (r.adminSetUserApiKey.success) {
+        onFeedback({
+          kind: "ok",
+          text: val
+            ? t("admin.users.feedbackApiKeySaved", { email: user.email })
+            : t("admin.users.feedbackApiKeyCleared", { email: user.email }),
+        });
+        onClose();
       } else {
-        onFeedback({ kind: "err", text: r.adminSaveUserSystemModelKey.message });
+        onFeedback({ kind: "err", text: r.adminSetUserApiKey.message });
       }
     } catch (e) {
       onFeedback({ kind: "err", text: (e as Error).message });
     } finally {
-      setSavingId(null);
-    }
-  };
-
-  const handleDelete = async (smId: number) => {
-    setSavingId(smId);
-    try {
-      const r = await adminSystemModelUserKeyGraphqlApi.adminDeleteUserSystemModelKey(user.id, smId);
-      if (r.adminDeleteUserSystemModelKey.success) {
-        const next = new Map(mappings);
-        next.delete(smId);
-        setMappings(next);
-        setEditing((e) => { const n = { ...e }; delete n[smId]; return n; });
-        onFeedback({ kind: "ok", text: `${user.email} key removed for ${models.find((m) => m.id === smId)?.name ?? smId}` });
-      } else {
-        onFeedback({ kind: "err", text: r.adminDeleteUserSystemModelKey.message });
-      }
-    } catch (e) {
-      onFeedback({ kind: "err", text: (e as Error).message });
-    } finally {
-      setSavingId(null);
+      setSaving(false);
     }
   };
 
   return (
     <Modal.Backdrop isOpen onOpenChange={(o) => !o && onClose()}>
       <Modal.Container>
-        <Modal.Dialog className="sm:max-w-[560px]">
+        <Modal.Dialog className="sm:max-w-[460px]">
           <Modal.CloseTrigger />
           <Modal.Header {...dragHandleProps}>
-            <Modal.Heading>{t("admin.users.modelKeysModalTitle", { email: user.email })}</Modal.Heading>
+            <Modal.Heading>{t("admin.users.apiKeyModalTitle", { email: user.email })}</Modal.Heading>
           </Modal.Header>
           <Modal.Body>
-            {loading ? (
-              <p style={{ fontSize: 13, color: "var(--fg3)" }}>{t("admin.loading")}</p>
-            ) : models.length === 0 ? (
-              <p style={{ fontSize: 13, color: "var(--fg3)" }}>{t("admin.users.noSystemModels")}</p>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                {models.map((sm) => {
-                  const mp = mappings.get(sm.id);
-                  const hasKey = mp != null;
-                  const draft = editing[sm.id] ?? (hasKey ? mp!.apiKey : "");
-                  return (
-                    <div key={sm.id} style={{ padding: 12, borderRadius: 12, background: "var(--surface-2)", border: `0.5px solid ${hasKey ? "var(--divider-strong)" : "var(--divider)"}`, boxShadow: hasKey ? "var(--shadow-inset), var(--shadow-xs)" : "none" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                        <div>
-                          <span style={{ fontSize: 13, fontWeight: 600 }}>{sm.name}</span>
-                          <span style={{ fontSize: 11, color: "var(--fg4)", marginLeft: 6 }}>{sm.provider}{!sm.enabled ? t("admin.users.disabledSuffix") : ""}</span>
-                        </div>
-                        {hasKey && <span style={{ fontSize: 11, color: "var(--fg3)" }}>{t("admin.users.configured")}</span>}
-                      </div>
-                      <div style={{ display: "flex", gap: 6 }}>
-                        <Input
-                          type="password"
-                          placeholder={t("admin.users.apiKeyPlaceholder")}
-                          value={draft}
-                          onChange={(e) => setEditing((p) => ({ ...p, [sm.id]: e.target.value }))}
-                          style={{ flex: 1 }}
-                        />
-                        <Button size="sm" variant="primary" isDisabled={!draft.trim() || savingId === sm.id} onPress={() => handleSave(sm.id, true)}>
-                          {savingId === sm.id ? t("admin.saving") : t("admin.save")}
-                        </Button>
-                        {hasKey && (
-                          <Button size="sm" variant="ghost" isDisabled={savingId === sm.id} onPress={() => handleDelete(sm.id)}>
-                            {t("admin.remove")}
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 13, color: "var(--fg2)" }}>{t("admin.users.apiKeyCurrent")}</span>
+                <span style={{ fontSize: 13, color: user.hasApiKey ? "var(--fg1)" : "var(--fg4)", fontWeight: 600 }}>
+                  {user.hasApiKey ? (user.apiKeyMasked || t("admin.users.configured")) : t("admin.users.apiKeyNotSet")}
+                </span>
               </div>
-            )}
+              <TextField fullWidth className="flex flex-col gap-1.5">
+                <Label className="text-sm font-medium">{t("admin.users.modelKeys")}</Label>
+                <Input
+                  type="password"
+                  placeholder={t("admin.users.apiKeyPlaceholder")}
+                  value={apiKeyValue}
+                  onChange={(e) => setApiKeyValue(e.target.value)}
+                />
+              </TextField>
+              <p style={{ fontSize: 12, color: "var(--fg4)" }}>{t("admin.users.apiKeyHelpText")}</p>
+            </div>
           </Modal.Body>
           <Modal.Footer>
             <Button variant="ghost" onPress={onClose}>{t("admin.close")}</Button>
+            <Button
+              variant="primary"
+              isDisabled={saving}
+              onPress={handleSave}
+            >
+              {saving ? t("admin.saving") : t("admin.save")}
+            </Button>
           </Modal.Footer>
         </Modal.Dialog>
       </Modal.Container>

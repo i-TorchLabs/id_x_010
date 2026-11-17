@@ -27,8 +27,6 @@ import {
   type ModelSettings,
   systemModelGraphqlApi,
   type SystemModelItem,
-  systemModelUserKeyGraphqlApi,
-  type SystemModelUserMappingItem,
   userModelProviderGraphqlApi,
   type UserModelPropertyItem,
 } from "@/api/graphql";
@@ -97,11 +95,9 @@ export function ModelSettingsDialog({
   const [defaultModel, setDefaultModel] = useState<string>("");
   const [allModelNames, setAllModelNames] = useState<string[]>([]);
 
-  // ── System models (read-only + per-user key override) ──
+  // ── System models（全局共享只读；个人 API-Key 存 users.api_key，由管理员配置）──
   const [systemModels, setSystemModels] = useState<SystemModelItem[]>([]);
-  const [userKeyMappings, setUserKeyMappings] = useState<
-    Map<number, SystemModelUserMappingItem>
-  >(new Map());
+  const [hasApiKey, setHasApiKey] = useState(false);
 
   const [isLoading, setIsLoading] = useState(false);
   // 按 Provider 索引跟踪保存中状态，避免一个卡片保存时其他卡片也被禁用
@@ -116,11 +112,10 @@ export function ModelSettingsDialog({
     setIsLoading(true);
     setFeedback(null);
     try {
-      const [res, provRes, sysRes, keyRes] = await Promise.all([
+      const [res, provRes, sysRes] = await Promise.all([
         settingsGraphqlApi.getModelSettings(),
         userModelProviderGraphqlApi.myModelProviders(),
         systemModelGraphqlApi.listSystemModels(),
-        systemModelUserKeyGraphqlApi.mySystemModelKeys().catch(() => null),
       ]);
 
       // Default model from user_model_settings
@@ -133,15 +128,20 @@ export function ModelSettingsDialog({
       setProviderDrafts(drafts);
       setExpandedProvider(drafts.length > 0 ? 0 : null);
 
-      // System models + per-user keys
+      // System models（api_key 已改为每用户独立，存 users.api_key）
       const sysModels = sysRes?.systemModels?.models ?? [];
       setSystemModels(sysModels);
-      const mappings = keyRes?.mySystemModelKeys?.mappings ?? [];
-      const map = new Map<number, SystemModelUserMappingItem>();
-      for (const m of mappings) {
-        map.set(m.systemModelId, m);
+
+      // 个人 API-Key 状态：从 localStorage user 读取（登录响应携带 hasApiKey）
+      try {
+        const raw = localStorage.getItem("user");
+        if (raw) {
+          const parsed = JSON.parse(raw) as { hasApiKey?: boolean };
+          setHasApiKey(parsed.hasApiKey === true);
+        }
+      } catch {
+        // 忽略解析错误
       }
-      setUserKeyMappings(map);
     } catch (err) {
       console.error("Failed to load model settings:", err);
       setFeedback({
@@ -378,34 +378,33 @@ export function ModelSettingsDialog({
               </p>
             ) : (
               <div className="flex flex-col gap-5">
-                {/* ── System Models (per-user key override) ── */}
+                {/* ── System Models（全局共享；个人 API-Key 独立配置）── */}
                 {systemModels.length > 0 && (
                   <div className="flex flex-col gap-2">
                     <div className="flex items-center justify-between">
                       <p className="label-section">{t("settings.systemModelsSection")}</p>
                       <span
                         className="font-text"
-                        style={{ fontSize: "11px", color: "var(--fg4)" }}
+                        style={{
+                          fontSize: "11px",
+                          color: hasApiKey ? "var(--fg3)" : "var(--danger)",
+                          fontWeight: hasApiKey ? 400 : 600,
+                        }}
                       >
-                        {systemModels.filter((s) => s.enabled).length} {t("settings.availableCount")}
+                        {hasApiKey
+                          ? t("settings.apiKeyConfigured")
+                          : t("settings.apiKeyNotConfigured")}
                       </span>
                     </div>
                     <div className="flex flex-col gap-1.5">
                       {systemModels.map((sm) => {
-                        const userMapping = userKeyMappings.get(sm.id);
-                        const hasUserKey = userMapping != null;
                         return (
                           <div
                             key={sm.id}
                             className="px-3.5 py-2.5 rounded-xl"
                             style={{
                               background: "var(--surface-2)",
-                              border: hasUserKey
-                                ? "0.5px solid var(--divider-strong)"
-                                : "0.5px solid var(--divider)",
-                              boxShadow: hasUserKey
-                                ? "var(--shadow-inset), var(--shadow-xs)"
-                                : "none",
+                              border: "0.5px solid var(--divider)",
                               opacity: sm.enabled ? 1 : 0.5,
                             }}
                           >
@@ -443,17 +442,6 @@ export function ModelSettingsDialog({
                                       }}
                                     >
                                       {t("settings.defaultBadge")}
-                                    </span>
-                                  )}
-                                  {hasUserKey && (
-                                    <span
-                                      className="font-text shrink-0"
-                                      style={{
-                                        fontSize: "11px",
-                                        color: "var(--fg3)",
-                                      }}
-                                    >
-                                      {t("settings.keyConfigured")}
                                     </span>
                                   )}
                                 </div>

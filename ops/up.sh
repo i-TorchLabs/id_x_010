@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # ====================================================================
-# id_x_010 一体化容器部署启动脚本（podman）
+# id_x_010 容器部署启动脚本（podman，外部第三方 PostgreSQL 模式）
 #
-# 拓扑：单 Pod 四容器，共享网络命名空间
-#   db       docker.io/pgvector/pgvector:pg18   :5432 → 宿主机 ${DB_HOST_PORT:-54321}
-#   （TASK-001：改用 pgvector 镜像以支持 table_comments / document_chunks 等
-#    向量列；纯 postgres:18 镜像无 vector 扩展可用，会导致 create_all 失败）
+# 与 id_x_007 的部署模式对齐：不再内置 db 容器 / pgvector 镜像，
+# service 直连 ops/.env 的 DB_* 指定的外部第三方 PostgreSQL；
+# 表结构与预置数据（提供商 / 目标库 / 系统模型 / SSO / 初始管理员 /
+# 模型价格）由应用启动时幂等创建/播种（create_all + x_seed），
+# ops/init/*.sql 仅作手动初始化/审阅参考。
+#
+# 拓扑：单 Pod 三容器，共享网络命名空间
 #   service  localhost/id_x_010-service      127.0.0.1:7000（Litestar + GraphQL，仅 Pod 内可达）
 #   web      localhost/id_x_010-web          127.0.0.1:2000（Next.js，仅 Pod 内可达）
 #   haproxy  docker.io/library/haproxy:3.0   :8080 → 宿主机 ${POD_PORT:-8010}
@@ -29,7 +32,7 @@ fi
 
 if [ ! -f .env ]; then
   cp .env.example .env
-  echo "[up] 已从 .env.example 生成 .env，请按需修改后重新运行"
+  echo "[up] 已从 .env.example 生成 .env，请填写外部数据库 DB_* 等配置后重新运行"
   exit 1
 fi
 
@@ -39,29 +42,80 @@ set -a
 source ./.env
 set +a
 
-POSTGRES_DB="${POSTGRES_DB:-id_x_010}"
-POSTGRES_USER="${POSTGRES_USER:-postgres}"
-POSTGRES_PASSWORD="${POSTGRES_PASSWORD:?[up] 请在 .env 中设置 POSTGRES_PASSWORD}"
-POSTGRES_IMAGE="${POSTGRES_IMAGE:-docker.io/pgvector/pgvector:pg18}"
+# ---- 外部数据库配置校验 + 清洗（对齐 id_x_007 up.sh） ----
+for var in DB_HOST DB_NAME DB_USERNAME DB_PASSWORD; do
+  if [ -z "${!var:-}" ]; then
+    echo "[up] 错误: ops/.env 缺少外部数据库配置 ${var}" >&2
+    exit 1
+  fi
+done
+DB_PORT="${DB_PORT:-5432}"
+# 容错：剔除 Windows 编辑器引入的 CR 与首尾空白（否则 TCP/psycopg2 连接都会失败）
+for var in DB_HOST DB_PORT DB_NAME DB_USERNAME DB_PASSWORD; do
+  val="${!var}"
+  val="${val//$'\r'/}"
+  val="$(echo "${val}" | xargs)"
+  printf -v "${var}" '%s' "${val}"
+done
+
 HAPROXY_IMAGE="${HAPROXY_IMAGE:-docker.io/library/haproxy:3.0}"
-# 自建镜像同样使用完全限定名（localhost/ 前缀），避免 short-name 解析歧义
+# 自建镜像使用完全限定名（localhost/ 前缀），避免 short-name 解析歧义
 SERVICE_IMAGE="localhost/${PROJECT_NAME}-service"
 WEB_IMAGE="localhost/${PROJECT_NAME}-web"
 POD_PORT="${POD_PORT:-8010}"
-# 宿主机直连数据库端口（db 容器 5432 发布到宿主机该端口）
-DB_HOST_PORT="${DB_HOST_PORT:-54321}"
 
 # 提醒关键可选项未配置（不阻断，功能会降级）
-# 提供商 api_key 已迁移至 external_provider / local_provider 表，
+# 提供商 api_key 由应用启动播种至 external_provider / local_provider 表，
 # 表无数据时相关 Agent 不可用
 if [ "${LLM_PROVIDER:-external}" = "external" ]; then
-  echo "[up] 提示: LLM_PROVIDER=external，请确认 external_provider 表已写入提供商配置" >&2
+  echo "[up] 提示: LLM_PROVIDER=external，external_provider 表将由应用播种默认网关配置" >&2
 fi
 
 # ============================================
-# 1. 构建镜像（若不存在或指定 --build）
+# 1. 外部数据库连通性预检（对齐 id_x_007 up.sh）
 # ============================================
-if [ "${1:-}" = "--build" ] || ! podman image exists "${SERVICE_IMAGE}" || ! podman image exists "${WEB_IMAGE}"; then
+# TCP 探测（3s 超时）：依工具可用性逐个回退，避免个别 bash 禁用 /dev/tcp 造成假阴性
+probe_db() {
+  if command -v pg_isready >/dev/null 2>&1; then
+    pg_isready -h "${DB_HOST}" -p "${DB_PORT}" -t 3 >/dev/null 2>&1 && return 0
+  fi
+  if command -v nc >/dev/null 2>&1; then
+    nc -z -w 3 "${DB_HOST}" "${DB_PORT}" >/dev/null 2>&1 && return 0
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "import socket; s=socket.socket(); s.settimeout(3); s.connect(('${DB_HOST}', int('${DB_PORT}')))" 2>/dev/null && return 0
+  fi
+  timeout 3 bash -c "exec 3<>/dev/tcp/${DB_HOST}/${DB_PORT}" 2>/dev/null && return 0
+  return 1
+}
+
+if [ "${SKIP_DB_CHECK:-}" = "1" ]; then
+  echo "[up] SKIP_DB_CHECK=1，跳过宿主机侧数据库连通性预检"
+elif [ "${DB_HOST}" = "host.containers.internal" ]; then
+  # 该域名仅容器内可解析，宿主机侧无法预检，跳过（由容器内探测兜底）
+  echo "[up] DB_HOST=host.containers.internal，跳过宿主机侧连通性预检"
+else
+  echo "[up] 检测外部数据库连通性 ${DB_HOST}:${DB_PORT} ..."
+  db_ok=0
+  for _ in $(seq 1 5); do
+    if probe_db; then db_ok=1; break; fi
+    sleep 2
+  done
+  if [ "${db_ok}" != "1" ]; then
+    echo "[up] 错误: 宿主机无法 TCP 直连 ${DB_HOST}:${DB_PORT}（ping 通不代表端口通）" >&2
+    echo "[up] 排查: 1) psql \"host=${DB_HOST} port=${DB_PORT} user=${DB_USERNAME} dbname=${DB_NAME}\" -c 'select 1' 验证；" >&2
+    echo "[up]       2) 多为数据库服务器防火墙未放行本机 IP，或 listen_addresses / 端口不对；" >&2
+    echo "[up]       3) 确认宿主机确实可连，可 SKIP_DB_CHECK=1 bash up.sh 跳过本预检。" >&2
+    exit 1
+  fi
+fi
+
+# ============================================
+# 2. 构建镜像（若不存在或指定 --build）
+# ============================================
+if [ "${1:-}" = "--build" ] \
+   || ! podman image exists "${SERVICE_IMAGE}" \
+   || ! podman image exists "${WEB_IMAGE}"; then
   echo "[up] 构建 service 镜像..."
   podman build --format docker -t "${SERVICE_IMAGE}" -f Dockerfile.service ../../../
   echo "[up] 构建 web 镜像..."
@@ -79,24 +133,19 @@ if [ "${1:-}" = "--build" ] || ! podman image exists "${SERVICE_IMAGE}" || ! pod
 fi
 
 # ============================================
-# 2. 创建 Pod（已存在则跳过）
+# 3. 创建 Pod（已存在则跳过）
 #    haproxy:8080 -> pod:8080 -> 宿主机:${POD_PORT}
-#    db:5432      -> pod:5432 -> 宿主机:${DB_HOST_PORT}
-#    （端口映射在 Pod 创建时固定，已存在的 Pod 无法追加）
 # ============================================
 if ! podman pod exists "${PROJECT_NAME}"; then
   podman pod create --name "${PROJECT_NAME}" \
-    -p "${POD_PORT}:8080" \
-    -p "${DB_HOST_PORT}:5432"
-  echo "[up] Pod ${PROJECT_NAME} 已创建，端口映射 ${POD_PORT}:8080, ${DB_HOST_PORT}:5432"
-elif ! podman pod inspect "${PROJECT_NAME}" | grep -Eq "[\":]${DB_HOST_PORT}[,\"}]"; then
-  echo "[up] 提示: 现有 Pod 未映射 ${DB_HOST_PORT}:5432（数据库端口），如需发布请先 bash down.sh 再重新运行" >&2
+    -p "${POD_PORT}:8080"
+  echo "[up] Pod ${PROJECT_NAME} 已创建，端口映射 ${POD_PORT}:8080"
 fi
 
 # ============================================
-# 3. 创建数据卷（已存在则跳过）
+# 4. 创建数据卷（已存在则跳过；数据库卷已随 db 容器移除而不再需要）
 # ============================================
-for vol in "${PROJECT_NAME}_db" "${PROJECT_NAME}_logs"; do
+for vol in "${PROJECT_NAME}_logs"; do
   if ! podman volume exists "${vol}"; then
     podman volume create "${vol}" >/dev/null
     echo "[up] 数据卷 ${vol} 已创建"
@@ -104,59 +153,26 @@ for vol in "${PROJECT_NAME}_db" "${PROJECT_NAME}_logs"; do
 done
 
 # ============================================
-# 4. 启动容器（已存在则跳过）
+# 5. 启动容器（已存在则跳过）
 # ============================================
-
-# -- db --
-if ! podman container exists "${PROJECT_NAME}-db"; then
-  podman run -d \
-    --pod "${PROJECT_NAME}" \
-    --name "${PROJECT_NAME}-db" \
-    --restart unless-stopped \
-    -e POSTGRES_DB="${POSTGRES_DB}" \
-    -e POSTGRES_USER="${POSTGRES_USER}" \
-    -e POSTGRES_PASSWORD="${POSTGRES_PASSWORD}" \
-    -v "${PROJECT_NAME}_db":/var/lib/postgresql \
-    -v ./init:/docker-entrypoint-initdb.d:ro,z \
-    --health-cmd "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" \
-    --health-interval 10s \
-    --health-timeout 5s \
-    --health-retries 10 \
-    --health-start-period 20s \
-    "${POSTGRES_IMAGE}"
-  echo "[up] ${PROJECT_NAME}-db 已启动"
-else
-  echo "[up] ${PROJECT_NAME}-db 已存在，跳过"
-fi
-
-# 等待 db 就绪
-echo "[up] 等待 db 健康检查通过..."
-for i in $(seq 1 60); do
-  status=$(podman inspect "${PROJECT_NAME}-db" --format '{{.State.Health.Status}}' 2>/dev/null || echo "unknown")
-  if [ "$status" = "healthy" ]; then
-    echo "[up] db 已就绪"
-    break
-  fi
-  if [ "$i" = "60" ]; then
-    echo "[up] 等待 db 超时，继续启动..."
-  fi
-  sleep 1
-done
 
 # -- service --
 # 环境变量完全由 --env-file 注入（引擎层 env_loader 对根 .env 为 override=False，
 # 与容器环境变量效果一致，故不再额外挂载 .env 文件）。
+# DB_* 显式以 -e 再注入一遍，确保覆盖 .env 中可能残留的同名占位。
 if ! podman container exists "${PROJECT_NAME}-service"; then
   podman run -d \
     --pod "${PROJECT_NAME}" \
     --name "${PROJECT_NAME}-service" \
     --restart unless-stopped \
     --env-file .env \
-    -e DB_NAME="${POSTGRES_DB}" \
-    -e DB_HOST=127.0.0.1 \
-    -e DB_PORT=5432 \
-    -e DB_USERNAME="${POSTGRES_USER}" \
-    -e DB_PASSWORD="${POSTGRES_PASSWORD}" \
+    -e DB_NAME="${DB_NAME}" \
+    -e DB_HOST="${DB_HOST}" \
+    -e DB_PORT="${DB_PORT}" \
+    -e DB_USERNAME="${DB_USERNAME}" \
+    -e DB_PASSWORD="${DB_PASSWORD}" \
+    -e ADMIN_EMAIL="${ADMIN_EMAIL:-}" \
+    -e ADMIN_PASSWORD="${ADMIN_PASSWORD:-}" \
     -e PROJECT_PATH=/app/i-Core \
     -v "${PROJECT_NAME}_logs":/app/i-Core/logs \
     --health-cmd "curl -sf -X POST http://127.0.0.1:7000/b/id_x_010/graphql -H 'Content-Type: application/json' -d '{\"query\":\"{ health { status } }\"}' || exit 1" \
@@ -168,6 +184,27 @@ if ! podman container exists "${PROJECT_NAME}-service"; then
   echo "[up] ${PROJECT_NAME}-service 已启动"
 else
   echo "[up] ${PROJECT_NAME}-service 已存在，跳过"
+fi
+
+# 容器内部连通性探测：宿主机通 ≠ 容器通（rootless NAT / 防火墙 FORWARD 链 / MTU 均可能拦截）
+echo "[up] 检测容器内部 -> ${DB_HOST}:${DB_PORT} 连通性 ..."
+container_db_ok=0
+for _ in $(seq 1 5); do
+  if podman exec "${PROJECT_NAME}-service" python -c "import socket; s=socket.socket(); s.settimeout(3); s.connect(('${DB_HOST}', int('${DB_PORT}')))" 2>/dev/null; then
+    container_db_ok=1
+    break
+  fi
+  sleep 2
+done
+if [ "${container_db_ok}" = "1" ]; then
+  echo "[up] 容器内部连接数据库正常"
+else
+  echo "[up] 警告: 容器内部无法 TCP 直连 ${DB_HOST}:${DB_PORT}（宿主机侧预检已通过则多为容器网络问题）" >&2
+  echo "[up] 排查: 1) rootless podman 查看网络后端: podman info --format '{{.Host.NetworkBackend}}'；" >&2
+  echo "[up]          pasta 后端偶发 MTU/路由问题，可改 slirp4netns 对比重建 Pod；" >&2
+  echo "[up]       2) rootful 部署检查 firewalld/nftables 是否拦截容器源网段的 FORWARD/MASQUERADE；" >&2
+  echo "[up]       3) 数据库侧 pg_hba.conf 须放行宿主机 IP（容器出站经 NAT 后源地址即宿主机 IP）；" >&2
+  echo "[up]       4) 看后端具体报错: podman logs ${PROJECT_NAME}-service" >&2
 fi
 
 # -- web --
@@ -201,7 +238,7 @@ else
 fi
 
 # ============================================
-# 5. 端到端验证（宿主机视角）
+# 6. 端到端验证（宿主机视角）
 # ============================================
 if command -v curl >/dev/null 2>&1; then
   echo "[up] 等待 haproxy 入口就绪..."
@@ -218,5 +255,6 @@ if command -v curl >/dev/null 2>&1; then
 fi
 
 echo "[up] 所有服务已启动，访问入口: http://localhost:${POD_PORT}/"
+echo "[up] 数据库（外部第三方 PostgreSQL）: ${DB_HOST}:${DB_PORT}/${DB_NAME}"
 podman pod ls --filter name="${PROJECT_NAME}"
 podman ps --filter pod="${PROJECT_NAME}" --format "table {{.Names}}\t{{.Status}}"
