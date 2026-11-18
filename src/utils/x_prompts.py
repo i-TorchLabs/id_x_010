@@ -79,16 +79,30 @@ async def load_prompt(key: str, **vars) -> str:
         )
 
     if content is None:
-        # 表无数据：按当前请求语言（lang_var）选取 DEFAULTS 默认文案
-        # 注意：如果 admin 在 PromptTemplate 表配了 is_active，则忽略语言直接用
-        #       该文案——admin 显式配置优先级 > 语言降级
+        # 表无数据：返回空串，让调用方使用自己持有的完整版 prompt 兜底。
+        #
+        # 【性能/准确性修复】此前这里回退到 DEFAULTS/语言包的"精简版"文案——
+        # 例如 sql.generate_query 的精简版只有两行，不含 {top_k}/{intent_guidance}
+        # 占位符，导致 _generate_query_node 里精心设计的完整版
+        # GENERATE_QUERY_SYSTEM_PROMPT（含 top_k 限制、意图塑形规则）永远不被
+        # 使用：意图识别节点的 LLM 调用结果被静默丢弃，生成规则全部失效。
+        # 精简版仅保留给"调用方自身没有 fallback"的场景（目前所有调用方
+        # ——sql/general/code/vl agent——都有各自的完整硬编码 prompt）。
         try:
             lang = lang_var.get()
-            content = load_prompt_lang(key, lang)
+            fallback = load_prompt_lang(key, lang)
         except Exception:
-            content = DEFAULTS.get(key, "")
+            fallback = ""
+        if not fallback:
+            fallback = DEFAULTS.get(key, "")
+        # 显式判定：仅当调用方没有传模板变量（说明它不需要占位符版 prompt）
+        # 时才返回静态降级文案；带变量调用（如 sql.generate_query 的
+        # top_k/intent_guidance）一律返回空串，强制走调用方完整版。
+        if vars:
+            return ""
+        content = fallback
         if not content:
-            content = DEFAULTS.get(key, "")
+            return ""
 
     if not vars:
         return content

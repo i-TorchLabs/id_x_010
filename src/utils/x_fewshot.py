@@ -16,7 +16,7 @@ from typing import Dict, List, Optional
 from sqlalchemy import select
 from utils.log_util import get_request_id, logger
 from x_models.id_x_010.src.models.x_models import SqlExample, get_session
-from x_models.id_x_010.src.utils.x_vectorstore import embed
+from x_models.id_x_010.src.utils.x_vectorstore import embed_query_cached
 
 
 def _cosine(a: List[float], b: List[float]) -> float:
@@ -81,20 +81,18 @@ async def retrieve_examples(
             return []
 
         try:
-            qvec = await embed(question)
+            # 【性能】查询向量走短 TTL 缓存（与 search_tables 共享，
+            # 同一问题只嵌入一次）
+            qvec = await embed_query_cached(question)
         except Exception as e:
             logger.warning(
-                f"{get_request_id()}retrieve_examples embed 失败,降级取前 N 条: "
+                f"{get_request_id()}retrieve_examples embed 失败,降级返回空: "
                 f"{type(e).__name__}: {e}"
             )
-            return [
-                {
-                    "question": r.question,
-                    "sql": r.sql,
-                    "explanation": r.explanation,
-                }
-                for r in rows[:top_k]
-            ]
+            # 【准确性修复】embedding 不可用时返回空列表——此前降级取
+            # "前 top_k 条任意例子"，跨业务域的无关示例会把 SQL 生成带偏，
+            # 无示例比错误示例危害小
+            return []
 
         scored = []
         for r in rows:

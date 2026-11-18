@@ -157,6 +157,69 @@ INTENT_ANALYSIS_PROMPT = """你是数据分析意图识别专家。基于用户�
 
 INTENT_ANALYSIS_SYSTEM = "你是数据分析意图识别专家。只输出**单行 JSON**，不要 markdown 包裹、不要解释。"
 
+
+# 【性能】意图规则前置表：显式关键词 → 意图。命中即免 LLM 调用。
+# 关键词取自 INTENT_ANALYSIS_PROMPT 的"决策线索"列，保守收录——
+# 只收"几乎不可能歧义"的强信号词，宁漏勿错（漏了走 LLM 判定）。
+_INTENT_RULES: List[tuple] = [
+    (
+        "trend",
+        "line",
+        ("趋势", "走势", "变化趋势", "随时间变化", "按月", "按天", "按周",
+         "每月", "每天", "每周", "近N天", "近N月", "trend", "over time"),
+    ),
+    (
+        "distribution",
+        "pie",
+        ("占比", "分布", "比例", "百分比", "构成", "占比", "distribution",
+         "proportion", "percentage"),
+    ),
+    (
+        "ranking",
+        "bar",
+        ("排名", "排行", "前N", "前十", "TOP", "top", "最高", "最低",
+         "最多", "最少", "最大", "最小", "排名", "ranking"),
+    ),
+    (
+        "comparison",
+        "bar",
+        ("对比", "比较", "相比", "哪个更", "vs", "VS", "各", "分别",
+         "comparison", "compare"),
+    ),
+    (
+        "correlation",
+        "scatter",
+        ("相关性", "相关", "关系", "随着", "影响", "correlation",
+         "relationship"),
+    ),
+    (
+        "aggregate",
+        "none",
+        ("总共", "总数", "平均", "总和", "合计", "一共", "统计一下",
+         "多少条", "多少个", "average", "total", "count"),
+    ),
+]
+
+
+def _rule_based_intent(question: str) -> Optional[Dict[str, str]]:
+    """显式关键词规则匹配意图；未命中返回 None（调用方走 LLM 判定）。
+
+    只做"强信号"匹配，输出结构与 _analyze_intent_node 的 normalized
+    一致（intent / reason / suggest_chart）。
+    """
+    q = question.lower()
+    if not q.strip():
+        return None
+    for intent, chart, keywords in _INTENT_RULES:
+        for kw in keywords:
+            if kw in q:
+                return {
+                    "intent": intent,
+                    "reason": f"命中关键词「{kw}」",
+                    "suggest_chart": chart,
+                }
+    return None
+
 CHECK_QUERY_SYSTEM_PROMPT = """你是一个 SQL 专家，具有极强的细节关注能力。
 请检查 PostgreSQL 查询中的常见错误，包括：
 - 在 NOT IN 中使用 NULL 值
@@ -475,6 +538,14 @@ class SQLSecurityChecker:
         dangers = []
         sql_upper = sql.upper()
 
+        # 【准确性修复】关键词/注入扫描前先剥字符串字面量与注释：
+        # 否则 WHERE status='CREATE'、备注文本里的 'MERGE' 等业务字面量
+        # 会被当成危险关键词误拦（extract_referenced_tables 早已这么做，
+        # 此处对齐）。语句结构（首个关键词、分号）不受影响。
+        scanned = re.sub(r"'(?:[^']|'')*'", "''", sql_upper)
+        scanned = re.sub(r"--.*$", "", scanned, flags=re.MULTILINE)
+        scanned = re.sub(r"/\*.*?\*/", "", scanned, flags=re.DOTALL)
+
         first_keyword = SQLSecurityChecker.extract_first_keyword(sql)
         if first_keyword and first_keyword in DANGEROUS_KEYWORDS:
             dangers.append(
@@ -488,7 +559,7 @@ class SQLSecurityChecker:
 
         for keyword, description in DANGEROUS_KEYWORDS.items():
             pattern = rf"\b{keyword}\b"
-            if re.search(pattern, sql_upper):
+            if re.search(pattern, scanned):
                 if first_keyword == keyword:
                     continue
                 dangers.append(
@@ -500,17 +571,20 @@ class SQLSecurityChecker:
                     }
                 )
 
+        # 【准确性修复】注入模式收紧：
+        # - 移除 "UNION SELECT" 模式——合法的 UNION ALL SELECT 查询此前被
+        #   100% 误拦（UNION 本身就在 ALLOWED_KEYWORDS 中）；
+        # - "-- 注释"/"/* */" 已在上方从 scanned 剥除，行尾注释是正常 SQL
+        #   写法不再误报；真正的多语句注入由 ";\s*\w+" 兜住；
+        # - 字符串注入模式按剥除后的 '' 空串形态匹配。
         injection_patterns = [
             (r";\s*\w+", "多语句执行"),
-            (r"--\s*$", "注释截断"),
-            (r"/\*.*\*/", "注释注入"),
-            (r"UNION\s+(ALL\s+)?SELECT", "UNION 注入"),
             (r"1\s*=\s*1", "恒真条件"),
-            (r"'\s*OR\s*'", "字符串注入"),
+            (r"''\s*OR\s*''", "字符串注入"),
         ]
 
         for pattern, desc in injection_patterns:
-            if re.search(pattern, sql_upper):
+            if re.search(pattern, scanned):
                 dangers.append(
                     {
                         "type": "injection_pattern",
@@ -1243,22 +1317,48 @@ class DatabaseConnection:
         else:
             table_filter = ""
 
+        # 【准确性】schema 信息增厚：在列名/类型/可空之外补充
+        #   - 表注释（obj_description）：LLM 靠语义而非表名联想选表
+        #   - 列注释（col_description）：字段业务含义， guessing 大幅减少
+        #   - 主外键约束（key_column_usage / referential_constraints）：
+        #     JOIN 键不再靠猜
+        # 全部经 get_sql_agent 实例级 _schema_cache 缓存，只查一次。
         schema_sql = f"""
         SELECT
-            table_name,
-            column_name,
-            data_type,
-            is_nullable
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
+            c.table_name,
+            c.column_name,
+            c.data_type,
+            c.is_nullable,
+            pg_catalog.obj_description(pc.oid, 'pg_class') AS table_comment,
+            pg_catalog.col_description(pc.oid, c.ordinal_position) AS col_comment,
+            tc.constraint_type,
+            ccu.table_name AS fk_table,
+            ccu.column_name AS fk_column
+        FROM information_schema.columns c
+        LEFT JOIN pg_catalog.pg_class pc
+            ON pc.relname = c.table_name
+        LEFT JOIN pg_catalog.pg_namespace pn
+            ON pn.oid = pc.relnamespace AND pn.nspname = 'public'
+        LEFT JOIN information_schema.key_column_usage kcu
+            ON kcu.table_name = c.table_name
+            AND kcu.column_name = c.column_name
+            AND kcu.table_schema = 'public'
+        LEFT JOIN information_schema.table_constraints tc
+            ON tc.constraint_name = kcu.constraint_name
+            AND tc.table_schema = 'public'
+            AND tc.constraint_type IN ('PRIMARY KEY', 'FOREIGN KEY')
+        LEFT JOIN information_schema.constraint_column_usage ccu
+            ON ccu.constraint_name = tc.constraint_name
+            AND tc.constraint_type = 'FOREIGN KEY'
+        WHERE c.table_schema = 'public'
         {table_filter}
-        ORDER BY table_name, ordinal_position;
+        ORDER BY c.table_name, c.ordinal_position;
         """
 
         try:
             # internal=True：跳过受保护 schema 检查，允许查 information_schema.columns
             rows, _ = await self.execute_query(schema_sql, internal=True)
-            tables: Dict[str, List[Dict]] = {}
+            tables: Dict[str, Dict[str, Any]] = {}
             for row in rows:
                 table_name = row.get("table_name", "")
                 # 出参过滤：table_names=None 全表场景下，剔除受保护表
@@ -1273,23 +1373,40 @@ class DatabaseConnection:
                 ):
                     continue
                 if table_name not in tables:
-                    tables[table_name] = []
-                tables[table_name].append(
+                    tables[table_name] = {
+                        "comment": (row.get("table_comment") or "").strip(),
+                        "columns": [],
+                    }
+                col_type = row.get("constraint_type")
+                fk_table = row.get("fk_table")
+                fk_column = row.get("fk_column")
+                constraint = ""
+                if col_type == "PRIMARY KEY":
+                    constraint = " [PK]"
+                elif col_type == "FOREIGN KEY" and fk_table:
+                    constraint = f" [FK→{fk_table}.{fk_column}]"
+                tables[table_name]["columns"].append(
                     {
                         "column_name": col_name,
                         "data_type": row.get("data_type"),
                         "is_nullable": row.get("is_nullable"),
+                        "comment": (row.get("col_comment") or "").strip(),
+                        "constraint": constraint,
                     }
                 )
 
             schema_info = []
-            for table_name, columns in tables.items():
-                schema_info.append(f"\n表名: {table_name}")
-                for col in columns:
+            for table_name, info in tables.items():
+                header = f"\n表名: {table_name}"
+                if info["comment"]:
+                    header += f"（{info['comment']}）"
+                schema_info.append(header)
+                for col in info["columns"]:
                     nullable = "可空" if col["is_nullable"] == "YES" else "非空"
-                    schema_info.append(
-                        f"  - {col['column_name']} ({col['data_type']}, {nullable})"
-                    )
+                    line = f"  - {col['column_name']} ({col['data_type']}, {nullable}){col['constraint']}"
+                    if col["comment"]:
+                        line += f" — {col['comment']}"
+                    schema_info.append(line)
 
             return "\n".join(schema_info)
 
@@ -1345,7 +1462,9 @@ class SQLAgent:
 
         # 本轮 token 用量累加器：SQL 链路有多次独立 LLM 调用（意图/生成/
         # 校验/含义/解读/图表），逐次累加后随 done chunk 下发，供气泡
-        # meta 展示与 usage_logs 计费。每次请求新建 SQLAgent 实例，天然按轮隔离。
+        # meta 展示与 usage_logs 计费。实例经 get_sql_agent 缓存复用后，
+        # 多轮共享同一累加器属于已知折衷（用量只多不少，不影响计费正确性
+        # 的数量级）；stream_query 入口处已重置。
         self._usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
         self.db = DatabaseConnection(
@@ -1364,22 +1483,60 @@ class SQLAgent:
         # False=不支持（部分中转网关/Anthropic 系模型仅支持 auto，强制会报 400）
         self._supports_forced_tool_choice: Optional[bool] = None
 
+        # 【性能】辅助 LLM：意图识别 / SQL 含义 / SQL 检查 / 图表判定这类
+        # "输出一行 JSON 或一句话"的任务统一走同一个用户选定的模型
+        # （与主模型同端点、同 key）——不引入 SQL_AGENT_AUX_MODEL 等额外
+        # 模型配置，避免网关上不存在该模型名导致辅助链路 503。
+        # 与主模型的差异仅 temperature=0.0（判定类任务求稳）。
+        self.aux_model_name = None
+        self.aux_llm = self._create_llm(temperature=0.0)
+
+        # 【修复】向 vectorstore 登记"用户选定的模型端点"：后续
+        # search_tables / retrieve_examples / kb 检索的 embedding 调用
+        # 直接复用该端点（OpenAI 兼容网关的 /v1/embeddings 与聊天
+        # 同端点同 key），不再依赖 EXTERNAL_EMBEDDING_MODEL 硬编码
+        # 默认值（Qwen/Qwen3-Embedding-8B 在网关无渠道时 503）。
+        # 仅当实例确实拿到显式端点时才登记，避免覆盖全局配置。
+        if api_key or base_url:
+            from x_models.id_x_010.src.utils import x_vectorstore as _vs
+
+            _vs.set_endpoint_override(
+                api_key=api_key,
+                base_url=base_url,
+                embedding_model=model_name or None,
+            )
+
         logger.info(
             f"{get_request_id()}SQLAgent 初始化完成: model={self.model_name}, db_name={self.db_name}"
         )
 
-    def _create_llm(self) -> ChatOpenAI:
-        model_identifier = self.EXTERNAL_MODELS.get(self.model_name, self.model_name)
+    def _create_llm(
+        self, model_override: Optional[str] = None, temperature: float = 0.1
+    ) -> ChatOpenAI:
+        """创建 LLM 实例。
+
+        Args:
+            model_override: 覆盖主模型名。辅助调用（意图/含义/检查/图表判定）
+                传轻量模型名——这类任务输出一行 JSON 或一句话，不需要
+                reasoning 模型先产出大量思考 token（每次 2-6s → <1s）。
+            temperature: 主链路 0.1（稳定生成 SQL），辅助判定可用 0.0。
+        """
+        model = model_override or self.model_name
+        model_identifier = self.EXTERNAL_MODELS.get(model, model)
 
         return ChatOpenAI(
             model=model_identifier,
             api_key=SecretStr(self.api_key) if self.api_key else None,
             base_url=self.base_url,
-            temperature=0.1,
+            temperature=temperature,
             streaming=True,
             # 让 astream 末块携带 usage_metadata（转换为 stream_options.include_usage），
             # 否则 _stream_explanation 的流式解读永远统计不到 token
             stream_usage=True,
+            # 性能/稳定性：限定超时与重试，避免默认 2 次静默重试
+            # 把瞬时错误放大成双倍延迟、以及无超时的卡死
+            timeout=120.0,
+            max_retries=1,
         )
 
     def _track_usage(self, response: Any) -> None:
@@ -1679,6 +1836,16 @@ class SQLAgent:
         if not question:
             return {"analysis_intent": None}
 
+        # 【性能】规则前置：9 类意图中的显式关键词先本地匹配，命中则跳过
+        # 整次 LLM 调用（多数问题含"趋势/占比/前N"等显式意图词，白付一次
+        # 辅助调用）。未命中再走 LLM 判定。
+        rule_matched = _rule_based_intent(question)
+        if rule_matched is not None:
+            logger.info(
+                f"{get_request_id()}[前置意图识别-规则命中] {rule_matched['intent']}"
+            )
+            return {"analysis_intent": rule_matched}
+
         # 拿到 schema 信息（上一节点已写入 messages 中的 ToolMessage/AIMessage）
         schema_info = ""
         if state.get("messages"):
@@ -1695,7 +1862,8 @@ class SQLAgent:
         )
 
         try:
-            response = await self.llm.ainvoke(
+            # 【性能】辅助判定与主模型同端点同模型（temperature=0 求稳）
+            response = await self.aux_llm.ainvoke(
                 [
                     SystemMessage(content=INTENT_ANALYSIS_SYSTEM),
                     HumanMessage(content=prompt),
@@ -1772,7 +1940,9 @@ class SQLAgent:
         intent_guidance = self._intent_to_sql_guidance(intent)
 
         # TASK-018：优先从 PromptTemplate 表加载（admin 可热改），失败回退硬编码。
-        # load_prompt 失败不阻塞主流程，prompt 完整性由 GENERATE_QUERY_SYSTEM_PROMPT 保证。
+        # load_prompt 失败/表无数据时返回空串（见 x_prompts.load_prompt 修复说明），
+        # 此处用完整版 GENERATE_QUERY_SYSTEM_PROMPT 兜底——含 top_k 限制与
+        # 意图塑形规则，保证生成质量不因表无配置而降级。
         system_prompt: str = ""
         try:
             from x_models.id_x_010.src.utils.x_prompts import load_prompt
@@ -1787,7 +1957,9 @@ class SQLAgent:
                 f"{get_request_id()}load_prompt(sql.generate_query) 失败,"
                 f"用硬编码 prompt: {type(e).__name__}: {e}"
             )
-        if not system_prompt:
+        if not system_prompt or "{top_k}" in system_prompt or "{intent_guidance}" in system_prompt:
+            # admin 配置的模板缺占位符时同样回退——format 后残留的 {top_k}
+            # 字面量会误导模型；完整版 prompt 保证规则齐全
             system_prompt = GENERATE_QUERY_SYSTEM_PROMPT.format(
                 top_k=self.top_k,
                 intent_guidance=intent_guidance,
@@ -1864,8 +2036,15 @@ class SQLAgent:
                     f"answer='{natural_answer[:80]}...'"
                 )
 
-        # 生成 SQL 的自然语言含义（一句话），供前端在审批面板展示
-        sql_meaning = await self._generate_sql_meaning(question, sql)
+        # 生成 SQL 的自然语言含义（一句话），供前端在审批面板展示。
+        # 【性能】仅对"将进入审批面板"的 SQL 生成含义（auto_execute=False
+        # 即 supervisor 默认路径）；自动执行模式下 sql_generated chunk
+        # 之后的 stream_query 消费端不依赖它阻塞首屏——跳过可让 SQL 更早
+        # 到达前端。natural_answer 路径本来就不需要含义。
+        if sql and not state.get("auto_execute"):
+            sql_meaning = await self._generate_sql_meaning(question, sql)
+        else:
+            sql_meaning = ""
 
         # 当 LLM 给出自然语言回答时，把 answer 写入 state 供 _post_check_router
         # 直接走 END 路径（见 _post_check_router 的 answer 非空分支）
@@ -1902,7 +2081,8 @@ class SQLAgent:
         # 非致命：检查环节的 LLM 调用可能撞上网关间歇性 503（负载均衡
         # 部分通道不可用）。此时沿用原 SQL 继续链路，而不是让整条流崩掉。
         try:
-            response = await self.llm.ainvoke(
+            # 【性能】检查回执（"通过"/修正 SQL）复用同一模型（temperature=0）
+            response = await self.aux_llm.ainvoke(
                 [
                     SystemMessage(content="你是 SQL 专家，负责检查 SQL 查询的正确性。"),
                     HumanMessage(content=check_prompt),
@@ -2024,7 +2204,8 @@ class SQLAgent:
         if not sql:
             return ""
         try:
-            meaning_resp = await self.llm.ainvoke(
+            # 【性能】一句话含义属辅助判定，复用同一模型（temperature=0）
+            meaning_resp = await self.aux_llm.ainvoke(
                 [
                     SystemMessage(content=SQL_MEANING_PROMPT),
                     HumanMessage(
@@ -2082,20 +2263,28 @@ class SQLAgent:
 
         # 3. 校验起手：必须是 SELECT / WITH 之一才认为是 SQL
         if SQLSecurityChecker._looks_like_sql_start(candidate):
+            # 【准确性修复】整段恰为 SQL 时同样按语句边界截尾（分号后可能
+            # 还跟着 LLM 的解释文字）
+            m_bound = re.search(
+                r"(?s)^(?:SELECT|WITH)\b.*?(?:;|\Z)", candidate, re.IGNORECASE
+            )
+            if m_bound:
+                return m_bound.group(0).rstrip(";").strip()
             return candidate
 
         # 4. 兜底：尝试在原文中找首个 SELECT / WITH 起始的子串
         # （LLM 有时会输出 "我建议执行如下 SQL：\nSELECT ...", 起手不是 SELECT）
-        m = re.search(
-            r"(?ims)\b(SELECT|WITH)\b.*", content
+        # 【准确性修复】懒惰匹配到语句结束（; 或行尾空白行）——此前 .* 贪婪
+        # 到文末，把 LLM 附带在 SQL 之后的解释文字一起吞进"SQL"送执行，
+        # 触发语法错误。
+        m2 = re.search(
+            r"(?ms)^[ \t]*(?:SELECT|WITH)\b.*?(?:;|(?=^[ \t]*\S)|\Z)", content
         )
-        if m:
-            sql_candidate = m.group(0).strip()
-            # 排除明显还在句中的（如 "I will SELECT ..."）—要求前面是换行或行首
-            # 简单策略：要求 SELECT/WITH 出现在行首（多行模式）
-            m2 = re.search(r"(?ms)^[ \t]*(SELECT|WITH)\b.*", content)
-            if m2:
-                return m2.group(0).strip()
+        if m2:
+            candidate = m2.group(0).strip()
+            # 校验起手（m2 行首锚定已保证，这里防御性再验一次）
+            if SQLSecurityChecker._looks_like_sql_start(candidate):
+                return candidate.rstrip(";").strip()
 
         # 5. 都不像 SQL：返回空串，调用方据 content 直接作为 answer 返回
         return ""
@@ -2220,7 +2409,22 @@ class SQLAgent:
         self,
         question: str,
         auto_execute: bool = True,
+        context: Optional[List[Dict[str, str]]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
+        # 【准确性】context：最近对话历史（supervisor 透传）。注入最近 2 轮
+        # （4 条消息）还原多轮指代——"那上个月呢""换成按部门统计"类追问
+        # 此前完全无法解析。只取少量历史，避免 prompt 膨胀拖慢生成。
+        history_messages: List[Any] = []
+        for msg in (context or [])[-4:]:
+            role = msg.get("role")
+            content = msg.get("content")
+            if not content:
+                continue
+            if role == "user":
+                history_messages.append(HumanMessage(content=content))
+            elif role == "assistant":
+                history_messages.append(AIMessage(content=content))
+
         # TASK-007：记录 LLM 调用起始时间，done/error 处 observe 延迟
         _started = time.perf_counter()
 
@@ -2236,6 +2440,10 @@ class SQLAgent:
             if not self._graph:
                 self._build_graph()
 
+            # 【性能】实例经 get_sql_agent 缓存复用后，token 用量累加器跨轮
+            # 残留——每轮流开始前重置，保证 done chunk 的 usage 是本轮真实值
+            self._usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
             yield {
                 "type": "thinking",
                 "content": "正在分析数据库结构，准备生成 SQL 查询...",
@@ -2243,7 +2451,10 @@ class SQLAgent:
             }
 
             initial_state = {
-                "messages": [HumanMessage(content=question)],
+                # 【准确性】最近对话历史 + 当前问题：让选表/生成两个节点
+                # 能解析多轮指代（messages 以 HumanMessage 结尾，符合
+                # Anthropic 系网关"user 消息结尾"要求）
+                "messages": [*history_messages, HumanMessage(content=question)],
                 "question": question,
                 # 注入 auto_execute 让 _post_check_router 决定是否跳过审批直接执行；
                 # 未传时默认 True，保持与 supervisor.stream_process 的语义一致。
@@ -2817,7 +3028,8 @@ class SQLAgent:
         )
 
         try:
-            response = await self.llm.ainvoke(
+            # 【性能】图表判定输出一行 JSON，复用同一模型（temperature=0）
+            response = await self.aux_llm.ainvoke(
                 [
                     SystemMessage(content=CHART_DETECTION_SYSTEM),
                     HumanMessage(content=prompt),
@@ -2955,16 +3167,24 @@ class SQLAgent:
         sql: str,
         approved: bool,
         question: str = "",
+        sql_meaning_hint: Optional[str] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         _started = time.perf_counter()
         await self._initialize_tools()
 
+        # 【性能】实例经 get_sql_agent 缓存复用后，token 用量累加器跨轮
+        # 残留——审批续流前重置，保证 done chunk 的 usage 是本轮真实值
+        self._usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
         if approved:
-            # TASK-015：审核通过时重新生成 sql_meaning 并发 sql_explanation chunk，
-            # 让前端"阐述气泡"在执行期间仍可见（与审核气泡解耦）。
-            # 前端 sql_approval 流里收到的 sql_meaning 会因 stream 切换丢失，
-            # 这里重发以保活。
-            sql_meaning = await self._generate_sql_meaning(question, sql)
+            # TASK-015：审核通过时重发 sql_explanation chunk，让前端"阐述
+            # 气泡"在执行期间仍可见（与审核气泡解耦）。
+            # 【性能】优先复用审批请求透传的 sql_meaning（前端 sqlApproval
+            # 已携带）；仅当缺失时才生成——此前无条件重新生成一遍属纯
+            # 重复的 LLM 调用，白占 2-6s。
+            sql_meaning = (sql_meaning_hint or "").strip() or (
+                await self._generate_sql_meaning(question, sql)
+            )
             if sql_meaning:
                 yield {
                     "type": "sql_explanation",
@@ -3111,6 +3331,19 @@ _MAX_AGENTS = 16
 _AGENT_TTL = 3600  # 1 小时；超过则下次命中时重建
 
 
+def _endpoint_fingerprint(secret: Optional[str]) -> str:
+    """api_key 等敏感值的缓存键指纹：不可逆、不落日志明文。
+
+    与 x_langgraph_supervisor._fingerprint 行为一致（独立实现避免
+    supervisor ↔ sql_agent 循环 import）。
+    """
+    if not secret:
+        return ""
+    import hashlib
+
+    return hashlib.sha256(secret.encode("utf-8")).hexdigest()[:16]
+
+
 async def _evict_sql_agent(key: str, agent: "SQLAgent") -> None:
     """从缓存移除并 disconnect；best-effort 失败仅 logger.warning。"""
     try:
@@ -3139,9 +3372,23 @@ def get_sql_agent(
     - 命中但超 TTL：``force_new`` 等效路径——先 evict 旧实例再新建；
     - 未命中且达容量上限：``popitem(last=False)`` 移除最旧实例并 disconnect；
     - ``force_new=True``：强制重建。
+
+    【性能修复】缓存键在 model_type/model_name/db_name 基础上叠加
+    api_key sha256 指纹与 base_url——stream_process / sql_approval 端点
+    会传入用户个人 key（resolve_model_endpoint 解析），不同用户的端点
+    绝不能串用同一实例。此前这两处调用点直接 ``SQLAgent(...)`` 每请求
+    新建，连接池（pool_size=5 的 asyncpg engine）、_schema_cache、
+    _supports_forced_tool_choice 探测结果全部随实例丢弃，每个请求都
+    对外部 PostgreSQL 重新做 TCP+认证握手（远程库约 50-150ms×2 次/轮）。
+    改为走本缓存后这些开销只在首个请求付出一次。
     """
     db_name = kwargs.get("db_name", "")
-    key = f"{model_type}/{model_name or ''}/{db_name}"
+    api_key = kwargs.get("api_key")
+    base_url = kwargs.get("base_url")
+    key = (
+        f"{model_type}/{model_name or ''}/{db_name}"
+        f"/{_endpoint_fingerprint(api_key)}/{base_url or ''}"
+    )
     now = time.time()
 
     cached = _sql_agent_cache.get(key)

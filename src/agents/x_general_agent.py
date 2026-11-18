@@ -244,6 +244,12 @@ class GeneralAgent:
         # chat/stream_chat 自动回退到直接 LLM 调用，保持原有 thinking 标签解析
         self.agent = None
         self._react_enabled = False
+        # 【性能】ReAct 流式可用性记忆（None=未探测，True=可用，False=不可用）：
+        # reasoning 模型（claude-fable-5 / GLM 等）token 全在 reasoning_content
+        # 时 langchain 丢弃 → ReAct 路径产出 0 token。首次探测失败后记住，
+        # 后续请求直接走 raw httpx，不再每次白付一次注定失败的 LLM 调用
+        # （实例经 supervisor 缓存按 模型+端点 复用，记忆随之生效）。
+        self._react_stream_ok: Optional[bool] = None
         try:
             if LANGGRAPH_REACT_AVAILABLE:
                 from x_models.id_x_010.src.agents.tools import ALL_TOOLS
@@ -392,12 +398,45 @@ class GeneralAgent:
                     if not choices:
                         continue
                     delta = choices[0].get("delta") or {}
-                    reasoning = delta.get("reasoning_content")
+                    # 【修复】reasoning 字段兼容：不同网关对思考流的翻译不一——
+                    # SiliconFlow/DeepSeek 用 reasoning_content，部分 one-api
+                    # 渠道翻译 Anthropic 协议（claude 系模型）时用 reasoning
+                    # 或 thinking。三个名字都接，避免 claude-fable-5 这类模型
+                    # 的 token 在 raw 路径也被丢弃。
+                    reasoning = (
+                        delta.get("reasoning_content")
+                        or delta.get("reasoning")
+                        or delta.get("thinking")
+                    )
                     content = delta.get("content")
                     if reasoning:
-                        yield ("thinking", reasoning)
+                        yield (
+                            "thinking",
+                            reasoning
+                            if isinstance(reasoning, str)
+                            else str(reasoning),
+                        )
                     if content:
-                        yield ("content", content)
+                        # content 可能是字符串，也可能是 Claude 风格的内容块
+                        # 列表 [{"type":"thinking","thinking":...},
+                        # {"type":"text","text":...}]——按块类型分流
+                        if isinstance(content, list):
+                            for block in content:
+                                if not isinstance(block, dict):
+                                    if str(block):
+                                        yield ("content", str(block))
+                                    continue
+                                btype = block.get("type")
+                                if btype == "thinking":
+                                    t = block.get("thinking") or ""
+                                    if t:
+                                        yield ("thinking", t)
+                                else:
+                                    t = block.get("text")
+                                    if t:
+                                        yield ("content", t)
+                        elif isinstance(content, str):
+                            yield ("content", content)
                 except (_json.JSONDecodeError, KeyError, IndexError):
                     continue
 
@@ -528,7 +567,13 @@ class GeneralAgent:
         # 先探测 v2（langgraph >=0.2.x 推荐）可用性——某些旧版本只支持 v1。
         # 探测失败降级 v1；运行时异常则降级走下方纯 LLM.astream 路径
         # （保留 thinking 解析契约）。
-        if self._react_enabled and self.agent is not None:
+        # 【性能】_react_stream_ok=False（曾探测到该模型 token 全被 langchain
+        # 丢弃）时直接跳过 ReAct 流式，省掉一次注定 0 token 的 LLM 调用。
+        if (
+            self._react_enabled
+            and self.agent is not None
+            and self._react_stream_ok is not False
+        ):
             events_version = "v2"
             try:
                 # 仅创建 aiter 探测，不消费——v2 不支持时构造会抛 TypeError/ValueError
@@ -673,6 +718,8 @@ class GeneralAgent:
                         "model_used": self.model_name,
                     }
                 if _react_produced:
+                    # 流式可用：记住，后续请求不再走 raw 探测兜底
+                    self._react_stream_ok = True
                     _observe_llm(
                         self.model_name, "general", "success", time.perf_counter() - _started
                     )
@@ -683,6 +730,10 @@ class GeneralAgent:
                     }
                     return
                 else:
+                    # 【性能】0 token：token 疑似全被 langchain 丢弃（reasoning
+                    # 模型走 reasoning_content）。记住失败，本实例后续请求直接
+                    # 走 raw httpx 路径——不再每轮白付一次完整 LLM 调用
+                    self._react_stream_ok = False
                     logger.warning(
                         f"{get_request_id()}ReAct path 产出 0 个 token"
                         f"（reasoning 模型 token 可能被 langchain 丢弃），"
@@ -692,6 +743,8 @@ class GeneralAgent:
                 _observe_llm(
                     self.model_name, "general", "error", time.perf_counter() - _started
                 )
+                # 事件流本身的异常（网络/协议）不代表流式解析不可用，
+                # 不标记 _react_stream_ok=False——下轮仍可尝试 ReAct
                 logger.warning(
                     f"{get_request_id()}ReAct stream_chat 失败，降级纯 LLM 流式: "
                     f"{type(e).__name__}: {e}"

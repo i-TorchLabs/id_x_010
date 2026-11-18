@@ -1385,16 +1385,41 @@ async def test_model_connectivity(
 # ==========================================
 
 
-async def load_llm_provider_config() -> Optional[dict]:
+# 进程内短 TTL 缓存：provider 表读取结果 + 读取时间。
+# 【性能】此前每个请求入口都无条件重查 external_provider / local_provider
+# 表（远程库一次往返），而表数据几乎不变。30s TTL 把这笔开销摊薄到
+# 每 30 秒一次；admin 改表后最长 30s 生效（可接受）。
+_PROVIDER_CACHE_TTL = 30.0
+_provider_cache: dict = {"ts": 0.0, "config": None}
+
+
+def invalidate_provider_cache() -> None:
+    """provider 表数据变更后主动失效缓存（admin 保存配置的 mutation 调用）。"""
+    _provider_cache["ts"] = 0.0
+    _provider_cache["config"] = None
+
+
+async def load_llm_provider_config(force: bool = False) -> Optional[dict]:
     """按 LLM_PROVIDER 值从对应提供商表读取首行配置并注入全局缓存。
 
     LLM_PROVIDER=external → external_provider 表；
     LLM_PROVIDER=local    → local_provider 表。
     表无数据或读取失败时缓存保持原状，各 Agent 配置为空值。
 
-    注意：get_orchestrator() 缓存的默认 supervisor 在首次构建时固化
-    配置，此后表数据变更对已缓存实例不生效。
+    【性能】命中 30s TTL 缓存时直接返回，不再访问数据库；force=True
+    或缓存失效后重新查表。注意：get_orchestrator() 缓存的默认
+    supervisor 在首次构建时固化配置，此后表数据变更对已缓存实例不生效
+    （既有行为，与本次缓存无关）。
     """
+    import time as _time
+
+    if (
+        not force
+        and _provider_cache["config"] is not None
+        and _time.time() - _provider_cache["ts"] < _PROVIDER_CACHE_TTL
+    ):
+        return _provider_cache["config"]
+
     provider = (os.getenv("LLM_PROVIDER", "external") or "external").strip().lower()
     if provider != "local":
         provider = "external"
@@ -1429,6 +1454,8 @@ async def load_llm_provider_config() -> Optional[dict]:
         "vl_base_url": row.vl_base_url,
     }
     set_llm_provider_config(config)
+    _provider_cache["config"] = config
+    _provider_cache["ts"] = _time.time()
     logger.info(
         f"{get_request_id()}LLM 提供商配置已加载: 来源={model_cls.__tablename__} 表, "
         f"llm_base_url={row.llm_base_url}"

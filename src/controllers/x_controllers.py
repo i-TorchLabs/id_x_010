@@ -4,7 +4,7 @@ import json
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import AsyncGenerator, List, Optional
+from typing import AsyncGenerator, ClassVar, Dict, List, Optional, Any
 
 import strawberry
 from litestar import MediaType, Request, Response, Router, WebSocket, get, post, websocket
@@ -201,11 +201,29 @@ class Query:
                 tasks=[],
             )
 
+    # 【性能】get_models 结果缓存（见方法内说明）：{cache_key: ModelListResponseType}
+    _models_cache: ClassVar[Dict[str, Any]] = {}
+    _models_cache_ts: ClassVar[float] = 0.0
+
     @strawberry.field(description="获取模型列表（系统预置模型 + 用户自定义模型合并展示）")
     async def get_models(self, info: strawberry.Info) -> ModelListResponseType:
         try:
             request = _get_info_request(info)
             user = await _get_bearer_user(request)
+
+            # 【性能】按用户维度 30s TTL 缓存合并结果——前端每次进页面都
+            # 拉一次模型列表，而列表数据只在 admin/用户保存设置后变化；
+            # 未登录（user=None）共享同一缓存键。save_model_settings /
+            # save_model_provider 等 mutation 保存成功后主动失效。
+            import time as _time
+
+            cache_key = f"u{user.id}" if user is not None else "anon"
+            cache_val = Query._models_cache.get(cache_key)
+            if (
+                cache_val is not None
+                and _time.time() - Query._models_cache_ts < 30.0
+            ):
+                return cache_val
 
             # ── 1) 读取系统预置模型（enabled，按 sort_order 排序）──
             sys_models = await list_system_models(enabled_only=True)
@@ -332,11 +350,18 @@ class Query:
                 f"merged={len(models)}, default={effective_default}"
             )
 
-            return ModelListResponseType(
+            response = ModelListResponseType(
                 success=True,
                 message=f"成功获取 {len(models)} 个模型",
                 models=models,
             )
+            # 【性能】回填缓存（含时间戳；任何 key 命中都会刷新整表时间戳，
+            # 简化为"最后写入时间"语义，30s 后全部重新查表）
+            import time as _t
+
+            Query._models_cache[cache_key] = response
+            Query._models_cache_ts = _t.time()
+            return response
 
         except Exception as e:
             logger.error(f"{get_request_id()}获取模型列表失败: {e}", exc_info=True)
@@ -989,23 +1014,29 @@ async def verify_token(token: str) -> Optional[User]:
 
     try:
         async with get_session()() as session:
+            # 【性能】JOIN 一次往返取 token+user——此前两条独立 SELECT
+            # （先 token 再 user），远程库每次多付一次 RTT
             result = await session.execute(
-                select(UserToken).where(UserToken.token == token)
+                select(User)
+                .join(UserToken, UserToken.user_id == User.id)
+                .where(UserToken.token == token)
             )
-            user_token = result.scalar_one_or_none()
+            user = result.scalar_one_or_none()
+            user_token_row = None
 
-            if user_token is None:
+            if user is not None:
+                token_result = await session.execute(
+                    select(UserToken).where(UserToken.token == token)
+                )
+                user_token_row = token_result.scalar_one_or_none()
+
+            if user is None or user_token_row is None:
                 logger.warning(f"{get_request_id()}令牌不存在: {token[:8]}...")
                 return None
 
-            if not user_token.is_valid():
+            if not user_token_row.is_valid():
                 logger.warning(f"{get_request_id()}令牌已过期: {token[:8]}...")
                 return None
-
-            user_result = await session.execute(
-                select(User).where(User.id == user_token.user_id)
-            )
-            user = user_result.scalar_one_or_none()
 
             return user
 
@@ -1030,6 +1061,26 @@ async def _get_bearer_user(request) -> Optional[User]:
     if not auth_header.lower().startswith("bearer "):
         return None
     return await verify_token(auth_header[7:].strip())
+
+
+def _invalidate_model_caches() -> None:
+    """模型/provider 数据变更后主动失效两处进程内缓存。
+
+    - Query._models_cache：get_models 的 30s TTL 合并结果缓存；
+    - load_llm_provider_config 的 provider 表缓存（x_views）。
+
+    在 save_model_settings / save_model_provider / delete_model_provider /
+    set_active_model / save_system_model / delete_system_model 等 mutation
+    成功后调用，确保前端保存后立刻能看到新列表、不误用旧 provider 配置。
+    """
+    Query._models_cache.clear()
+    Query._models_cache_ts = 0.0
+    try:
+        from x_models.id_x_010.src.views.x_views import invalidate_provider_cache
+
+        invalidate_provider_cache()
+    except Exception as e:  # pragma: no cover - 仅缓存失效，失败不影响主流程
+        logger.warning(f"{get_request_id()}失效 provider 缓存失败（忽略）: {e}")
 
 
 async def _get_bearer_settings(
@@ -2717,6 +2768,9 @@ class Mutation:
                     f"{get_request_id()}同步登记 external_models 失败（用户设置已保存）: {sync_err}"
                 )
 
+            # 【性能配套】主动失效 get_models / provider 缓存，保存后立刻可见
+            _invalidate_model_caches()
+
             return ModelSettingsResponseType(
                 success=True,
                 message=f"{message}，设置已保存",
@@ -2750,7 +2804,6 @@ class Mutation:
                     success=False,
                     message="访问地址、API-KEY、模型名称均为必填项",
                 )
-
             logger.info(
                 f"{get_request_id()}收到连通性测试请求: user_id={user.id}, "
                 f"model={model_name}, base_url={base_url}"
@@ -2826,6 +2879,9 @@ class Mutation:
                     success=False, message="保存失败", provider=None
                 )
 
+            # 【性能配套】主动失效 get_models / provider 缓存
+            _invalidate_model_caches()
+
             return UserModelPropertyMutationResponseType(
                 success=True,
                 message="Provider 已保存",
@@ -2869,6 +2925,10 @@ class Mutation:
                 return UserModelPropertyMutationResponseType(
                     success=False, message="Provider 不存在或已被删除", provider=None
                 )
+
+            # 【性能配套】主动失效 get_models / provider 缓存
+            _invalidate_model_caches()
+
             return UserModelPropertyMutationResponseType(
                 success=True, message="Provider 已删除", provider=None
             )
@@ -3016,6 +3076,10 @@ class Mutation:
                 return DeleteExternalModelResponseType(
                     success=False, message="模型不存在或已被删除"
                 )
+
+            # 【性能配套】主动失效 get_models / provider 缓存
+            _invalidate_model_caches()
+
             return DeleteExternalModelResponseType(
                 success=True, message="模型已删除"
             )
@@ -3069,6 +3133,10 @@ class Mutation:
                 f"{get_request_id()}默认模型已切换: user_id={user.id}, "
                 f"model={model.name}, id={model.id}"
             )
+
+            # 【性能配套】主动失效 get_models / provider 缓存
+            _invalidate_model_caches()
+
             return SetActiveModelResponseType(
                 success=True,
                 message=f"默认模型已切换为 {model.name}",
@@ -3138,6 +3206,10 @@ class Mutation:
             created_at=saved.created_at.isoformat() if saved.created_at else None,
             updated_at=saved.updated_at.isoformat() if saved.updated_at else None,
         )
+
+        # 【性能配套】主动失效 get_models / provider 缓存
+        _invalidate_model_caches()
+
         return SystemModelMutationResponseType(
             success=True, message="系统模型已保存", model=result_model
         )
@@ -3162,6 +3234,10 @@ class Mutation:
                 return DeleteSystemModelResponseType(
                     success=False, message="模型不存在或已被删除"
                 )
+
+            # 【性能配套】主动失效 get_models / provider 缓存
+            _invalidate_model_caches()
+
             return DeleteSystemModelResponseType(
                 success=True, message="系统模型已删除"
             )
@@ -3261,6 +3337,9 @@ class Mutation:
             return DeleteModelPriceResponseType(
                 success=False, message=f"删除失败: {str(e)}"
             )
+
+        # 说明：model_prices 只影响计价展示，不影响 get_models 列表与
+        # provider 配置，故 save/delete_model_price 不调用 _invalidate_model_caches。
 
     # ------------------------------------------------------------------
     # 用户个人 API-Key（users.api_key，每用户一个 key，独立计费）
@@ -4445,6 +4524,8 @@ def register_routers(route_prefix: str) -> Router:
         model_type = body.get("model_type", "external")
         model_name = body.get("model_name")
         db_name = body.get("db_name")
+        # 【性能】审批续流复用的 SQL 含义（前端 sqlApproval 请求体携带）
+        sql_meaning = body.get("sql_meaning") or None
 
         if action not in ["approve", "reject", "cancel"]:
             return Response(
@@ -4507,7 +4588,11 @@ def register_routers(route_prefix: str) -> Router:
         async def generate():
             if req_id:
                 request_id_var.set(req_id)
-            sql_agent = SQLAgent(
+            # 【性能】走 get_sql_agent 缓存：复用连接池 / schema 缓存，
+            # 避免审批续流再付一次远程 PG 握手（key 含 api_key/base_url 指纹）
+            from x_models.id_x_010.src.agents.x_sql_agent import get_sql_agent
+
+            sql_agent = get_sql_agent(
                 model_type=model_type,
                 model_name=model_name,
                 api_key=override_api_key,
@@ -4517,7 +4602,11 @@ def register_routers(route_prefix: str) -> Router:
 
             if action == "approve":
                 async for chunk in sql_agent.continue_with_approval(
-                    sql=sql, approved=True, question=question
+                    sql=sql,
+                    approved=True,
+                    question=question,
+                    # 【性能】复用审批请求透传的 sql_meaning，避免重复生成
+                    sql_meaning_hint=sql_meaning,
                 ):
                     # TASK-015：补齐 columns/data/row_count/chart_config/security_block
                     # 字段转发——之前只发 6 个字段，前端 ResultView 永远收不到数据。

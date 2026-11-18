@@ -19,10 +19,11 @@ import { API_BASE_URL, BASE_URL } from "@/utils/config";
 import {
   adminUserApiKeyGraphqlApi,
 } from "@/api/graphql";
+import { PagedTableShell, usePagedList } from "@/components/PagedTable";
 import {
   clearSsoLoginFlag,
   isSsoLogin,
-  redirectToAdfsLogout,
+  silentAdfsLogout,
 } from "@/utils/sso";
 
 // ── GraphQL helper ──
@@ -86,10 +87,12 @@ export function AdminPanel() {
         localStorage.removeItem("user");
         clearSsoLoginFlag();
       }
+      // SSO 登录的用户：先本地清理并直接回到首页，再由隐藏 iframe
+      // 后台静默终止 ADFS 会话（不经过 sts.cuhk.edu.cn 中转页）；
+      // 密码登录的用户：本地清理后直接回到首页
+      router.push("/");
       if (ssoSession) {
-        redirectToAdfsLogout();
-      } else {
-        router.push("/f/010/admin-login");
+        silentAdfsLogout();
       }
     }
   };
@@ -192,6 +195,9 @@ function SystemModelsTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) 
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  // 【分页】每页 16 条 + 滚动容器（见 PagedTable.tsx）
+  const pager = usePagedList(models);
+
   const openAdd = () => {
     setEditing({ id: 0, name: "", provider: "", baseUrl: "", modelType: "external", isDefault: false, enabled: true, sortOrder: 0 });
     setIsModalOpen(true);
@@ -234,38 +240,41 @@ function SystemModelsTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) 
         </div>
       </div>
 
-      <div style={{ background: "var(--surface-1)", border: "0.5px solid var(--divider)", borderRadius: 12, overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-          <thead>
-            <tr style={{ borderBottom: "0.5px solid var(--divider)", background: "var(--surface-2)" }}>
-              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.models.colName")}</th>
-              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.models.colProvider")}</th>
-              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.models.colType")}</th>
-              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.models.colDefault")}</th>
-              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.models.colEnabled")}</th>
-              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.colActions")}</th>
+      <PagedTableShell
+        pagedRows={pager.paged}
+        page={pager.page}
+        setPage={pager.setPage}
+        pageCount={pager.pageCount}
+        total={pager.total}
+        colCount={6}
+        emptyText={t("admin.models.empty")}
+      >
+        <thead>
+          <tr style={{ borderBottom: "0.5px solid var(--divider)", background: "var(--surface-2)", position: "sticky", top: 0, zIndex: 1 }}>
+            <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.models.colName")}</th>
+            <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.models.colProvider")}</th>
+            <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.models.colType")}</th>
+            <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.models.colDefault")}</th>
+            <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.models.colEnabled")}</th>
+            <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.colActions")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {pager.paged.map((m) => (
+            <tr key={m.id} style={{ borderBottom: "0.5px solid var(--divider)" }}>
+              <td style={{ padding: "8px 12px", fontWeight: 600 }}>{m.name}</td>
+              <td style={{ padding: "8px 12px" }}>{m.provider}</td>
+              <td style={{ padding: "8px 12px" }}>{m.modelType}</td>
+              <td style={{ padding: "8px 12px" }}>{m.isDefault ? "✓" : ""}</td>
+              <td style={{ padding: "8px 12px" }}>{m.enabled ? "✓" : "✗"}</td>
+              <td style={{ padding: "8px 12px" }}>
+                <Button size="sm" variant="ghost" onPress={() => openEdit(m)}>{t("admin.edit")}</Button>
+                <Button size="sm" variant="ghost" onPress={() => handleDelete(m.id)}>{t("admin.delete")}</Button>
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            {models.map((m) => (
-              <tr key={m.id} style={{ borderBottom: "0.5px solid var(--divider)" }}>
-                <td style={{ padding: "8px 12px", fontWeight: 600 }}>{m.name}</td>
-                <td style={{ padding: "8px 12px" }}>{m.provider}</td>
-                <td style={{ padding: "8px 12px" }}>{m.modelType}</td>
-                <td style={{ padding: "8px 12px" }}>{m.isDefault ? "✓" : ""}</td>
-                <td style={{ padding: "8px 12px" }}>{m.enabled ? "✓" : "✗"}</td>
-                <td style={{ padding: "8px 12px" }}>
-                  <Button size="sm" variant="ghost" onPress={() => openEdit(m)}>{t("admin.edit")}</Button>
-                  <Button size="sm" variant="ghost" onPress={() => handleDelete(m.id)}>{t("admin.delete")}</Button>
-                </td>
-              </tr>
-            ))}
-            {models.length === 0 && (
-              <tr><td colSpan={6} style={{ padding: 24, textAlign: "center", color: "var(--fg3)" }}>{t("admin.models.empty")}</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+          ))}
+        </tbody>
+      </PagedTableShell>
 
       {/* Edit/Add Modal */}
       {editing && (
@@ -342,6 +351,9 @@ function UsersTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) {
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  // 【分页】每页 16 条 + 滚动容器（见 PagedTable.tsx）
+  const pager = usePagedList(users);
+
   const handleSetAdmin = async (u: AdminUser, next: boolean) => {
     try {
       await gql(`mutation($uid: Int!, $ia: Boolean!) { setUserAdmin(userId: $uid, isAdmin: $ia) { success message } }`, { uid: u.id, ia: next });
@@ -386,51 +398,57 @@ function UsersTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) {
         <Button size="sm" variant="ghost" isDisabled={loading} onPress={refresh}>{t("admin.refresh")}</Button>
       </div>
 
-      <div style={{ background: "var(--surface-1)", border: "0.5px solid var(--divider)", borderRadius: 12, overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-          <thead>
-            <tr style={{ borderBottom: "0.5px solid var(--divider)", background: "var(--surface-2)" }}>
-              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.users.colId")}</th>
-              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.users.colEmail")}</th>
-              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.users.colName")}</th>
-              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.users.colActive")}</th>
-              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.users.colRole")}</th>
-              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.users.colAdmin")}</th>
-              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.users.colApiKey")}</th>
-              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.colActions")}</th>
+      <PagedTableShell
+        pagedRows={pager.paged}
+        page={pager.page}
+        setPage={pager.setPage}
+        pageCount={pager.pageCount}
+        total={pager.total}
+        colCount={8}
+        emptyText={t("admin.users.empty")}
+      >
+        <thead>
+          <tr style={{ borderBottom: "0.5px solid var(--divider)", background: "var(--surface-2)", position: "sticky", top: 0, zIndex: 1 }}>
+            <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.users.colId")}</th>
+            <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.users.colEmail")}</th>
+            <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.users.colName")}</th>
+            <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.users.colActive")}</th>
+            <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.users.colRole")}</th>
+            <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.users.colAdmin")}</th>
+            <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.users.colApiKey")}</th>
+            <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.colActions")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {pager.paged.map((u) => (
+            <tr key={u.id} style={{ borderBottom: "0.5px solid var(--divider)" }}>
+              <td style={{ padding: "8px 12px" }}>{u.id}</td>
+              <td style={{ padding: "8px 12px", fontWeight: 600 }}>{u.email}</td>
+              <td style={{ padding: "8px 12px" }}>{u.displayName || "-"}</td>
+              <td style={{ padding: "8px 12px" }}><input type="checkbox" checked={u.isActive} onChange={(e) => handleToggleActive(u, e.target.checked)} /></td>
+              <td style={{ padding: "8px 12px" }}>
+                <span style={{
+                  fontSize: 12, padding: "2px 8px", borderRadius: 999,
+                  border: "0.5px solid var(--divider)",
+                  background: u.role.split(",").map(r => r.trim()).includes("admin") ? "var(--badge-bg)" : "var(--surface-2)",
+                  color: u.role.split(",").map(r => r.trim()).includes("admin") ? "var(--fg1)" : "var(--fg3)",
+                }}>
+                  {u.role.split(",").map(r => r.trim()).includes("admin") ? t("admin.users.roleAdmin") : t("admin.users.roleUser")}
+                </span>
+              </td>
+              <td style={{ padding: "8px 12px" }}><input type="checkbox" checked={u.isAdmin} onChange={(e) => handleSetAdmin(u, e.target.checked)} /></td>
+              <td style={{ padding: "8px 12px", fontSize: 12, color: u.hasApiKey ? "var(--fg2)" : "var(--fg4)", whiteSpace: "nowrap" }}>
+                {u.hasApiKey ? (u.apiKeyMasked || t("admin.users.configured")) : t("admin.users.apiKeyNotSet")}
+              </td>
+              <td style={{ padding: "8px 12px" }}>
+                <Button size="sm" variant="ghost" onPress={() => { setQuotaModal({ userId: u.id, email: u.email }); setQuotaValue(""); }}>{t("admin.users.setQuota")}</Button>
+                <Button size="sm" variant="ghost" onPress={() => { setResetModal(u); setNewPassword(""); }}>{t("admin.users.resetPassword")}</Button>
+                <Button size="sm" variant="ghost" onPress={() => setApiKeyModal(u)}>{t("admin.users.modelKeys")}</Button>
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            {users.map((u) => (
-              <tr key={u.id} style={{ borderBottom: "0.5px solid var(--divider)" }}>
-                <td style={{ padding: "8px 12px" }}>{u.id}</td>
-                <td style={{ padding: "8px 12px", fontWeight: 600 }}>{u.email}</td>
-                <td style={{ padding: "8px 12px" }}>{u.displayName || "-"}</td>
-                <td style={{ padding: "8px 12px" }}><input type="checkbox" checked={u.isActive} onChange={(e) => handleToggleActive(u, e.target.checked)} /></td>
-                <td style={{ padding: "8px 12px" }}>
-                  <span style={{
-                    fontSize: 12, padding: "2px 8px", borderRadius: 999,
-                    border: "0.5px solid var(--divider)",
-                    background: u.role.split(",").map(r => r.trim()).includes("admin") ? "var(--badge-bg)" : "var(--surface-2)",
-                    color: u.role.split(",").map(r => r.trim()).includes("admin") ? "var(--fg1)" : "var(--fg3)",
-                  }}>
-                    {u.role.split(",").map(r => r.trim()).includes("admin") ? t("admin.users.roleAdmin") : t("admin.users.roleUser")}
-                  </span>
-                </td>
-                <td style={{ padding: "8px 12px" }}><input type="checkbox" checked={u.isAdmin} onChange={(e) => handleSetAdmin(u, e.target.checked)} /></td>
-                <td style={{ padding: "8px 12px", fontSize: 12, color: u.hasApiKey ? "var(--fg2)" : "var(--fg4)", whiteSpace: "nowrap" }}>
-                  {u.hasApiKey ? (u.apiKeyMasked || t("admin.users.configured")) : t("admin.users.apiKeyNotSet")}
-                </td>
-                <td style={{ padding: "8px 12px" }}>
-                  <Button size="sm" variant="ghost" onPress={() => { setQuotaModal({ userId: u.id, email: u.email }); setQuotaValue(""); }}>{t("admin.users.setQuota")}</Button>
-                  <Button size="sm" variant="ghost" onPress={() => { setResetModal(u); setNewPassword(""); }}>{t("admin.users.resetPassword")}</Button>
-                  <Button size="sm" variant="ghost" onPress={() => setApiKeyModal(u)}>{t("admin.users.modelKeys")}</Button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          ))}
+        </tbody>
+      </PagedTableShell>
 
       {/* Quota Modal */}
       {quotaModal && (
@@ -601,6 +619,9 @@ function BillingTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) {
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  // 【分页】明细表每页 16 条；汇总卡片与柱状图仍基于全量 data 计算
+  const pager = usePagedList(data);
+
   const maxCost = Math.max(...data.map((u) => u.monthCostUsd), 1);
   const totalMonthCost = data.reduce((s, u) => s + u.monthCostUsd, 0);
   const totalRequests = data.reduce((s, u) => s + u.monthRequests, 0);
@@ -659,46 +680,52 @@ function BillingTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) {
       </div>
 
       {/* Detail table */}
-      <div style={{ background: "var(--surface-1)", border: "0.5px solid var(--divider)", borderRadius: 12, overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-          <thead>
-            <tr style={{ borderBottom: "0.5px solid var(--divider)", background: "var(--surface-2)" }}>
-              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.billing.colUser")}</th>
-              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.billing.colQuota")}</th>
-              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.billing.colMonthCost")}</th>
-              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.billing.colMonthRequests")}</th>
-              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.billing.colTotal", { days })}</th>
-              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.billing.colUsage")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.map((u) => {
-              const usagePct = u.systemModelQuotaUsd != null && u.systemModelQuotaUsd > 0
-                ? Math.min(100, (u.monthCostUsd / u.systemModelQuotaUsd) * 100) : 0;
-              return (
-                <tr key={u.userId} style={{ borderBottom: "0.5px solid var(--divider)" }}>
-                  <td style={{ padding: "8px 12px", fontWeight: 600 }}>{u.email}</td>
-                  <td style={{ padding: "8px 12px" }}>{u.systemModelQuotaUsd != null ? `$${u.systemModelQuotaUsd}` : "∞"}</td>
-                  <td style={{ padding: "8px 12px" }}>${u.monthCostUsd.toFixed(4)}</td>
-                  <td style={{ padding: "8px 12px" }}>{u.monthRequests}</td>
-                  <td style={{ padding: "8px 12px" }}>${u.totalCostUsd.toFixed(4)}</td>
-                  <td style={{ padding: "8px 12px" }}>
-                    {u.systemModelQuotaUsd != null ? (
-                      <div style={{ width: 100, height: 8, background: "var(--surface-2)", borderRadius: 4, overflow: "hidden" }}>
-                        <div style={{
-                          width: `${usagePct}%`, height: "100%",
-                          background: usagePct >= 100 ? "var(--error)" : "var(--accent)",
-                          transition: "width 300ms ease",
-                        }} />
-                      </div>
-                    ) : "—"}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <PagedTableShell
+        pagedRows={pager.paged}
+        page={pager.page}
+        setPage={pager.setPage}
+        pageCount={pager.pageCount}
+        total={pager.total}
+        colCount={6}
+        emptyText={t("admin.billing.noUsageData")}
+      >
+        <thead>
+          <tr style={{ borderBottom: "0.5px solid var(--divider)", background: "var(--surface-2)", position: "sticky", top: 0, zIndex: 1 }}>
+            <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.billing.colUser")}</th>
+            <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.billing.colQuota")}</th>
+            <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.billing.colMonthCost")}</th>
+            <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.billing.colMonthRequests")}</th>
+            <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.billing.colTotal", { days })}</th>
+            <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.billing.colUsage")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {pager.paged.map((u) => {
+            const usagePct = u.systemModelQuotaUsd != null && u.systemModelQuotaUsd > 0
+              ? Math.min(100, (u.monthCostUsd / u.systemModelQuotaUsd) * 100) : 0;
+            return (
+              <tr key={u.userId} style={{ borderBottom: "0.5px solid var(--divider)" }}>
+                <td style={{ padding: "8px 12px", fontWeight: 600 }}>{u.email}</td>
+                <td style={{ padding: "8px 12px" }}>{u.systemModelQuotaUsd != null ? `$${u.systemModelQuotaUsd}` : "∞"}</td>
+                <td style={{ padding: "8px 12px" }}>${u.monthCostUsd.toFixed(4)}</td>
+                <td style={{ padding: "8px 12px" }}>{u.monthRequests}</td>
+                <td style={{ padding: "8px 12px" }}>${u.totalCostUsd.toFixed(4)}</td>
+                <td style={{ padding: "8px 12px" }}>
+                  {u.systemModelQuotaUsd != null ? (
+                    <div style={{ width: 100, height: 8, background: "var(--surface-2)", borderRadius: 4, overflow: "hidden" }}>
+                      <div style={{
+                        width: `${usagePct}%`, height: "100%",
+                        background: usagePct >= 100 ? "var(--error)" : "var(--accent)",
+                        transition: "width 300ms ease",
+                      }} />
+                    </div>
+                  ) : "—"}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </PagedTableShell>
     </div>
   );
 }
@@ -730,6 +757,9 @@ function ModelPricesTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) {
   }, [onFeedback]);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  // 【分页】每页 16 条 + 滚动容器（见 PagedTable.tsx）
+  const pager = usePagedList(prices);
 
   const openAdd = () => {
     setEditing({ id: 0, modelKey: "", inputPricePer1m: 0, outputPricePer1m: 0, enabled: true });
@@ -795,36 +825,39 @@ function ModelPricesTab({ onFeedback }: { onFeedback: (f: Feedback) => void }) {
         </div>
       </div>
 
-      <div style={{ background: "var(--surface-1)", border: "0.5px solid var(--divider)", borderRadius: 12, overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-          <thead>
-            <tr style={{ borderBottom: "0.5px solid var(--divider)", background: "var(--surface-2)" }}>
-              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.prices.colModelKey")}</th>
-              <th style={{ padding: "10px 12px", textAlign: "right" }}>{t("admin.prices.colInputPrice")}</th>
-              <th style={{ padding: "10px 12px", textAlign: "right" }}>{t("admin.prices.colOutputPrice")}</th>
-              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.prices.colEnabled")}</th>
-              <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.colActions")}</th>
+      <PagedTableShell
+        pagedRows={pager.paged}
+        page={pager.page}
+        setPage={pager.setPage}
+        pageCount={pager.pageCount}
+        total={pager.total}
+        colCount={5}
+        emptyText={t("admin.prices.empty")}
+      >
+        <thead>
+          <tr style={{ borderBottom: "0.5px solid var(--divider)", background: "var(--surface-2)", position: "sticky", top: 0, zIndex: 1 }}>
+            <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.prices.colModelKey")}</th>
+            <th style={{ padding: "10px 12px", textAlign: "right" }}>{t("admin.prices.colInputPrice")}</th>
+            <th style={{ padding: "10px 12px", textAlign: "right" }}>{t("admin.prices.colOutputPrice")}</th>
+            <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.prices.colEnabled")}</th>
+            <th style={{ padding: "10px 12px", textAlign: "left" }}>{t("admin.colActions")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {pager.paged.map((p) => (
+            <tr key={p.id} style={{ borderBottom: "0.5px solid var(--divider)" }}>
+              <td style={{ padding: "8px 12px", fontWeight: 600, fontFamily: "monospace" }}>{p.modelKey}</td>
+              <td style={{ padding: "8px 12px", textAlign: "right" }}>${p.inputPricePer1m.toFixed(4)}</td>
+              <td style={{ padding: "8px 12px", textAlign: "right" }}>${p.outputPricePer1m.toFixed(4)}</td>
+              <td style={{ padding: "8px 12px" }}>{p.enabled ? "✓" : "✗"}</td>
+              <td style={{ padding: "8px 12px" }}>
+                <Button size="sm" variant="ghost" onPress={() => openEdit(p)}>{t("admin.edit")}</Button>
+                <Button size="sm" variant="ghost" onPress={() => handleDelete(p.id)}>{t("admin.delete")}</Button>
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            {prices.map((p) => (
-              <tr key={p.id} style={{ borderBottom: "0.5px solid var(--divider)" }}>
-                <td style={{ padding: "8px 12px", fontWeight: 600, fontFamily: "monospace" }}>{p.modelKey}</td>
-                <td style={{ padding: "8px 12px", textAlign: "right" }}>${p.inputPricePer1m.toFixed(4)}</td>
-                <td style={{ padding: "8px 12px", textAlign: "right" }}>${p.outputPricePer1m.toFixed(4)}</td>
-                <td style={{ padding: "8px 12px" }}>{p.enabled ? "✓" : "✗"}</td>
-                <td style={{ padding: "8px 12px" }}>
-                  <Button size="sm" variant="ghost" onPress={() => openEdit(p)}>{t("admin.edit")}</Button>
-                  <Button size="sm" variant="ghost" onPress={() => handleDelete(p.id)}>{t("admin.delete")}</Button>
-                </td>
-              </tr>
-            ))}
-            {prices.length === 0 && (
-              <tr><td colSpan={5} style={{ padding: 24, textAlign: "center", color: "var(--fg3)" }}>{t("admin.prices.empty")}</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+          ))}
+        </tbody>
+      </PagedTableShell>
 
       {/* Edit/Add Modal */}
       {editing && (

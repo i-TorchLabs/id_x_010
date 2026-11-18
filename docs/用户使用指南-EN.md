@@ -92,11 +92,11 @@ An API Key is like your "prepaid card password" with the vendor. Go to the vendo
 
 Open the system URL provided by your administrator in a browser; the page will automatically redirect to the login page.
 
-### 3.1 Recommended: Sign in with CUHK SSO
+### 3.1 Recommended: Sign in with SSO
 
 If you have a CUHK unified account, this is the simplest way to log in — **no registration needed, just one click**:
 
-1. On the login page, click the **Sign in with CUHK SSO** button;
+1. On the login page, click the **Sign in with SSO** button;
 2. The page will redirect to CUHK's unified identity authentication page. Enter your CUHK account and password to authenticate (if you're already logged into another CUHK system in your browser, this step may pass automatically);
 3. After successful authentication, you'll be redirected back to this system and taken straight to the chat interface.
 
@@ -117,7 +117,7 @@ Don't have a CUHK account? You can also register with an email address:
 
 ### 3.3 Logging Out
 
-Click the **Log Out** button at the bottom of the sidebar. For users signed in via CUHK SSO, logging out will also end your CUHK unified login session.
+Click the **Log Out** button at the bottom of the sidebar. After logging out you will return directly to the home page. For users signed in via CUHK SSO, logging out will also end your CUHK unified login session in the background (so the next sign-in requires re-authentication).
 
 ---
 

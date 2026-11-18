@@ -27,7 +27,7 @@ import { useDraggableDialog } from "@/hooks/useDraggableDialog";
 import {
   clearSsoLoginFlag,
   isSsoLogin,
-  redirectToAdfsLogout,
+  silentAdfsLogout,
 } from "@/utils/sso";
 
 type ChatMessage = {
@@ -750,11 +750,12 @@ export default function ChatHome() {
         localStorage.removeItem("user");
         clearSsoLoginFlag();
       }
-      // SSO 登录的用户：连同 ADFS 一起登出（跳转 ADFS 登出端点后回跳登录页）
+      // SSO 登录的用户：先本地清理并直接回到首页，再由隐藏 iframe
+      // 后台静默终止 ADFS 会话（不经过 sts.cuhk.edu.cn 中转页）；
+      // 密码登录的用户：本地清理后直接回到首页
+      router.push("/");
       if (ssoSession) {
-        redirectToAdfsLogout();
-      } else {
-        router.push("/f/010/user-login");
+        silentAdfsLogout();
       }
     }
   };

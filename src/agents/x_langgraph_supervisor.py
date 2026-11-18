@@ -226,8 +226,18 @@ class SemanticRouter:
                 or external_config.get("embd_base_url")
                 or external_config.get("base_url")
             )
-            final_embedding_model = self._embedding_model or os.getenv(
-                "EXTERNAL_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-8B"
+            # 【修复】模型名优先取"用户选定的模型"（vectorstore 登记的
+            # endpoint override）——不再强制 Qwen/Qwen3-Embedding-8B
+            # 默认名（网关无渠道时初始化失败，路由降级 general）
+            from x_models.id_x_010.src.utils.x_vectorstore import (
+                _endpoint_override as _vs_override,
+            )
+
+            final_embedding_model = (
+                self._embedding_model
+                or _vs_override.get("embedding_model")
+                or os.getenv("EXTERNAL_EMBEDDING_MODEL")
+                or "Qwen/Qwen3-Embedding-8B"
             )
 
             self.encoder = CustomOpenAIEncoder(
@@ -736,6 +746,24 @@ class LangGraphSupervisor:
         self.use_llm_router = use_llm_router
         self.model_type = model_type
         self.model_name = model_name
+
+        # 【修复】向 vectorstore 登记用户选定模型端点：语义路由的语料
+        # 向量、General Agent 的 kb 检索等 embedding 调用直接复用该端点
+        # 与模型名，不再依赖 EXTERNAL_EMBEDDING_MODEL 默认值（网关无
+        # 该模型渠道时 503）。
+        if api_key or base_url:
+            try:
+                from x_models.id_x_010.src.utils import x_vectorstore as _vs
+
+                _vs.set_endpoint_override(
+                    api_key=api_key,
+                    base_url=base_url,
+                    embedding_model=model_name or None,
+                )
+            except Exception as _e:  # 登记失败不影响主流程
+                logger.warning(
+                    f"{get_request_id()}登记 embedding 端点覆盖失败（忽略）: {_e}"
+                )
 
         if use_llm_router:
             self.router = LLMRouter(
@@ -1449,7 +1477,13 @@ class LangGraphSupervisor:
         }
 
         if intent == "sql":
-            sql_agent = SQLAgent(
+            # 【性能】走 get_sql_agent 缓存（LRU 16 + TTL 1h，key 含端点指纹）：
+            # 复用连接池与 _schema_cache，避免每请求对远程 PG 重新握手 +
+            # 重查全量 information_schema。api_key/base_url 已入缓存键，
+            # 不同用户的个人 key 不会串用。
+            from x_models.id_x_010.src.agents.x_sql_agent import get_sql_agent
+
+            sql_agent = get_sql_agent(
                 model_type=model_type,
                 model_name=model_name,
                 api_key=api_key,
@@ -1466,8 +1500,12 @@ class LangGraphSupervisor:
             # TASK-015：默认开启人工审核——所有 SQL 在执行前必须经用户确认，
             # 由后端 _post_check_router 在 auto_execute=False 时路由到 human_approval 节点，
             # 触发 sql_approval chunk 让前端弹出审核气泡 + 自然语言阐述气泡。
+            # 【准确性】注入最近 2 轮对话历史：SQL Agent 此前完全不接收
+            # context，用户追问"那上个月呢"时无法解析指代，只能凭空生成。
             async for chunk in sql_agent.stream_query(
-                question=sql_question, auto_execute=False
+                question=sql_question,
+                auto_execute=False,
+                context=context,
             ):
                 chunk["conversation_id"] = conversation_id
                 yield chunk

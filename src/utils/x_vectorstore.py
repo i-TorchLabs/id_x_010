@@ -3,9 +3,11 @@
 提供 ``table_comments`` / ``document_chunks`` 两表的写入与召回，
 供 SQL Agent 的 Retriever（TASK-002）与 General Agent 的 KB 工具（TASK-004）使用。
 
-embedding 客户端复用 ``external_provider`` / ``local_provider`` 表中已配置的
-embd_base_url 与 api_key；模型名走环境变量 ``EXTERNAL_EMBEDDING_MODEL``，
-默认 ``Qwen/Qwen3-Embedding-8B``（1024 维，与 EMBEDDING_DIM 对齐）。
+embedding 客户端端点优先取"用户在模型列表中选定的模型"（由 SQLAgent /
+Supervisor 初始化时经 ``set_endpoint_override`` 登记），回退
+``external_provider`` / ``local_provider`` 表配置；模型名默认与用户选定的
+模型一致，未登记时回退环境变量 ``EXTERNAL_EMBEDDING_MODEL``（最后回退
+``Qwen/Qwen3-Embedding-8B``，1024 维，与 EMBEDDING_DIM 对齐）。
 
 外部第三方 PostgreSQL 部署：embedding 列为 JSON 列表存储（无 pgvector
 扩展），召回统一在应用层计算余弦相似度（``_search_rows_json``）。
@@ -32,28 +34,73 @@ from x_models.id_x_010.src.models.x_models import (
 # 同一套 base_url+api_key+model 复用 embeddings 客户端，避免每条记录重建连接。
 _embeddings_cache: Dict[str, OpenAIEmbeddings] = {}
 
+# 【修复】用户选定模型端点的登记（SQLAgent / Supervisor 初始化时写入）：
+# embedding 调用优先使用用户在模型列表中选定的模型名与其端点，
+# 而非硬编码默认值 Qwen/Qwen3-Embedding-8B——该默认名在网关上
+# 无可用渠道时会 503（model_not_found），导致整套向量能力静默失效。
+# OpenAI 兼容网关的 /v1/embeddings 与聊天端点同域同 key，直接复用即可。
+# 模型名会随用户切换而变，_embeddings_cache 按 cache_key 天然隔离。
+_endpoint_override: Dict[str, Optional[str]] = {
+    "api_key": None,
+    "base_url": None,
+    "embedding_model": None,
+}
+
+
+def set_endpoint_override(
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    embedding_model: Optional[str] = None,
+) -> None:
+    """登记用户选定的模型端点，embedding 调用将优先使用（见 _endpoint_override 说明）。
+
+    None 值不覆盖既有登记（避免某次未解析到端点的请求清掉有效配置）。
+    """
+    if api_key is not None:
+        _endpoint_override["api_key"] = api_key
+    if base_url is not None:
+        _endpoint_override["base_url"] = base_url
+    if embedding_model:
+        _endpoint_override["embedding_model"] = embedding_model
+
+
+# 【性能】查询向量短 TTL 缓存：同一问题在一次请求内会被两处独立嵌入
+# （x_sql_agent._load_relevant_schema 的表召回 + retrieve_examples 的
+# few-shot 召回），远程 embedding 单次 100-500ms，纯属重复推理。
+# TTL 5s 只覆盖"同一请求内"的复用，不引入跨请求的陈旧向量。
+_query_vec_cache: Dict[str, tuple] = {}
+_QUERY_VEC_TTL = 5.0
+
 
 def get_embeddings() -> OpenAIEmbeddings:
-    """复用 external_provider / local_provider 表配置，缓存 embeddings 客户端。
+    """构造 embeddings 客户端，端点优先级（见 _endpoint_override 说明）：
 
-    走与 LLM 相同的 provider 选择逻辑：external_config 优先，否则回退
-    local_config（与 views.load_llm_provider_config 行为对齐）。
+    1. 用户在模型列表中选定的模型端点（set_endpoint_override 登记，
+       模型名即用户选中的模型——网关对 /v1/embeddings 与聊天同 key 同域）；
+    2. external_provider / local_provider 表的 embd_base_url → base_url；
+    3. 模型名回退环境变量 EXTERNAL_EMBEDDING_MODEL。
     """
     external_cfg = get_external_model_config()
     local_cfg = get_local_model_config()
 
     base_url = (
-        external_cfg.get("embd_base_url")
+        _endpoint_override.get("base_url")
+        or external_cfg.get("embd_base_url")
         or external_cfg.get("base_url")
         or local_cfg.get("embd_base_url")
         or local_cfg.get("base_url")
     )
     api_key = (
-        external_cfg.get("api_key")
+        _endpoint_override.get("api_key")
+        or external_cfg.get("api_key")
         or local_cfg.get("api_key")
         or "ollama"
     )
-    model = os.getenv("EXTERNAL_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-8B")
+    model = (
+        _endpoint_override.get("embedding_model")
+        or os.getenv("EXTERNAL_EMBEDDING_MODEL")
+        or "Qwen/Qwen3-Embedding-8B"
+    )
 
     cache_key = f"{base_url}|{api_key}|{model}"
     cached = _embeddings_cache.get(cache_key)
@@ -64,6 +111,9 @@ def get_embeddings() -> OpenAIEmbeddings:
         model=model,
         openai_api_key=api_key,
         openai_api_base=base_url,
+        # 端点无 /v1/embeddings 能力（纯聊天模型/网关）时不要静默重试——
+        # 调用方有降级路径，快速失败比双倍等待好
+        max_retries=1,
     )
     _embeddings_cache[cache_key] = client
     logger.info(
@@ -76,6 +126,27 @@ async def embed(text: str) -> List[float]:
     """文本→向量。失败抛错由调用方降级（见 search_tables / retrieve_examples）。"""
     emb = get_embeddings()
     return await emb.aembed_query(text)
+
+
+async def embed_query_cached(text: str) -> List[float]:
+    """同文本短 TTL 内复用查询向量（见 _query_vec_cache 说明）。
+
+    缓存未命中或已过期时调用 embed 并回填。仅用于"用户问题"类短文本
+    的查询侧嵌入；写入侧（upsert_*）不走本缓存。
+    """
+    import time as _time
+
+    now = _time.time()
+    cached = _query_vec_cache.get(text)
+    if cached is not None and now - cached[0] < _QUERY_VEC_TTL:
+        return cached[1]
+    vec = await embed(text)
+    # 简单容量控制：超 64 条清掉最旧的一半，避免长跑进程无界增长
+    if len(_query_vec_cache) >= 64:
+        for k in sorted(_query_vec_cache, key=lambda k: _query_vec_cache[k][0])[:32]:
+            _query_vec_cache.pop(k, None)
+    _query_vec_cache[text] = (now, vec)
+    return vec
 
 
 async def upsert_table_comment(
@@ -156,22 +227,17 @@ async def search_tables(
         return []
 
     try:
-        qvec = await embed(query)
+        # 【性能】查询向量走短 TTL 缓存：同一问题在本次请求内已被
+        # search_tables 嵌入过一次（或反之），这里直接复用
+        qvec = await embed_query_cached(query)
     except Exception as e:
         logger.warning(
             f"{get_request_id()}search_tables embed 失败，降级全表返回: "
             f"{type(e).__name__}: {e}"
         )
-        async with get_session()() as session:
-            rows = await session.execute(
-                select(TableComment.table_name, TableComment.comment)
-                .where(TableComment.db_name == db_name)
-                .limit(top_k * 2)
-            )
-            return [
-                {"table_name": r[0], "comment": r[1], "score": 0.0}
-                for r in rows.all()
-            ]
+        # 【准确性修复】embedding 不可用时不再返回"前 top_k 行无 score 数据"——
+        # 无关表的假召回会把 LLM 选表带偏，返回空让上层走全 schema 兜底更稳
+        return []
 
     try:
         scored = await _search_rows_json(

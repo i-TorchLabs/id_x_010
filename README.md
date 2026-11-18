@@ -405,9 +405,14 @@ cp .env.example .env        # 填写外部数据库 DB_* 等必填项
 bash up.sh                  # 首次构建镜像并启动（幂等，含数据库连通性预检）
 bash up.sh --build          # 强制重建 service / web 镜像
 
-bash down.sh                # 停止并移除容器与 Pod（保留镜像与数据卷）
-bash down.sh --all          # 同时删除数据卷与镜像（完全清理）
+bash down.sh                # 停止并移除容器与 Pod（保留镜像）
+bash down.sh --all          # 同时删除旧命名卷与镜像（完全清理）
 ```
+
+容器日志透传：service 容器的 `/app/i-Core/logs` 以 bind mount 挂载到
+`x_models/id_x_010/logs`（`up.sh` 自动创建并授权），审计/引擎日志实时
+落宿主机、容器重建不丢失；旧版命名卷 `id_x_010_logs` 已弃用，
+`bash down.sh --legacy-vol` 可清理。
 
 方式二：podman-compose（额外含 prometheus :9090，与 up.sh 两套方式请勿混用）：
 

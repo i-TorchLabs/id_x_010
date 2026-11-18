@@ -11,7 +11,7 @@
 #
 # 用法（在本目录 ops/ 下执行）：
 #   podman-compose up -d --build          # 构建并启动
-#   podman-compose down                   # 停止并移除容器（保留数据卷）
+#   podman-compose down                   # 停止并移除容器（../logs 日志保留）
 #
 # 注意：本文件与 up.sh/down.sh 是两套并存的管理方式，请勿混用
 # （容器命名不同，混用会造成端口冲突）。
@@ -39,7 +39,12 @@ services:
       PROJECT_PATH: /app/i-Core
     restart: unless-stopped
     volumes:
-      - id_x_010_logs:/app/i-Core/logs
+      # 日志透传：bind mount 到模块目录 x_models/id_x_010/logs——
+      # 容器内 /app/i-Core/logs 的审计/引擎日志实时落宿主机，
+      # 容器重建不丢失，运维无需 podman volume 命令即可查看/轮转。
+      # 注意相对路径：compose 解析相对于本文件所在目录（ops/），
+      # ../logs 即 x_models/id_x_010/logs；:Z 允许 SELinux 下容器写入。
+      - ../logs:/app/i-Core/logs:Z
     healthcheck:
       test: ["CMD-SHELL", "curl -sf -X POST http://127.0.0.1:7000/b/id_x_010/graphql -H 'Content-Type: application/json' -d '{\"query\":\"{ health { status } }\"}' || exit 1"]
       interval: 15s
@@ -97,7 +102,7 @@ services:
     networks:
       - default
 
-# 显式固定卷名（不加 compose 项目前缀），与 up.sh 使用的卷保持一致
-volumes:
-  id_x_010_logs:
-    name: id_x_010_logs
+# 显式固定卷名（不加 compose 项目前缀）——日志已改用 bind mount 透传至
+# x_models/id_x_010/logs，本节无卷；保留注释说明历史迁移：
+# 旧版使用 id_x_010_logs 命名卷，迁移后可 podman volume rm id_x_010_logs
+volumes: {}

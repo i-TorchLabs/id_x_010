@@ -143,14 +143,21 @@ if ! podman pod exists "${PROJECT_NAME}"; then
 fi
 
 # ============================================
-# 4. 创建数据卷（已存在则跳过；数据库卷已随 db 容器移除而不再需要）
+# 4. 准备宿主机日志目录（bind mount 透传至 x_models/id_x_010/logs）
+#    容器内 service 以 uid 10001（app）运行，rootless podman 下该 uid
+#    映射到宿主机 subuid 段、与目录属主不同——1777（sticky+全员可写）
+#    保证容器可写入，sticky 位防互删（对齐 id_x_007 的做法）。
 # ============================================
-for vol in "${PROJECT_NAME}_logs"; do
-  if ! podman volume exists "${vol}"; then
-    podman volume create "${vol}" >/dev/null
-    echo "[up] 数据卷 ${vol} 已创建"
-  fi
-done
+LOGS_HOST_DIR="$(cd .. && pwd)/logs"
+mkdir -p "${LOGS_HOST_DIR}"
+chmod 1777 "${LOGS_HOST_DIR}"
+
+# 迁移提示：旧版曾用命名卷 id_x_010_logs，改为 bind mount 后不再使用；
+# 卷内历史日志如需保留可手动导出（podman volume export）后删除卷
+if podman volume exists "${PROJECT_NAME}_logs"; then
+  echo "[up] 提示: 检测到旧命名卷 ${PROJECT_NAME}_logs（已改用 ../logs bind mount，" >&2
+  echo "[up]       如不再需要可执行: podman volume rm ${PROJECT_NAME}_logs）" >&2
+fi
 
 # ============================================
 # 5. 启动容器（已存在则跳过）
@@ -174,7 +181,7 @@ if ! podman container exists "${PROJECT_NAME}-service"; then
     -e ADMIN_EMAIL="${ADMIN_EMAIL:-}" \
     -e ADMIN_PASSWORD="${ADMIN_PASSWORD:-}" \
     -e PROJECT_PATH=/app/i-Core \
-    -v "${PROJECT_NAME}_logs":/app/i-Core/logs \
+    -v "${LOGS_HOST_DIR}":/app/i-Core/logs \
     --health-cmd "curl -sf -X POST http://127.0.0.1:7000/b/id_x_010/graphql -H 'Content-Type: application/json' -d '{\"query\":\"{ health { status } }\"}' || exit 1" \
     --health-interval 15s \
     --health-timeout 5s \

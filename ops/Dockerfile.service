@@ -93,14 +93,18 @@ COPY --chown=app:app config /app/i-Core/config
 COPY --chown=app:app x_models/_contracts /app/i-Core/x_models/_contracts
 COPY --chown=app:app x_models/id_x_010 /app/i-Core/x_models/id_x_010
 
+# 日志目录说明：/app/i-Core/logs 由上方 RUN mkdir 预创建并属 app:app；
+# 运行时由 up.sh / compose.yaml 以 bind mount 覆盖挂载到宿主机
+# x_models/id_x_010/logs（.dockerignore 已排除 **/logs，宿主侧
+# 日志文件不会随构建上下文 COPY 进镜像）。
+
 USER app
 
 EXPOSE 7000
 
 # 真实 GraphQL 健康查询（/b/id_x_010/ 前缀在中间件免鉴权白名单内，
 # 无需 Bearer；curl -f 对非 2xx 返回非零，比裸 GET 更严格）。
-# up.sh 中的 --health-cmd 与本指令等价，二者取其一即可生效。
-HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=10 \
+# up.sh 中的 --health-cmd 与本指令等价，二者取其一即可生效。HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=10 \
     CMD curl -sf -X POST http://127.0.0.1:7000/b/id_x_010/graphql \
         -H "Content-Type: application/json" \
         -d '{"query":"{ health { status } }"}' || exit 1

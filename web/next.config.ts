@@ -7,7 +7,7 @@ const nextConfig: NextConfig = {
         return [
             {
                 source: "/",
-                destination: "/f/010/login",
+                destination: "/f/010/sso-login",
                 permanent: false,
             },
             {

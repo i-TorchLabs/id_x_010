@@ -85,7 +85,14 @@ export default function LeftPanel({
           alt="Data Agent logo"
           className="w-7 h-7"
         />
-        <span className="text-base font-semibold text-white">Data Agent</span>
+        {/* 主题适配：浅色模式为黑色，深色模式保持白色以保证可读性 */}
+        <span
+          className={`text-base font-semibold ${
+            isDark ? "text-white" : "text-black"
+          }`}
+        >
+          Data Agent
+        </span>
       </div>
 
       {/* Animated Characters */}

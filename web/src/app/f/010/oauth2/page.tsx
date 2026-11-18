@@ -28,14 +28,14 @@ export default function OAuthCallbackPage() {
     const state = params.get("state");
 
     if (!code) {
-      router.replace("/f/010/user-login?error=sso_missing_code");
+      router.replace("/f/010/sso-login?error=sso_missing_code");
       return;
     }
 
     // CSRF 校验：state 必须与授权请求时生成并暂存的一致
     const savedState = sessionStorage.getItem(OAUTH_STATE_KEY);
     if (!savedState || savedState !== state) {
-      router.replace("/f/010/user-login?error=sso_state_mismatch");
+      router.replace("/f/010/sso-login?error=sso_state_mismatch");
       return;
     }
     sessionStorage.removeItem(OAUTH_STATE_KEY);
@@ -46,7 +46,7 @@ export default function OAuthCallbackPage() {
         const resp = result.ssoLogin;
         if (!resp.success || !resp.token || !resp.user) {
           router.replace(
-            `/f/010/user-login?error=${encodeURIComponent(resp.message || "SSO sign-in failed")}`,
+            `/f/010/sso-login?error=${encodeURIComponent(resp.message || "SSO sign-in failed")}`,
           );
           return;
         }
@@ -69,7 +69,7 @@ export default function OAuthCallbackPage() {
       .catch((error) => {
         console.error("SSO login failed:", error);
         router.replace(
-          `/f/010/user-login?error=${encodeURIComponent(error.message || "SSO sign-in failed")}`,
+          `/f/010/sso-login?error=${encodeURIComponent(error.message || "SSO sign-in failed")}`,
         );
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps

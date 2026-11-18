@@ -2,7 +2,6 @@ import {
     ADFS_AUTHORIZE_URL,
     ADFS_CLIENT_ID,
     ADFS_LOGOUT_URL,
-    ADFS_POST_LOGOUT_REDIRECT_URI,
     ADFS_REDIRECT_URI,
     ADFS_RESOURCE,
 } from "@/utils/config";
@@ -64,14 +63,33 @@ export const isSsoLogin = (): boolean => {
 };
 
 /**
- * 跳转到 ADFS 登出端点，终止 ADFS 单点登录会话。
- * 登出完成后 ADFS 回跳到 post_logout_redirect_uri（用户登录页）。
+ * 后台静默终止 ADFS 单点登录会话（不跳转、不打断用户）。
  *
- * 调用前应已清除本地 token / user / SSO 标记，避免回跳时残留登录态。
+ * 通过隐藏 iframe 加载 ADFS 登出端点（不带 post_logout_redirect_uri，
+ * ADFS 终止会话后仅回写 Sign-Out 状态的空白页，不发生导航跳转）。
+ * 页面卸载时 iframe 随之销毁，无论 ADFS 应答与否前端均已回到首页。
+ *
+ * 注意：个别浏览器（如 Safari 默认屏蔽三方 Cookie）可能无法携带
+ * ADFS 会话 Cookie 导致终止失败——此时本站登录态已清除，不影响
+ * "退出至首页"的体验；仅 ADFS 侧会话残留，下次 SSO 登录免密登入。
+ * 如需确保 ADFS 会话彻底终止，可让用户自行访问 ADFS 登出页。
  */
-export const redirectToAdfsLogout = (): void => {
-    const params = new URLSearchParams({
-        post_logout_redirect_uri: ADFS_POST_LOGOUT_REDIRECT_URI,
-    });
-    window.location.href = `${ADFS_LOGOUT_URL}?${params.toString()}`;
+export const silentAdfsLogout = (): void => {
+    if (typeof window === "undefined") return;
+    try {
+        const iframe = document.createElement("iframe");
+        iframe.style.display = "none";
+        // sandbox 仅放载入：iframe 无需脚本 / 表单 / 同源权限，
+        // 纯粹触发 ADFS Set-Cookie 清除会话
+        iframe.setAttribute("sandbox", "");
+        iframe.setAttribute("aria-hidden", "true");
+        iframe.title = "adfs-silent-logout";
+        iframe.src = ADFS_LOGOUT_URL;
+        document.body.appendChild(iframe);
+        // 兜底清理：60s 后移除 iframe，避免极端情况下节点泄漏
+        window.setTimeout(() => iframe.remove(), 60_000);
+    } catch (e) {
+        // 静默失败不影响主流程（本站登录态已由调用方清除）
+        console.warn("silent ADFS logout failed:", e);
+    }
 };
