@@ -139,6 +139,11 @@ class ConversationLog(Base):
     __table_args__ = {"comment": "对话日志表"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # 【追踪】user_id：记录提问用户（与 usage_logs 对齐）。未登录时为 NULL
+    # （匿名对话仍保留内容，后续可与 usage_logs / users 关联做全局分析）
+    user_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id"), index=True, comment="提问用户ID（未登录时为 NULL）"
+    )
     conversation_id: Mapped[Optional[str]] = mapped_column(
         String(64), index=True, comment="会话 ID"
     )
@@ -162,6 +167,7 @@ class ConversationLog(Base):
     def to_dict(self):
         return {
             "id": self.id,
+            "user_id": self.user_id,
             "conversation_id": self.conversation_id,
             "user_query": self.user_query,
             "model_response": self.model_response,

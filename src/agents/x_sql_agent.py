@@ -115,6 +115,19 @@ GENERATE_QUERY_SYSTEM_PROMPT = """你是一个专业的 SQL 专家，负责与 P
    - correlation（相关性）: 返回两个数值列的原始行（不要聚合），≥ 20 行最佳
    - aggregate（聚合）: 返回单值或少量汇总行
    - lookup/detail: 返回明细行，必要时 ORDER BY 主键
+9. **严格禁止 MySQL 方言**（数据库是 PostgreSQL，混用方言会直接执行失败）：
+   - information_schema.columns **没有** COLUMN_KEY、COLUMN_COMMENT、EXTRA、
+     COLLATION_NAME 等列——这些是 MySQL 专有字段，查询它们必然报
+     "字段不存在"错误。PostgreSQL 可用的列：table_name、column_name、
+     data_type、is_nullable、ordinal_position 等（全部小写）
+   - 表注释/列注释**已经包含在下方 schema 中**（table_comment / col_comment /
+     constraint 列），无需也不应再写 SQL 查询 information_schema 获取注释；
+     若用户问"某表有哪些字段及含义"，直接基于下方 schema 回答，或对该表
+     生成普通业务 SELECT
+   - 禁止反引号 `` ` `` 包裹标识符（PostgreSQL 用双引号 " 或不引用）；
+     禁止 LIMIT x, y 双参数形式（PostgreSQL 用 OFFSET）；
+     禁止 IFNULL / GROUP_CONCAT / DATE_FORMAT 等 MySQL 函数
+     （PostgreSQL 对应 COALESCE / string_agg / to_char）
 
 # 分析意图（由前置节点识别，请严格遵循）
 
@@ -230,6 +243,10 @@ CHECK_QUERY_SYSTEM_PROMPT = """你是一个 SQL 专家，具有极强的细节�
 - 函数参数数量错误
 - 转换为错误的数据类型
 - 连接使用了错误的列
+- **MySQL 方言混入**：查询了 information_schema 中不存在的列
+  （COLUMN_KEY / COLUMN_COMMENT / EXTRA 等 PostgreSQL 没有的字段）、
+  使用反引号 `` ` `` 引用标识符、IFNULL / GROUP_CONCAT / DATE_FORMAT /
+  LIMIT x, y 等 MySQL 专有写法——发现即改写为 PostgreSQL 等价形式
 
 如果有上述错误，请重写查询。如果没有错误，只需重现原始查询。
 你将在检查后调用适当的工具来执行查询。
@@ -1534,8 +1551,12 @@ class SQLAgent:
             # 否则 _stream_explanation 的流式解读永远统计不到 token
             stream_usage=True,
             # 性能/稳定性：限定超时与重试，避免默认 2 次静默重试
-            # 把瞬时错误放大成双倍延迟、以及无超时的卡死
-            timeout=120.0,
+            # 把瞬时错误放大成双倍延迟、以及无超时的卡死。
+            # 【稳定性】per-chunk 空闲超时同步放宽（reasoning 模型思考期
+            # 网关可能长时间静默，120s 会 ReadTimeout，见 x_general_agent
+            # 的 _STREAM_READ_TIMEOUT 说明），300s 覆盖绝大多数思考静默
+            timeout=300.0,
+            stream_chunk_timeout=300.0,
             max_retries=1,
         )
 
@@ -2071,7 +2092,10 @@ class SQLAgent:
                 "messages": [AIMessage(content=f"查询被拒绝: {reason}")],
             }
 
-        check_prompt = f"""请检查以下 SQL 查询是否有语法错误或逻辑问题：
+        check_prompt = f"""请检查以下 SQL 查询是否有语法错误或逻辑问题。
+注意数据库是 PostgreSQL——重点检查是否混入 MySQL 方言（如查询
+information_schema 的 COLUMN_KEY / COLUMN_COMMENT 等不存在的列、
+反引号标识符、IFNULL / GROUP_CONCAT / LIMIT x,y 等 MySQL 写法）：
 
 {sql}
 
@@ -2410,7 +2434,13 @@ class SQLAgent:
         question: str,
         auto_execute: bool = True,
         context: Optional[List[Dict[str, str]]] = None,
+        conversation_id: Optional[str] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
+        # 【追踪】conversation_id：supervisor.stream_process 传入，随
+        # initial_state 注入 graph——human_approval 节点的 ApprovalTask 落库
+        # 用它定位会话，替代旧 question-hash 占位（sql-xxxx 无法与
+        # conversation_logs / usage_logs 关联）。旧调用方不传时保持占位行为。
+        _conv_id = conversation_id or ""
         # 【准确性】context：最近对话历史（supervisor 透传）。注入最近 2 轮
         # （4 条消息）还原多轮指代——"那上个月呢""换成按部门统计"类追问
         # 此前完全无法解析。只取少量历史，避免 prompt 膨胀拖慢生成。
@@ -2456,6 +2486,9 @@ class SQLAgent:
                 # Anthropic 系网关"user 消息结尾"要求）
                 "messages": [*history_messages, HumanMessage(content=question)],
                 "question": question,
+                # 【追踪】真实会话 ID 随 state 下发，human_approval 节点
+                # ApprovalTask 落库使用（见 _conv_id 占位回退注释）
+                "conversation_id": _conv_id,
                 # 注入 auto_execute 让 _post_check_router 决定是否跳过审批直接执行；
                 # 未传时默认 True，保持与 supervisor.stream_process 的语义一致。
                 "auto_execute": auto_execute,
@@ -2618,13 +2651,16 @@ class SQLAgent:
 
                                 # conversation_id 由 stream_process 调用方传入 LangGraph
                                 # config，human_approval 节点无法直接拿到——用 question
-                                # hash 作为占位 conversation_id（TASK-006 完整接入后改为
-                                # 真实 conversation_id）
-                                conv_id = (
-                                    state.get("conversation_id")
-                                    if isinstance(state, dict)
-                                    else None
-                                ) or f"sql-{hash(question) & 0xFFFFFFFF:x}"
+                                # 【追踪】真实 conversation_id 已随 initial_state
+                                # 注入（stream_query 的 conversation_id 参数）；
+                                # 旧 question-hash 占位仅作缺参兜底。
+                                # 修复：此处原引用 state 变量（stream_query 作用域
+                                # 不存在，日志实测 NameError → ApprovalTask 创建
+                                # 始终失败，审批中心永远看不到任务），改用
+                                # initial_state 里注入的 _conv_id
+                                conv_id = _conv_id or (
+                                    f"sql-{hash(question) & 0xFFFFFFFF:x}"
+                                )
                                 await create_approval_task(
                                     conversation_id=conv_id,
                                     sql=pending_sql,

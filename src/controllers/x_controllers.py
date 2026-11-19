@@ -1053,6 +1053,17 @@ def _get_info_request(info: strawberry.Info):
     return getattr(ctx, "request", None)
 
 
+async def _is_system_model_by_name(model_name: Optional[str]) -> bool:
+    """按名称查询系统预置模型是否启用（供审批续流等处计费判定复用）。"""
+    if not model_name:
+        return False
+    try:
+        sys_model = await get_system_model_by_name(model_name)
+        return sys_model is not None and sys_model.enabled
+    except Exception:
+        return False
+
+
 async def _get_bearer_user(request) -> Optional[User]:
     """从请求头 Authorization: Bearer <token> 解析并校验用户。"""
     if request is None:
@@ -1289,8 +1300,12 @@ class Mutation:
                     model_response=result["response"],
                     thinking_process=result["thinking"],
                     model_type=input.model_type,
-                    model_name=result["model_used"],
+                    # 【数据质量】与流式路径对齐：agent 全程未产出 model_used
+                    # （失败/降级轮次）时回退到本轮解析出的模型名
+                    model_name=result["model_used"] or chat_model_name or "",
                     intent=result["intent"] or "",
+                    # 【追踪】与 save_usage_log 同源：入口处已校验的登录用户
+                    user_id=user.id if user is not None else None,
                 )
             except Exception as e:
                 logger.error(f"{get_request_id()}保存对话日志失败: {e}", exc_info=True)
@@ -1607,9 +1622,20 @@ class Mutation:
             )
 
             if action == "approve":
+                # 【数据质量】GraphQL 审批路径同样回填对话日志（与 REST
+                # /sql-approval 路径对齐），保证审批轮次的最终回答落库
+                _gq_resp: list = []
+                _gq_think: list = []
+                _gq_model = ""
                 async for chunk in sql_agent.continue_with_approval(
                     sql=sql, approved=True, question=question
                 ):
+                    if chunk.get("model_used"):
+                        _gq_model = chunk["model_used"]
+                    if chunk.get("type") == "thinking" and chunk.get("content"):
+                        _gq_think.append(chunk["content"])
+                    elif chunk.get("type") == "content" and chunk.get("content"):
+                        _gq_resp.append(chunk["content"])
                     yield StreamChunkType(
                         type=chunk.get("type", ""),
                         content=chunk.get("content"),
@@ -1646,6 +1672,23 @@ class Mutation:
                             if chunk.get("usage")
                             else None
                         ),
+                    )
+                # 【数据质量】审批通过续流结束：回填对话日志（best-effort）
+                try:
+                    from x_models.id_x_010.src.views.x_views import (
+                        backfill_conversation_log,
+                    )
+
+                    await backfill_conversation_log(
+                        conversation_id=conversation_id,
+                        model_response="".join(_gq_resp),
+                        thinking_process="".join(_gq_think),
+                        model_name=_gq_model,
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"{get_request_id()}审批续流回填对话日志失败: {e}",
+                        exc_info=True,
                     )
             elif action == "reject":
                 last_chunk_type = None
@@ -1692,7 +1735,19 @@ class Mutation:
                 if last_chunk_type == "sql_rejected":
                     # TASK-015：重新生成 SQL 后会再次走审核流（auto_execute=False）
                     # 可能在用户二次审核通过时产出 result chunk——这里也要补齐字段。
-                    async for chunk2 in sql_agent.stream_query(question=question):
+                    _gq_rj_resp: list = []
+                    _gq_rj_think: list = []
+                    _gq_rj_model = ""
+                    async for chunk2 in sql_agent.stream_query(
+                        question=question,
+                        conversation_id=conversation_id or None,
+                    ):
+                        if chunk2.get("model_used"):
+                            _gq_rj_model = chunk2["model_used"]
+                        if chunk2.get("type") == "thinking" and chunk2.get("content"):
+                            _gq_rj_think.append(chunk2["content"])
+                        elif chunk2.get("type") == "content" and chunk2.get("content"):
+                            _gq_rj_resp.append(chunk2["content"])
                         yield StreamChunkType(
                             type=chunk2.get("type", ""),
                             content=chunk2.get("content"),
@@ -1734,6 +1789,24 @@ class Mutation:
                                 else None
                             ),
                         )
+                    # 【数据质量】拒绝重生成路径：回填对话日志（best-effort）
+                    if _gq_rj_resp or _gq_rj_model:
+                        try:
+                            from x_models.id_x_010.src.views.x_views import (
+                                backfill_conversation_log,
+                            )
+
+                            await backfill_conversation_log(
+                                conversation_id=conversation_id,
+                                model_response="".join(_gq_rj_resp),
+                                thinking_process="".join(_gq_rj_think),
+                                model_name=_gq_rj_model,
+                            )
+                        except Exception as e:
+                            logger.error(
+                                f"{get_request_id()}拒绝重生成回填对话日志失败: {e}",
+                                exc_info=True,
+                            )
         except Exception as e:
             logger.error(f"{get_request_id()}SQL审批接口错误: {e}", exc_info=True)
             yield StreamChunkType(
@@ -3765,6 +3838,15 @@ class Subscription:
                 # LLM 末块（done 类型）携带的 token 用量：转发给前端在
                 # 气泡底部展示，同时缓存供流结束后落库 usage_logs
                 _chunk_usage = chunk.get("usage") or None
+                # 【追踪】supervisor 回填 conversation_id：新会话首条消息前端
+                # 不携带，由 stream_process 生成器内部生成 UUID 并随每个
+                # chunk 下发。此前只转发给前端、未同步回本函数局部变量——
+                # 导致首轮的对话日志 / 用量日志落库 conversation_id 为空、
+                # maybe_summarize 滚动摘要不触发，全链路追踪断在第一轮。
+                # 这里捕获首个非空值，保证落库三件套都能拿到实体值。
+                _chunk_cid = chunk.get("conversation_id")
+                if _chunk_cid and not conversation_id:
+                    conversation_id = _chunk_cid
                 chunk_type = StreamChunkType(
                     type=chunk.get("type", ""),
                     content=chunk.get("content"),
@@ -3807,13 +3889,20 @@ class Subscription:
                     ),
                 )
 
+                # 【数据质量】model_used 不能只在 content 分支捕获：SQL 流的
+                # 关键 chunk（sql/sql_approval/result/done）与失败轮次的
+                # error chunk 都不发 content——审批挂起/查询失败的轮次
+                # model_name 会落空（DB 实测 rows 17-21 全空）。任何携带
+                # model_used 的 chunk 都要捕获。
+                if chunk_type.model_used:
+                    model_used = chunk_type.model_used
+
                 if chunk_type.type == "intent":
                     intent = chunk_type.content or ""
                 elif chunk_type.type == "thinking":
                     thinking_buffer.append(chunk_type.content or "")
                 elif chunk_type.type == "content":
                     full_response.append(chunk_type.content or "")
-                    model_used = chunk_type.model_used or ""
 
                 # 捕获 LLM 末块返回的 token 用量（best-effort，可能为 None）
                 if chunk.get("usage"):
@@ -3828,8 +3917,13 @@ class Subscription:
                     model_response="".join(full_response),
                     thinking_process="".join(thinking_buffer),
                     model_type=model_type,
-                    model_name=model_used,
+                    # 【数据质量】失败/降级轮次全程无 model_used chunk 时，
+                    # 回退到本轮请求解析出的模型名（resolve_model_endpoint
+                    # 已回填），保证 model_name 不落空
+                    model_name=model_used or model_name or "",
                     intent=intent or "",
+                    # 【追踪】与 save_usage_log 同源：入口处已校验的登录用户
+                    user_id=rl_user.id if rl_user is not None else None,
                 )
             except Exception as e:
                 logger.error(f"{get_request_id()}保存对话日志失败: {e}", exc_info=True)
@@ -4601,6 +4695,15 @@ def register_routers(route_prefix: str) -> Router:
             )
 
             if action == "approve":
+                # 【数据质量】审批续流的三件套缓冲：续流结束后回填对话
+                # 日志（原订阅在挂起时已落库一行空 model_response 的行），
+                # 并补记用量日志——此前续流不写任何日志，SQL 审批轮次的
+                # 最终回答 / 模型名永远缺失（DB 实测 rows 17-21 全空）
+                _resp_parts: list = []
+                _think_parts: list = []
+                _ap_model = ""
+                _ap_usage = None
+                _ap_intent = "sql"
                 async for chunk in sql_agent.continue_with_approval(
                     sql=sql,
                     approved=True,
@@ -4608,6 +4711,17 @@ def register_routers(route_prefix: str) -> Router:
                     # 【性能】复用审批请求透传的 sql_meaning，避免重复生成
                     sql_meaning_hint=sql_meaning,
                 ):
+                    _ch_type = chunk.get("type", "")
+                    if chunk.get("model_used"):
+                        _ap_model = chunk["model_used"]
+                    if _ch_type == "thinking" and chunk.get("content"):
+                        _think_parts.append(chunk["content"])
+                    elif _ch_type == "content" and chunk.get("content"):
+                        _resp_parts.append(chunk["content"])
+                    elif _ch_type == "intent" and chunk.get("content"):
+                        _ap_intent = chunk["content"]
+                    if chunk.get("usage"):
+                        _ap_usage = chunk["usage"]
                     # TASK-015：补齐 columns/data/row_count/chart_config/security_block
                     # 字段转发——之前只发 6 个字段，前端 ResultView 永远收不到数据。
                     _raw_data = chunk.get("data")
@@ -4649,6 +4763,43 @@ def register_routers(route_prefix: str) -> Router:
                         }
                     )
                     yield f"data: {chunk_data}\n\n"
+
+                # 【数据质量】续流结束：回填对话日志 + 补记用量日志
+                # （best-effort，失败只记日志不影响 SSE 已发内容）
+                try:
+                    from x_models.id_x_010.src.views.x_views import (
+                        backfill_conversation_log,
+                    )
+
+                    await backfill_conversation_log(
+                        conversation_id=conversation_id,
+                        model_response="".join(_resp_parts),
+                        thinking_process="".join(_think_parts),
+                        model_name=_ap_model,
+                        user_query=question,
+                        model_type=model_type,
+                        user_id=approval_user.id if approval_user else None,
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"{get_request_id()}审批续流回填对话日志失败: {e}",
+                        exc_info=True,
+                    )
+                try:
+                    await save_usage_log(
+                        user_id=approval_user.id if approval_user else None,
+                        conversation_id=conversation_id,
+                        model_type=model_type,
+                        model_name=_ap_model or model_name or "",
+                        intent=_ap_intent,
+                        usage=_ap_usage,
+                        is_system_model=await _is_system_model_by_name(model_name),
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"{get_request_id()}审批续流保存用量日志失败: {e}",
+                        exc_info=True,
+                    )
             elif action == "reject":
                 async for chunk in sql_agent.continue_with_approval(
                     sql=sql, approved=False, question=question
@@ -4691,7 +4842,20 @@ def register_routers(route_prefix: str) -> Router:
                     )
                     yield f"data: {chunk_data}\n\n"
 
-                async for chunk in sql_agent.stream_query(question=question):
+                # 【数据质量】拒绝后重新生成的完整回答同样回填对话日志
+                _rj_resp: list = []
+                _rj_think: list = []
+                _rj_model = ""
+                async for chunk in sql_agent.stream_query(
+                    question=question,
+                    conversation_id=conversation_id or None,
+                ):
+                    if chunk.get("model_used"):
+                        _rj_model = chunk["model_used"]
+                    if chunk.get("type") == "thinking" and chunk.get("content"):
+                        _rj_think.append(chunk["content"])
+                    elif chunk.get("type") == "content" and chunk.get("content"):
+                        _rj_resp.append(chunk["content"])
                     _raw_data = chunk.get("data")
                     _raw_chart = chunk.get("chart_config")
                     chunk_data = _json.dumps(
@@ -4718,6 +4882,26 @@ def register_routers(route_prefix: str) -> Router:
                         }
                     )
                     yield f"data: {chunk_data}\n\n"
+
+                # 【数据质量】拒绝重生成路径：回填对话日志（best-effort）
+                try:
+                    from x_models.id_x_010.src.views.x_views import (
+                        backfill_conversation_log,
+                    )
+
+                    await backfill_conversation_log(
+                        conversation_id=conversation_id,
+                        model_response="".join(_rj_resp),
+                        thinking_process="".join(_rj_think),
+                        model_name=_rj_model,
+                        user_query=question,
+                        model_type=model_type,
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"{get_request_id()}拒绝重生成回填对话日志失败: {e}",
+                        exc_info=True,
+                    )
 
         return Stream(generate(), media_type="text/event-stream")
 

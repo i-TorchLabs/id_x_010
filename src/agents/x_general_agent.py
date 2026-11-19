@@ -34,6 +34,13 @@ except ImportError:  # pragma: no cover
 # 共享实例 + 连接池复用消除该开销；进程退出时由 OS 回收。
 _shared_http_client = None
 
+# 【稳定性】流式读超时（相邻 SSE chunk 之间的最长等待）。
+# 默认 120s 对 reasoning 模型（claude-opus-5 等）不够：思考阶段网关可能
+# 整段缓冲 reasoning 内容不逐 token 下发，静默期 = 完整思考时长，
+# 长问题思考 >2min 即触发 httpx.ReadTimeout（实测 6m33s 三层降级全灭）。
+# 300s 覆盖绝大多数思考静默；可通过环境变量 STREAM_READ_TIMEOUT 调整。
+_STREAM_READ_TIMEOUT = float(os.getenv("STREAM_READ_TIMEOUT", "300"))
+
 
 def _get_shared_http_client():
     global _shared_http_client
@@ -41,7 +48,7 @@ def _get_shared_http_client():
         import httpx
 
         _shared_http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(120.0, connect=10.0),
+            timeout=httpx.Timeout(_STREAM_READ_TIMEOUT, connect=10.0),
             limits=httpx.Limits(
                 max_connections=100, max_keepalive_connections=20
             ),
@@ -294,8 +301,13 @@ class GeneralAgent:
                 # 不支持的端点会忽略该参数，捕获逻辑降级为 0（非致命）
                 stream_usage=True,
                 # 性能/稳定性：限定超时与重试，避免默认 2 次静默重试
-                # 把瞬时错误放大成双倍延迟、以及无超时的卡死
-                timeout=120.0,
+                # 把瞬时错误放大成双倍延迟、以及无超时的卡死。
+                # timeout 同时约束请求超时与 per-chunk 空闲
+                # （langchain_openai 1.7.x 默认 stream_chunk_timeout=120s，
+                # reasoning 模型思考静默 >2min 会 ReadTimeout，见
+                # _STREAM_READ_TIMEOUT 说明），统一放宽到 300s
+                timeout=_STREAM_READ_TIMEOUT,
+                stream_chunk_timeout=_STREAM_READ_TIMEOUT,
                 max_retries=1,
             )
         else:
@@ -312,7 +324,8 @@ class GeneralAgent:
                 # 本地模型不计费，但 token 用量仍需统计/展示；
                 # 端点不支持时会忽略该参数，降级为无用量（非致命）
                 stream_usage=True,
-                timeout=120.0,
+                timeout=_STREAM_READ_TIMEOUT,
+                stream_chunk_timeout=_STREAM_READ_TIMEOUT,
                 max_retries=1,
             )
 
@@ -323,6 +336,26 @@ class GeneralAgent:
         return "temperature" in lower and (
             "only 1 is allowed" in lower or "invalid" in lower
         )
+
+    @staticmethod
+    def _is_read_timeout(err: Exception) -> bool:
+        """【稳定性】判断是否为"上游静默"型超时（ReadTimeout/StreamChunkTimeout）。
+
+        reasoning 模型思考阶段网关可能长时间不吐任何 SSE 字节，各条降级
+        路径（ReAct / raw httpx / langchain）撞的都是同一堵墙——重试只会
+        让模型从头再思考一遍再超时一次（实测 6m33s 三层全灭、0 token）。
+        该类错误应快速失败报错给用户，不再串行重试。
+        """
+        if isinstance(err, TimeoutError) or type(err).__name__ in (
+            "ReadTimeout",
+            "StreamChunkTimeoutError",
+            "ReadTimeoutError",
+        ):
+            return True
+        # httpx.ReadTimeout 等经 langchain 包装后 isinstance 不可靠，按名匹配
+        return "ReadTimeout" in type(err).__mro__.__repr__() or "read timeout" in str(
+            err
+        ).lower()
 
     async def _stream_llm_raw(
         self, messages: List[Any], temperature: float = 0.7
@@ -749,6 +782,20 @@ class GeneralAgent:
                     f"{get_request_id()}ReAct stream_chat 失败，降级纯 LLM 流式: "
                     f"{type(e).__name__}: {e}"
                 )
+                # 【稳定性】上游静默型超时（ReadTimeout）：所有降级路径撞同一堵
+                # 墙（模型思考期网关不出字节），继续重试只会把等待时间再乘 N。
+                # 直接快速失败，把明确的错误信息交给用户
+                if self._is_read_timeout(e):
+                    logger.error(
+                        f"{get_request_id()}ReAct 路径 ReadTimeout（上游长时间无"
+                        f"响应，疑似模型思考静默），跳过降级重试快速失败: "
+                        f"model={self.model_name}"
+                    )
+                    yield {
+                        "type": "error",
+                        "content": friendly_llm_error(e, self.model_name),
+                    }
+                    return
                 # 不 return，继续走下方原 LLM.astream 路径作为降级
 
         # TASK-015: 优先用 raw httpx 直接调用，手动解析 reasoning_content。
@@ -802,6 +849,23 @@ class GeneralAgent:
                 }
                 return
         except Exception as _raw_e:
+            # 【稳定性】上游静默型超时：raw 路径已等满 _STREAM_READ_TIMEOUT，
+            # 降级 langchain astream 只会用同一个端点再等一遍（同样超时）。
+            # 直接失败，不再串联第三层重试
+            if self._is_read_timeout(_raw_e) and not self._is_temp_error(_raw_e):
+                logger.error(
+                    f"{get_request_id()}raw httpx 流式 ReadTimeout（上游长时间"
+                    f"无响应，疑似模型思考静默），跳过 langchain 降级快速失败: "
+                    f"model={self.model_name}"
+                )
+                _observe_llm(
+                    self.model_name, "general", "error", time.perf_counter() - _started
+                )
+                yield {
+                    "type": "error",
+                    "content": friendly_llm_error(_raw_e, self.model_name),
+                }
+                return
             if self._is_temp_error(_raw_e):
                 # reasoning 模型 temperature 限制，用 temp=1 重试 raw
                 logger.info(
@@ -855,6 +919,23 @@ class GeneralAgent:
                         }
                         return
                 except Exception as _retry_e:
+                    # 【稳定性】静默型超时同样快速失败，不再降级第三层
+                    if self._is_read_timeout(_retry_e):
+                        logger.error(
+                            f"{get_request_id()}raw 重试 ReadTimeout（上游长时间"
+                            f"无响应），快速失败: model={self.model_name}"
+                        )
+                        _observe_llm(
+                            self.model_name,
+                            "general",
+                            "error",
+                            time.perf_counter() - _started,
+                        )
+                        yield {
+                            "type": "error",
+                            "content": friendly_llm_error(_retry_e, self.model_name),
+                        }
+                        return
                     logger.warning(
                         f"{get_request_id()}raw 重试失败,降级 langchain: "
                         f"{type(_retry_e).__name__}: {_retry_e}"

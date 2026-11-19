@@ -46,10 +46,13 @@ async def save_conversation_log(
     model_type: str,
     model_name: str,
     intent: str,
+    user_id: Optional[int] = None,
 ):
     try:
         async with get_session()() as session:
             log = ConversationLog(
+                # 【追踪】记录提问用户（与 usage_logs 对齐），未登录时为 None
+                user_id=user_id,
                 conversation_id=conversation_id,
                 user_query=user_query,
                 model_response=model_response,
@@ -61,10 +64,92 @@ async def save_conversation_log(
             session.add(log)
             await session.commit()
             logger.info(
-                f"{get_request_id()}对话日志已保存: conversation_id={conversation_id}"
+                f"{get_request_id()}对话日志已保存: user_id={user_id}, "
+                f"conversation_id={conversation_id}"
             )
     except Exception as e:
         logger.error(f"{get_request_id()}保存对话日志失败: {e}", exc_info=True)
+
+
+async def backfill_conversation_log(
+    conversation_id: str,
+    model_response: Optional[str] = None,
+    thinking_process: Optional[str] = None,
+    model_name: Optional[str] = None,
+    user_query: str = "",
+    model_type: Optional[str] = None,
+    intent: str = "sql",
+    user_id: Optional[int] = None,
+) -> None:
+    """【数据质量】审批续流结束后回填对话日志。
+
+    SQL 审批流中，原订阅在 sql_approval 挂起时即落库一行（此时
+    model_response 为空）；用户点击"执行"后走独立的 /sql-approval
+    请求执行查询 + 生成解读——最终回答只存在于这条续流里。此前续流
+    不写任何日志，conversation_logs 里 SQL 审批轮次永远缺
+    model_response / model_name（DB 实测 rows 17-21 全空）。
+
+    行为：
+    - 该会话存在 model_response 为空的行（= 本轮挂起审批那行）：
+      原地回填，不新增行，避免同一轮对话出现两条记录
+      （回答正文仅覆盖空值；model_name 始终以续流实际模型覆盖）
+    - 不存在（原行落库失败 / 极端时序）：插入一条新行保住最终回答
+
+    best-effort，绝不抛错。
+    """
+    if not conversation_id:
+        return
+    try:
+        async with get_session()() as session:
+            # 最近一条该会话的空回答行 = 本轮挂起审批的那行
+            row = (
+                await session.execute(
+                    select(ConversationLog)
+                    .where(
+                        ConversationLog.conversation_id == conversation_id,
+                        ConversationLog.model_response.is_(None)
+                        | (ConversationLog.model_response == ""),
+                    )
+                    .order_by(desc(ConversationLog.id))
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+
+            if row is not None:
+                if model_response:
+                    row.model_response = model_response
+                if thinking_process and not row.thinking_process:
+                    row.thinking_process = (
+                        (row.thinking_process or "") + thinking_process
+                    )
+                if model_name:
+                    row.model_name = model_name
+                await session.commit()
+                logger.info(
+                    f"{get_request_id()}对话日志已回填(审批续流): "
+                    f"conversation_id={conversation_id}, log_id={row.id}"
+                )
+            elif model_response:
+                # 原行缺失（落库失败/时序异常）：新插一行保住最终回答
+                session.add(
+                    ConversationLog(
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        user_query=user_query or "(审批续流)",
+                        model_response=model_response,
+                        thinking_process=thinking_process or "",
+                        model_type=model_type,
+                        model_name=model_name or "",
+                        intent=intent,
+                    )
+                )
+                await session.commit()
+                logger.info(
+                    f"{get_request_id()}对话日志已补录(审批续流原行缺失): "
+                    f"conversation_id={conversation_id}"
+                )
+    except Exception as e:
+        logger.error(f"{get_request_id()}回填对话日志失败: {e}", exc_info=True)
 
 
 async def save_usage_log(

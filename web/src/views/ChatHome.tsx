@@ -303,6 +303,13 @@ export default function ChatHome() {
           switch (chunk.type) {
             case "intent":
               // 意图识别，可以显示或隐藏
+              // 【追踪】intent 是流的第一个 chunk，supervisor 已在此携带
+              // conversation_id（新会话为刚生成的 UUID）——在此立即回填，
+              // 不必等到首个 content/sql chunk；这样即使后续流中断/报错，
+              // 会话 ID 也已落地，反馈与追踪可用。
+              if (chunk.conversationId) {
+                setCurrentConversationId(chunk.conversationId);
+              }
               break;
 
             case "tool_call": {
@@ -532,6 +539,11 @@ export default function ChatHome() {
               // done chunk 还携带本轮 token 用量（LLM usage_metadata），一并回填。
               setIsTyping(false);
               {
+                // 【追踪】兜底回填：若 intent chunk 的 conversation_id 因异常
+                // 未能落地（如降级路径漏带），done chunk 是最后一次机会
+                if (chunk.conversationId) {
+                  setCurrentConversationId(chunk.conversationId);
+                }
                 const totalTime = Math.max(
                   0.1,
                   Math.round((Date.now() - requestStartTime) / 100) / 10,
@@ -711,6 +723,9 @@ export default function ChatHome() {
 
   const handleNewChat = () => {
     setMessages([]);
+    // 【追踪】新会话重置 conversation_id：旧 ID 不再复用，下一条消息由
+    // 后端生成全新 UUID（intent chunk 回填），避免两个会话串到同一日志
+    setCurrentConversationId(null);
   };
 
   const handleStopStreaming = useCallback(() => {

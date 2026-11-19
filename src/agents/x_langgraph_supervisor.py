@@ -1205,6 +1205,8 @@ class LangGraphSupervisor:
         base_url: Optional[str] = None,
         prompt_content: Optional[str] = None,
     ) -> Dict[str, Any]:
+        # 【追踪】与 stream_process 相同：新会话首轮生成 UUID，随返回值
+        # conversation_id 字段交给 controller 落库（非流式 chat 接口路径）
         if not conversation_id:
             conversation_id = str(uuid.uuid4())
 
@@ -1423,6 +1425,10 @@ class LangGraphSupervisor:
         base_url: Optional[str] = None,
         prompt_content: Optional[str] = None,
     ):
+        # 【追踪】新会话首条消息：controller 未传 conversation_id，此处生成
+        # UUID4。该值随后随每个 chunk 下发给前端（前端回填 state，下一轮
+        # 请求原样带回），同时用于本函数内的 checkpointer thread_id 与
+        # 返回值 conversation_id 字段——保证新会话第一轮就全链路可追踪。
         if not conversation_id:
             conversation_id = str(uuid.uuid4())
 
@@ -1506,6 +1512,7 @@ class LangGraphSupervisor:
                 question=sql_question,
                 auto_execute=False,
                 context=context,
+                conversation_id=conversation_id,
             ):
                 chunk["conversation_id"] = conversation_id
                 yield chunk

@@ -145,9 +145,20 @@ class _Idx010Plugin:
                     "ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS "
                     "output_cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0.0"
                 ))
+                # 【追踪】conversation_logs 补 user_id：create_all 只建新表，
+                # 已有部署须 ALTER 补列（与 ORM 模型新增字段保持同步）
+                await conn.execute(text(
+                    "ALTER TABLE conversation_logs ADD COLUMN IF NOT EXISTS "
+                    "user_id INTEGER NULL REFERENCES users(id)"
+                ))
+                await conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_conversation_logs_user_id "
+                    "ON conversation_logs(user_id)"
+                ))
         except Exception as e:
             logger.warning(
-                f"[id_x_010] usage_logs 分项计费列补丁失败（不阻塞启动）: "
+                f"[id_x_010] 兼容列补丁失败（usage_logs 计费列 / "
+                f"conversation_logs.user_id，不阻塞启动）: "
                 f"{type(e).__name__}: {e}"
             )
 
