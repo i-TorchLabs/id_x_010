@@ -312,6 +312,10 @@ export default function ChatHome() {
               }
               break;
 
+            case "status":
+              // preparing / keepalive：保持打字态，不改气泡内容
+              break;
+
             case "tool_call": {
               // General Agent 工具调用通知（TASK-004）
               // 仅展示用：把状态卡追加到当前 assistant 消息
@@ -634,13 +638,22 @@ export default function ChatHome() {
         onError: (error: Error) => {
           console.error("Stream chat error:", error);
           setIsTyping(false);
+          // 优先透传真实错误（截断），空消息才回退通用「连接失败」
+          const raw = (error?.message || "").trim();
+          const display =
+            raw && raw !== "Unknown error"
+              ? raw.length > 200
+                ? `${raw.slice(0, 200)}…`
+                : raw
+              : t("chat.errorConnectionFailed");
           setMessages((prev) =>
             prev.map((msg) =>
               msg.id === (responseMessageId || assistantMessageId)
                 ? {
                     ...msg,
-                    content:
-                      t("chat.errorConnectionFailed"),
+                    // 若 onChunk(error) 已写入内容，不再用网络错误覆盖
+                    content: msg.content?.trim() ? msg.content : display,
+                    contentType: undefined,
                     thinkingTime: Math.max(
                       0.1,
                       Math.round((Date.now() - requestStartTime) / 100) / 10,

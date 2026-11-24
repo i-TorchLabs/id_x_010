@@ -10,6 +10,7 @@ export interface StreamChunk {
   type:
     | "intent"
     | "start"
+    | "status" // 准备中 / 空闲心跳，保持 SSE 不被代理掐断
     | "thinking"
     | "info"
     | "content"
@@ -112,6 +113,24 @@ class StreamChatClient {
   }
 
   /**
+   * 判定是否为可自动重试的网络类错误（尚未收到任何 SSE chunk 时）。
+   */
+  private isRetryableNetworkError(error: unknown): boolean {
+    const err = error as Error;
+    const name = err?.name || "";
+    const msg = (err?.message || "").toLowerCase();
+    if (name === "AbortError") return false;
+    return (
+      name === "TypeError" ||
+      msg.includes("failed to fetch") ||
+      msg.includes("networkerror") ||
+      msg.includes("network request failed") ||
+      msg.includes("load failed") ||
+      msg.includes("fetch failed")
+    );
+  }
+
+  /**
    * 执行流式聊天
    */
   async streamChat(params: StreamChatParams): Promise<() => void> {
@@ -170,7 +189,10 @@ class StreamChatClient {
       promptDisabled,
     };
 
-    try {
+    /** 是否已向业务层交付过任意 SSE chunk（含 status）；有则不再自动重试 */
+    let receivedChunk = false;
+
+    const runOnce = async (): Promise<"ok" | "aborted"> => {
       const response = await fetch(this.getStreamUrl(), {
         method: "POST",
         headers: {
@@ -224,20 +246,21 @@ class StreamChatClient {
               // 检查是否是完成事件
               if (data.complete) {
                 onComplete?.();
-                return () => {};
+                return "ok";
               }
 
-              // 检查是否有错误
+              // GraphQL 业务错误：只走 onChunk(error)，不再调 onError 覆盖真实文案
               if (data.errors) {
                 const errorMessage = data.errors
                   .map((e: { message: string }) => e.message)
                   .join(", ");
+                receivedChunk = true;
                 onChunk({
                   type: "error",
                   content: errorMessage,
                 });
-                onError?.(new Error(errorMessage));
-                return () => {};
+                onComplete?.();
+                return "ok";
               }
 
               // 解析 GraphQL 响应数据
@@ -270,6 +293,7 @@ class StreamChatClient {
                 }
                 // TASK-015: onChunk 单独 try/catch，防止回调异常吞掉 done/error
                 // 终止信号——之前整个块被外层 catch 静默吞掉，导致 isTyping 永远 true。
+                receivedChunk = true;
                 try {
                   onChunk({
                     type: streamChat.type,
@@ -295,7 +319,7 @@ class StreamChatClient {
                 // 如果是完成或错误事件，结束处理
                 if (streamChat.type === "done" || streamChat.type === "error") {
                   onComplete?.();
-                  return () => {};
+                  return "ok";
                 }
               }
             } catch (e) {
@@ -306,12 +330,48 @@ class StreamChatClient {
       }
 
       onComplete?.();
+      return "ok";
+    };
+
+    try {
+      await runOnce();
     } catch (error) {
       if ((error as Error).name === "AbortError") {
         console.log("Stream chat aborted");
         onComplete?.();
-        return () => {};
+        return () => {
+          this.abort();
+        };
       }
+
+      // 尚未收到任何 chunk 的网络失败：自动重试 1 次
+      if (!receivedChunk && this.isRetryableNetworkError(error)) {
+        console.warn("Stream chat network error, retrying once:", error);
+        try {
+          await runOnce();
+          return () => {
+            this.abort();
+          };
+        } catch (retryError) {
+          if ((retryError as Error).name === "AbortError") {
+            console.log("Stream chat aborted");
+            onComplete?.();
+            return () => {
+              this.abort();
+            };
+          }
+          console.error("Stream chat retry failed:", retryError);
+          onChunk({
+            type: "error",
+            content: (retryError as Error).message || "Unknown error",
+          });
+          onError?.(retryError as Error);
+          return () => {
+            this.abort();
+          };
+        }
+      }
+
       console.error("Stream chat error:", error);
       onChunk({
         type: "error",

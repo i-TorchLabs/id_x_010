@@ -8,7 +8,7 @@ class StreamChunkType:
     type: str = strawberry.field(
         description="块类型: thinking, content, sql_generated, sql_explanation, sql_approval, "
         "sql_rejected, sql_cancelled, security_block, tool_call, result, chart, intent, "
-        "start, done, error"
+        "status, start, done, error"
     )
     content: Optional[str] = strawberry.field(default=None, description="内容")
     model_used: Optional[str] = strawberry.field(

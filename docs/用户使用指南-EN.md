@@ -308,7 +308,7 @@ The on-page **Export CSV** only exports the first 512 loaded rows. For complete 
 The notice bar on the login page will show the specific reason. Common cases: authorization timeout (just retry), callback URL mismatch (contact the administrator to verify the configuration); for CUHK account or password issues, use the university's unified identity authentication support channel.
 
 **Q9: Prompt file upload failed?**
-Please make sure the file is in `.md` format (plain text with a .md extension). Write your content in Notepad or any text editor and save it with the `.md` extension.
+Please make sure the file is in `.md` format (plain text with a .md extension) and no larger than **3 MB**. Write your content in Notepad or any text editor and save it with the `.md` extension.
 
 **Q10: What if the AI's answer misses the point?**
 Try these three tricks: ① Describe your question more specifically (time range, subject, desired format); ② Click **Regenerate** for another answer; ③ When changing topics, click **New Chat** first to avoid interference from the previous conversation.

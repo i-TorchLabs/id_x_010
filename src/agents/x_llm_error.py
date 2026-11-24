@@ -14,6 +14,11 @@
 
 from __future__ import annotations
 
+import asyncio
+from typing import Awaitable, Callable, Optional, TypeVar
+
+from utils.log_util import get_request_id, logger
+
 # 外部模型默认值（与 ops/init/05_models.sql 预置数据保持一致，走 chinarouter 网关）。
 # 注意：Pro/zai-org/GLM-5 已被平台下架（403 Model disabled）；
 # zai-org/GLM-5.2 在 distributor 网关已无可用通道（503 model_not_found），勿再使用。
@@ -21,6 +26,132 @@ DEFAULT_EXTERNAL_MODEL = "deepseek-v4-flash"
 
 # 更换模型的操作指引，追加在模型类错误提示之后
 _SETTINGS_HINT = "请在左下角「模型设置」中检查后更换为可用模型"
+
+T = TypeVar("T")
+
+
+def is_read_timeout(e: Exception) -> bool:
+    """判定是否为上游静默型读超时（ReadTimeout / StreamChunkTimeout）。
+
+    reasoning 模型思考期网关可能长时间不吐 SSE；重试只会让模型从头再思考
+    再超时一遍。此类错误必须快速失败，不可进入瞬时重试。
+    """
+    if isinstance(e, TimeoutError) or type(e).__name__ in (
+        "ReadTimeout",
+        "StreamChunkTimeoutError",
+        "ReadTimeoutError",
+    ):
+        return True
+    # httpx.ReadTimeout 经 langchain 包装后 isinstance 不可靠，按 MRO/文案匹配
+    if "ReadTimeout" in type(e).__mro__.__repr__():
+        return True
+    lower = str(e).replace("\n", " ").strip().lower()
+    return "read timeout" in lower or "stream chunk timeout" in lower
+
+
+def is_transient_llm_error(e: Exception) -> bool:
+    """判定是否为可重试的瞬时 LLM/网络错误。
+
+    覆盖建连失败、429/502/503 及常见网关抖动报文。
+    不重试：ReadTimeout（静默思考）、401/403/404、model disabled 等确定性错误。
+    """
+    # 静默读超时：绝不重试（与 GeneralAgent._is_read_timeout 同语义）
+    if is_read_timeout(e):
+        return False
+
+    status = getattr(e, "status_code", None)
+    if status in (429, 502, 503):
+        return True
+    # HTTPStatusError（httpx）挂在 response.status_code
+    response = getattr(e, "response", None)
+    resp_status = getattr(response, "status_code", None) if response is not None else None
+    if resp_status in (429, 502, 503):
+        return True
+
+    cls = type(e).__name__.lower()
+    lower = str(e).replace("\n", " ").strip().lower()
+
+    # 确定性错误：绝不重试
+    if status in (401, 403, 404) or resp_status in (401, 403, 404):
+        return False
+    if (
+        "model disabled" in lower
+        or "model_disabled" in lower
+        or "invalid_api_key" in lower
+        or "incorrect api key" in lower
+        or "authentication" in cls
+        or "permissiondenied" in cls
+    ):
+        return False
+
+    # 仅建连/网关抖动类；不含笼统 "timeout"（避免把 ReadTimeout 再捞回来）
+    transient_markers = (
+        "connection reset",
+        "connection aborted",
+        "connection refused",
+        "connecterror",
+        "connect timeout",
+        "connecttimeout",
+        "temporarily unavailable",
+        "service unavailable",
+        "bad gateway",
+        "gateway timeout",
+        "rate limit",
+        "ratelimit",
+        "too many requests",
+        "server disconnected",
+        "remoteprotocolerror",
+        "name or service not known",
+        "no available channel",
+        "apiconnectionerror",
+    )
+    if any(m in lower for m in transient_markers):
+        return True
+    if any(
+        m in cls
+        for m in (
+            "connecterror",
+            "connecttimeout",
+            "connectionerror",
+            "apiconnection",
+            "ratelimit",
+            "remoteprotocol",
+        )
+    ):
+        return True
+    return False
+
+
+async def with_llm_retry(
+    coro_factory: Callable[[], Awaitable[T]],
+    *,
+    attempts: int = 3,
+    base_delay: float = 0.5,
+    label: str = "llm",
+) -> T:
+    """对瞬时 LLM 错误做指数退避重试。
+
+    ``coro_factory`` 每次调用应返回新的 awaitable（不可复用已消费的协程）。
+    确定性错误立即抛出；耗尽重试后抛出最后一次异常。
+    """
+    last_err: Optional[Exception] = None
+    total = max(1, attempts)
+    for attempt in range(1, total + 1):
+        try:
+            return await coro_factory()
+        except Exception as e:
+            last_err = e
+            if attempt >= total or not is_transient_llm_error(e):
+                raise
+            delay = base_delay * (2 ** (attempt - 1))
+            logger.warning(
+                f"{get_request_id()}[对话解析] LLM 瞬时错误重试 "
+                f"label={label} attempt={attempt}/{total} "
+                f"delay_s={delay:.1f} error={type(e).__name__}: {e}"
+            )
+            await asyncio.sleep(delay)
+    assert last_err is not None
+    raise last_err
 
 
 def friendly_llm_error(e: Exception, model_name: str = "") -> str:

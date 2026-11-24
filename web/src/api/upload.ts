@@ -38,7 +38,14 @@ const ALLOWED_MIME_TYPES = [
   "text/plain",
   "application/octet-stream",
 ];
-const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB，与后端一致
+/** 与后端 MARKDOWN_PROMPT_MAX_BYTES 一致：用户 Prompt 最大 3MB（UTF-8 字节） */
+export const MAX_MARKDOWN_FILE_SIZE = 3 * 1024 * 1024;
+const MAX_FILE_SIZE = MAX_MARKDOWN_FILE_SIZE;
+
+/** 按 UTF-8 字节计量文本长度（与后端 encode('utf-8') 对齐） */
+export function utf8ByteLength(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
 
 function handleUnauthorized(): void {
   if (typeof window !== "undefined") {

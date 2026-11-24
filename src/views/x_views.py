@@ -37,6 +37,9 @@ from x_models.id_x_010.src.utils.x_pricing import compute_cost_detail
 # （merge_context 中 max_messages = max_rounds * 2），保持两处窗口一致。
 DEFAULT_MAX_ROUNDS = 3
 
+# 用户 Markdown 提示词上限（上传字节 / 编辑字符），前后端保持一致
+MARKDOWN_PROMPT_MAX_BYTES = 3 * 1024 * 1024  # 3MB
+
 
 async def save_conversation_log(
     conversation_id: str,
@@ -64,8 +67,11 @@ async def save_conversation_log(
             session.add(log)
             await session.commit()
             logger.info(
-                f"{get_request_id()}对话日志已保存: user_id={user_id}, "
-                f"conversation_id={conversation_id}"
+                f"{get_request_id()}[对话解析] 对话日志已保存 "
+                f"user_id={user_id} conversation_id={conversation_id} "
+                f"intent={intent} model={model_name} "
+                f"resp_chars={len(model_response or '')} "
+                f"thinking_chars={len(thinking_process or '')}"
             )
     except Exception as e:
         logger.error(f"{get_request_id()}保存对话日志失败: {e}", exc_info=True)
@@ -213,9 +219,10 @@ async def save_usage_log(
             session.add(log)
             await session.commit()
             logger.info(
-                f"{get_request_id()}用量日志已保存: user_id={user_id}, "
-                f"model={model_name}, system={is_system_model}, "
-                f"in={input_tokens}, out={output_tokens}, "
+                f"{get_request_id()}[对话解析] 用量日志已保存 "
+                f"conversation_id={conversation_id} user_id={user_id} "
+                f"intent={intent} model={model_name} system={is_system_model} "
+                f"in={input_tokens} out={output_tokens} total={total_tokens} "
                 f"cost=${cost:.6f} (in=${input_cost:.6f} + out=${output_cost:.6f})"
             )
     except Exception as e:
@@ -1343,7 +1350,7 @@ async def update_markdown_content(
     """更新提示词的 Markdown 正文内容。
 
     用于「编辑」功能：用户在前端 textarea 中修改后写回 DB，
-    下轮对话即注入新内容。空内容拒绝；超 2MB 截断（与上传上限一致）。
+    下轮对话即注入新内容。空内容拒绝；超限按 UTF-8 字节截断（与上传上限一致）。
     """
     if content is None:
         return None
@@ -1351,9 +1358,10 @@ async def update_markdown_content(
     content = content.strip()
     if not content:
         return None
-    max_len = 2 * 1024 * 1024  # 与上传上限一致
-    if len(content) > max_len:
-        content = content[:max_len]
+    # 与上传门禁一致：按 UTF-8 字节计量，避免中文按字符截断导致实际远超 3MB
+    raw = content.encode("utf-8")
+    if len(raw) > MARKDOWN_PROMPT_MAX_BYTES:
+        content = raw[:MARKDOWN_PROMPT_MAX_BYTES].decode("utf-8", errors="ignore")
 
     try:
         async with get_session()() as session:

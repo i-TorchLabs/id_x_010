@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import time
 import uuid
 from enum import Enum
 from typing import Annotated, Any, Dict, List, Optional, Tuple, TypedDict, cast
@@ -283,15 +284,18 @@ class SemanticRouter:
 
     async def route(self, query: str) -> Tuple[str, float]:
         await self._ensure_initialized()
+        _t0 = time.perf_counter()
         if not self._ready or self.route_layer is None:
             logger.info(
-                f"{get_request_id()}路由器不可用，使用默认 general: query='{query[:50]}...'"
+                f"{get_request_id()}[对话解析] 语义路由不可用，降级 general: "
+                f"query='{query[:50]}...' elapsed_ms={int((time.perf_counter() - _t0) * 1000)}"
             )
             return "general", 0.0
         try:
             # route_layer 调用会同步请求 embedding 端点——放线程池，
             # 避免阻塞事件循环拖慢其它并发请求
             route_result = await asyncio.to_thread(self.route_layer, query)
+            _elapsed_ms = int((time.perf_counter() - _t0) * 1000)
 
             if route_result:
                 if isinstance(route_result, list) and route_result:
@@ -300,18 +304,23 @@ class SemanticRouter:
                     intent = getattr(route_result, "name", "general") or "general"
                 confidence = 0.8
                 logger.info(
-                    f"{get_request_id()}路由成功: query='{query[:50]}...', intent='{intent}'"
+                    f"{get_request_id()}[对话解析] 语义路由命中: "
+                    f"query='{query[:50]}...' intent='{intent}' "
+                    f"confidence={confidence:.2f} elapsed_ms={_elapsed_ms}"
                 )
                 return intent, confidence
             else:
                 logger.info(
-                    f"{get_request_id()}路由未匹配，使用默认 general: query='{query[:50]}...'"
+                    f"{get_request_id()}[对话解析] 语义路由未匹配，降级 general: "
+                    f"query='{query[:50]}...' elapsed_ms={_elapsed_ms}"
                 )
                 return "general", 0.5
 
         except Exception as e:
             logger.error(
-                f"{get_request_id()}第三方模型调用失败 [semantic_router] | 原因: {type(e).__name__}: {e}"
+                f"{get_request_id()}第三方模型调用失败 [semantic_router] | "
+                f"原因: {type(e).__name__}: {e} | "
+                f"elapsed_ms={int((time.perf_counter() - _t0) * 1000)}"
             )
             return "general", 0.0
 
@@ -532,17 +541,27 @@ class LLMRouter:
         if not query or not query.strip():
             return "general", 0.0
 
+        _t0 = time.perf_counter()
         try:
             if self.use_structured_output and self.structured_llm:
-                return await self._route_structured(query)
+                intent, confidence = await self._route_structured(query)
             else:
-                return await self._route_normal(query)
+                intent, confidence = await self._route_normal(query)
+            logger.info(
+                f"{get_request_id()}[对话解析] LLM 路由完成: "
+                f"query='{query[:50]}...' intent='{intent}' "
+                f"confidence={confidence:.2f} "
+                f"elapsed_ms={int((time.perf_counter() - _t0) * 1000)} "
+                f"model={self.model_name}"
+            )
+            return intent, confidence
 
         except Exception as e:
             logger.error(
                 f"{get_request_id()}第三方模型调用失败 [router] | model={self.model_name}, "
                 f"base_url={self.base_url} | "
-                f"原因: {type(e).__name__}: {e}"
+                f"原因: {type(e).__name__}: {e} | "
+                f"elapsed_ms={int((time.perf_counter() - _t0) * 1000)}"
             )
             return "general", 0.0
 
@@ -927,8 +946,10 @@ class LangGraphSupervisor:
             target_agent = route_info.get("agent", "general_agent")
 
             logger.info(
-                f"{get_request_id()}[语义路由] 用户输入: '{query[:100]}{'...' if len(query) > 100 else ''}' "
-                f"-> 意图: '{intent}' -> 命中 Agent: '{target_agent}' (置信度: {confidence})"
+                f"{get_request_id()}[对话解析] 图节点路由 "
+                f"query='{query[:100]}{'...' if len(query) > 100 else ''}' "
+                f"-> intent='{intent}' -> agent='{target_agent}' "
+                f"(confidence={confidence})"
             )
 
             return {
@@ -1212,6 +1233,13 @@ class LangGraphSupervisor:
 
         model_type = model_type or self.model_type
         model_name = model_name or self.model_name
+        _t0 = time.perf_counter()
+        logger.info(
+            f"{get_request_id()}[对话解析] process 开始 "
+            f"conversation_id={conversation_id} "
+            f"agent_type={agent_type or 'auto'} model={model_name} "
+            f"ctx_msgs={len(context or [])} query_chars={len(query or '')}"
+        )
 
         # 三种 Agent 模式 + 自动路由全部默认携带 Markdown 提示词；
         # prompt_disabled 已在控制器层处理（不读取 active prompt），
@@ -1229,7 +1257,10 @@ class LangGraphSupervisor:
         injected_system_prompt = self._build_injected_prompt(prompt_content)
 
         if agent_type and agent_type in ["general", "sql", "code"]:
-            logger.info(f"{get_request_id()}[直接调用] 用户指定 Agent: '{agent_type}'")
+            logger.info(
+                f"{get_request_id()}[对话解析] 直接调用 Agent: '{agent_type}' "
+                f"conversation_id={conversation_id}"
+            )
 
             if agent_type == "sql":
                 sql_agent = SQLAgent(
@@ -1247,7 +1278,7 @@ class LangGraphSupervisor:
                     )
                 try:
                     result = await sql_agent.query(question=sql_question)
-                    return {
+                    _payload = {
                         "success": True,
                         "response": result.get("response", ""),
                         "thinking": result.get("thinking", ""),
@@ -1257,6 +1288,13 @@ class LangGraphSupervisor:
                         "model_used": model_name or "sql_agent",
                         "error": None,
                     }
+                    logger.info(
+                        f"{get_request_id()}[对话解析] process 完成 "
+                        f"conversation_id={conversation_id} intent=sql "
+                        f"success=True elapsed_ms={int((time.perf_counter() - _t0) * 1000)} "
+                        f"resp_chars={len(_payload['response'] or '')}"
+                    )
+                    return _payload
                 except Exception as e:
                     logger.error(
                         f"{get_request_id()}SQL Agent 处理失败: {e}", exc_info=True
@@ -1295,6 +1333,12 @@ class LangGraphSupervisor:
                         query=query,
                         context=context,
                         system_prompt=code_system_prompt,
+                    )
+                    logger.info(
+                        f"{get_request_id()}[对话解析] process 完成 "
+                        f"conversation_id={conversation_id} intent=code "
+                        f"success=True elapsed_ms={int((time.perf_counter() - _t0) * 1000)} "
+                        f"resp_chars={len(response or '')}"
                     )
                     return {
                         "success": True,
@@ -1339,6 +1383,12 @@ class LangGraphSupervisor:
                         query=query,
                         context=context,
                         system_prompt=general_system_prompt,
+                    )
+                    logger.info(
+                        f"{get_request_id()}[对话解析] process 完成 "
+                        f"conversation_id={conversation_id} intent=general "
+                        f"success=True elapsed_ms={int((time.perf_counter() - _t0) * 1000)} "
+                        f"resp_chars={len(response or '')}"
                     )
                     return {
                         "success": True,
@@ -1388,8 +1438,7 @@ class LangGraphSupervisor:
             # 启用后,SQL Agent 审批挂起可跨进程恢复
             config = {"configurable": {"thread_id": conversation_id}}
             result = await self.workflow.ainvoke(initial_state, config=config)
-
-            return {
+            _payload = {
                 "success": result.get("error") is None,
                 "response": result.get("response", ""),
                 "thinking": result.get("thinking", ""),
@@ -1399,6 +1448,14 @@ class LangGraphSupervisor:
                 "model_used": result.get("model_name", ""),
                 "error": result.get("error"),
             }
+            logger.info(
+                f"{get_request_id()}[对话解析] process 完成 "
+                f"conversation_id={conversation_id} "
+                f"intent={_payload['intent']} success={_payload['success']} "
+                f"elapsed_ms={int((time.perf_counter() - _t0) * 1000)} "
+                f"resp_chars={len(_payload['response'] or '')}"
+            )
+            return _payload
         except Exception as e:
             logger.error(f"{get_request_id()}Supervisor 处理失败: {e}", exc_info=True)
             return {
@@ -1434,6 +1491,13 @@ class LangGraphSupervisor:
 
         model_type = model_type or self.model_type
         model_name = model_name or self.model_name
+        _t0 = time.perf_counter()
+        logger.info(
+            f"{get_request_id()}[对话解析] stream_process 开始 "
+            f"conversation_id={conversation_id} "
+            f"agent_type={agent_type or 'auto'} model={model_name} "
+            f"ctx_msgs={len(context or [])} query_chars={len(query or '')}"
+        )
 
         # 三种 Agent 模式 + 自动路由全部默认携带 Markdown 提示词；
         # prompt_disabled 已在控制器层处理（不读取 active prompt），
@@ -1462,7 +1526,8 @@ class LangGraphSupervisor:
             target_agent = f"{agent_type}_agent"
 
             logger.info(
-                f"{get_request_id()}[直接调用-流式] 用户指定 Agent: '{agent_type}'"
+                f"{get_request_id()}[对话解析] 直接调用-流式 Agent: '{agent_type}' "
+                f"conversation_id={conversation_id}"
             )
         else:
             intent, confidence = await self.router.route(query)
@@ -1471,8 +1536,12 @@ class LangGraphSupervisor:
             target_agent = route_info.get("agent", "general_agent")
 
             logger.info(
-                f"{get_request_id()}[{('LLM路由' if self.use_llm_router else '语义路由')}-流式] 用户输入: '{query[:100]}{'...' if len(query) > 100 else ''}' "
-                f"-> 意图: '{intent}' -> 命中 Agent: '{target_agent}' (置信度: {confidence})"
+                f"{get_request_id()}[对话解析] "
+                f"{('LLM路由' if self.use_llm_router else '语义路由')}-流式 "
+                f"conversation_id={conversation_id} "
+                f"query='{query[:100]}{'...' if len(query) > 100 else ''}' "
+                f"-> intent='{intent}' -> agent='{target_agent}' "
+                f"(confidence={confidence})"
             )
 
         yield {
@@ -1481,6 +1550,15 @@ class LangGraphSupervisor:
             "confidence": confidence,
             "conversation_id": conversation_id,
         }
+
+        _agent_t0 = time.perf_counter()
+        logger.info(
+            f"{get_request_id()}[对话解析] 分发 Agent 开始 "
+            f"conversation_id={conversation_id} intent={intent} "
+            f"agent={target_agent}"
+        )
+        _chunk_counts: Dict[str, int] = {}
+        _last_usage: Optional[dict] = None
 
         if intent == "sql":
             # 【性能】走 get_sql_agent 缓存（LRU 16 + TTL 1h，key 含端点指纹）：
@@ -1515,6 +1593,10 @@ class LangGraphSupervisor:
                 conversation_id=conversation_id,
             ):
                 chunk["conversation_id"] = conversation_id
+                _ctype = chunk.get("type") or "unknown"
+                _chunk_counts[_ctype] = _chunk_counts.get(_ctype, 0) + 1
+                if chunk.get("usage"):
+                    _last_usage = chunk["usage"]
                 yield chunk
         elif intent == "code":
             code_agent = GeneralAgent(
@@ -1544,6 +1626,10 @@ class LangGraphSupervisor:
                 system_prompt=code_system_prompt,
             ):
                 chunk["conversation_id"] = conversation_id
+                _ctype = chunk.get("type") or "unknown"
+                _chunk_counts[_ctype] = _chunk_counts.get(_ctype, 0) + 1
+                if chunk.get("usage"):
+                    _last_usage = chunk["usage"]
                 yield chunk
         else:
             agent = GeneralAgent(
@@ -1564,7 +1650,22 @@ class LangGraphSupervisor:
                 system_prompt=base_system_prompt,
             ):
                 chunk["conversation_id"] = conversation_id
+                _ctype = chunk.get("type") or "unknown"
+                _chunk_counts[_ctype] = _chunk_counts.get(_ctype, 0) + 1
+                if chunk.get("usage"):
+                    _last_usage = chunk["usage"]
                 yield chunk
+
+        _in = int((_last_usage or {}).get("input_tokens", 0) or 0)
+        _out = int((_last_usage or {}).get("output_tokens", 0) or 0)
+        logger.info(
+            f"{get_request_id()}[对话解析] stream_process 完成 "
+            f"conversation_id={conversation_id} intent={intent} "
+            f"agent={target_agent} "
+            f"agent_elapsed_ms={int((time.perf_counter() - _agent_t0) * 1000)} "
+            f"total_elapsed_ms={int((time.perf_counter() - _t0) * 1000)} "
+            f"chunks={_chunk_counts} usage=in:{_in}/out:{_out}"
+        )
 
 
 _supervisor_cache: Dict[str, LangGraphSupervisor] = {}

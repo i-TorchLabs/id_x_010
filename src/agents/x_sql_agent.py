@@ -47,6 +47,7 @@ from utils.log_util import get_request_id, logger
 from x_models.id_x_010.src.agents.x_llm_error import (
     DEFAULT_EXTERNAL_MODEL,
     friendly_llm_error,
+    with_llm_retry,
 )
 from x_models.id_x_010.src.models.x_models import (
     get_external_model_config,
@@ -1555,9 +1556,10 @@ class SQLAgent:
             # 【稳定性】per-chunk 空闲超时同步放宽（reasoning 模型思考期
             # 网关可能长时间静默，120s 会 ReadTimeout，见 x_general_agent
             # 的 _STREAM_READ_TIMEOUT 说明），300s 覆盖绝大多数思考静默
+            # max_retries=0：瞬时重试统一交给 with_llm_retry，避免叠乘
             timeout=300.0,
             stream_chunk_timeout=300.0,
-            max_retries=1,
+            max_retries=0,
         )
 
     def _track_usage(self, response: Any) -> None:
@@ -2036,7 +2038,11 @@ class SQLAgent:
                 )
             )
 
-        response = await llm_with_tools.ainvoke(gen_messages)
+        response = await with_llm_retry(
+            lambda: llm_with_tools.ainvoke(gen_messages),
+            attempts=3,
+            label=f"sql.generate:{self.model_name}",
+        )
         self._track_usage(response)
 
         sql = ""

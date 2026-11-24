@@ -95,6 +95,11 @@ async def get_context(conversation_id: str) -> List[Dict[str, str]]:
         if log.model_response:
             ctx.append({"role": "assistant", "content": log.model_response})
 
+    logger.info(
+        f"{get_request_id()}[对话解析] 上下文组装完成 conversation_id={conversation_id} "
+        f"has_summary={bool(sum_row and sum_row.summary)} "
+        f"recent_logs={len(recent_logs)} ctx_msgs={len(ctx)}"
+    )
     return ctx
 
 

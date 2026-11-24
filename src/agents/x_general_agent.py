@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import time
@@ -11,6 +12,9 @@ from utils.log_util import get_request_id, logger
 from x_models.id_x_010.src.agents.x_llm_error import (
     DEFAULT_EXTERNAL_MODEL,
     friendly_llm_error,
+    is_read_timeout,
+    is_transient_llm_error,
+    with_llm_retry,
 )
 from x_models.id_x_010.src.models.x_models import (
     get_external_model_config,
@@ -91,6 +95,8 @@ class _ThinkingTagStreamParser:
     本类维护一个小缓冲：完整标签出现时立即切换分流状态；缓冲尾部疑似
     标签前缀（如 "<"、"</think"）时先扣住，等后续 token 拼接后再判定；
     其余文本原样放行，保证流式低延迟。流结束时调用 flush() 吐出残留。
+
+    标签开/关各只打一条 info 日志，避免按 token 刷屏，便于追踪思考分流是否生效。
     """
 
     _OPEN = "<thinking>"
@@ -99,6 +105,10 @@ class _ThinkingTagStreamParser:
     def __init__(self) -> None:
         self._buffer = ""
         self.in_thinking = False
+        self._open_logged = False
+        self._close_logged = False
+        self.thinking_chars = 0
+        self.content_chars = 0
 
     def _channel(self) -> str:
         return "thinking" if self.in_thinking else "content"
@@ -112,6 +122,12 @@ class _ThinkingTagStreamParser:
                 return length
         return 0
 
+    def _track(self, channel: str, text: str) -> None:
+        if channel == "thinking":
+            self.thinking_chars += len(text)
+        else:
+            self.content_chars += len(text)
+
     def feed(self, token: str) -> List[Tuple[str, str]]:
         self._buffer += token
         out: List[Tuple[str, str]] = []
@@ -121,14 +137,32 @@ class _ThinkingTagStreamParser:
             if idx != -1:
                 text = self._buffer[:idx]
                 if text:
-                    out.append((self._channel(), text))
+                    channel = self._channel()
+                    self._track(channel, text)
+                    out.append((channel, text))
                 self._buffer = self._buffer[idx + len(tag):]
+                entering = not self.in_thinking
                 self.in_thinking = not self.in_thinking
+                if entering and not self._open_logged:
+                    self._open_logged = True
+                    logger.info(
+                        f"{get_request_id()}[对话解析] thinking 标签开启，"
+                        f"后续 token 分流到 thinking 通道"
+                    )
+                elif not entering and not self._close_logged:
+                    self._close_logged = True
+                    logger.info(
+                        f"{get_request_id()}[对话解析] thinking 标签关闭，"
+                        f"后续 token 分流到 content 通道"
+                    )
                 continue
             keep = self._partial_suffix_len()
             emit_end = len(self._buffer) - keep
             if emit_end > 0:
-                out.append((self._channel(), self._buffer[:emit_end]))
+                channel = self._channel()
+                text = self._buffer[:emit_end]
+                self._track(channel, text)
+                out.append((channel, text))
                 self._buffer = self._buffer[emit_end:]
             break
         return out
@@ -144,9 +178,22 @@ class _ThinkingTagStreamParser:
                 or self._CLOSE.startswith(self._buffer)
             )
             if not is_tag_fragment:
-                out.append((self._channel(), self._buffer))
+                channel = self._channel()
+                self._track(channel, self._buffer)
+                out.append((channel, self._buffer))
+            elif self._buffer:
+                logger.debug(
+                    f"{get_request_id()}[对话解析] flush 丢弃标签残片: "
+                    f"{self._buffer!r}"
+                )
             self._buffer = ""
         return out
+
+    def summary(self) -> str:
+        return (
+            f"thinking_tag_seen={self._open_logged} "
+            f"thinking_chars={self.thinking_chars} content_chars={self.content_chars}"
+        )
 
 
 # TASK-007：可选 metrics，缺失 prometheus_client 时静默跳过
@@ -306,9 +353,10 @@ class GeneralAgent:
                 # （langchain_openai 1.7.x 默认 stream_chunk_timeout=120s，
                 # reasoning 模型思考静默 >2min 会 ReadTimeout，见
                 # _STREAM_READ_TIMEOUT 说明），统一放宽到 300s
+                # max_retries=0：瞬时重试统一交给 with_llm_retry，避免叠乘
                 timeout=_STREAM_READ_TIMEOUT,
                 stream_chunk_timeout=_STREAM_READ_TIMEOUT,
-                max_retries=1,
+                max_retries=0,
             )
         else:
             local_config = get_local_model_config()
@@ -326,7 +374,7 @@ class GeneralAgent:
                 stream_usage=True,
                 timeout=_STREAM_READ_TIMEOUT,
                 stream_chunk_timeout=_STREAM_READ_TIMEOUT,
-                max_retries=1,
+                max_retries=0,
             )
 
     @staticmethod
@@ -346,16 +394,7 @@ class GeneralAgent:
         让模型从头再思考一遍再超时一次（实测 6m33s 三层全灭、0 token）。
         该类错误应快速失败报错给用户，不再串行重试。
         """
-        if isinstance(err, TimeoutError) or type(err).__name__ in (
-            "ReadTimeout",
-            "StreamChunkTimeoutError",
-            "ReadTimeoutError",
-        ):
-            return True
-        # httpx.ReadTimeout 等经 langchain 包装后 isinstance 不可靠，按名匹配
-        return "ReadTimeout" in type(err).__mro__.__repr__() or "read timeout" in str(
-            err
-        ).lower()
+        return is_read_timeout(err)
 
     async def _stream_llm_raw(
         self, messages: List[Any], temperature: float = 0.7
@@ -402,79 +441,112 @@ class GeneralAgent:
             "stream_options": {"include_usage": True},
         }
 
-        raw_usage = None
-        # 复用模块级共享 client：每请求新建 AsyncClient 会重复 TCP+TLS 握手
-        # （百毫秒级），连接池复用后消除该开销
-        client = _get_shared_http_client()
-        async with client.stream(
-            "POST", url, json=body, headers=headers
-        ) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if not line or not line.startswith("data: "):
-                    continue
-                data = line[6:]
-                if data.strip() == "[DONE]":
-                    break
-                try:
-                    chunk = _json.loads(data)
-                    # 用量必须在 choices 判空之前读取：include_usage 的末块
-                    # choices 为空数组，之前先 continue 导致 usage 永远读不到
-                    usage = chunk.get("usage")
-                    if isinstance(usage, dict):
-                        raw_usage = {
-                            "input_tokens": usage.get("prompt_tokens", 0) or 0,
-                            "output_tokens": usage.get("completion_tokens", 0) or 0,
-                            "total_tokens": usage.get("total_tokens", 0) or 0,
-                        }
-                    choices = chunk.get("choices") or []
-                    if not choices:
-                        continue
-                    delta = choices[0].get("delta") or {}
-                    # 【修复】reasoning 字段兼容：不同网关对思考流的翻译不一——
-                    # SiliconFlow/DeepSeek 用 reasoning_content，部分 one-api
-                    # 渠道翻译 Anthropic 协议（claude 系模型）时用 reasoning
-                    # 或 thinking。三个名字都接，避免 claude-fable-5 这类模型
-                    # 的 token 在 raw 路径也被丢弃。
-                    reasoning = (
-                        delta.get("reasoning_content")
-                        or delta.get("reasoning")
-                        or delta.get("thinking")
-                    )
-                    content = delta.get("content")
-                    if reasoning:
-                        yield (
-                            "thinking",
-                            reasoning
-                            if isinstance(reasoning, str)
-                            else str(reasoning),
-                        )
-                    if content:
-                        # content 可能是字符串，也可能是 Claude 风格的内容块
-                        # 列表 [{"type":"thinking","thinking":...},
-                        # {"type":"text","text":...}]——按块类型分流
-                        if isinstance(content, list):
-                            for block in content:
-                                if not isinstance(block, dict):
-                                    if str(block):
-                                        yield ("content", str(block))
-                                    continue
-                                btype = block.get("type")
-                                if btype == "thinking":
-                                    t = block.get("thinking") or ""
-                                    if t:
-                                        yield ("thinking", t)
-                                else:
-                                    t = block.get("text")
-                                    if t:
-                                        yield ("content", t)
-                        elif isinstance(content, str):
-                            yield ("content", content)
-                except (_json.JSONDecodeError, KeyError, IndexError):
-                    continue
+        # 建连级瞬时失败可重试；一旦已向下游产出 token 则不再重试，避免重复内容
+        _attempts = 3
+        _base_delay = 0.5
+        last_err: Optional[Exception] = None
+        for attempt in range(1, _attempts + 1):
+            raw_usage = None
+            produced = False
+            try:
+                # 复用模块级共享 client：每请求新建 AsyncClient 会重复 TCP+TLS 握手
+                # （百毫秒级），连接池复用后消除该开销
+                client = _get_shared_http_client()
+                async with client.stream(
+                    "POST", url, json=body, headers=headers
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line or not line.startswith("data: "):
+                            continue
+                        data = line[6:]
+                        if data.strip() == "[DONE]":
+                            break
+                        try:
+                            chunk = _json.loads(data)
+                            # 用量必须在 choices 判空之前读取：include_usage 的末块
+                            # choices 为空数组，之前先 continue 导致 usage 永远读不到
+                            usage = chunk.get("usage")
+                            if isinstance(usage, dict):
+                                raw_usage = {
+                                    "input_tokens": usage.get("prompt_tokens", 0) or 0,
+                                    "output_tokens": usage.get(
+                                        "completion_tokens", 0
+                                    )
+                                    or 0,
+                                    "total_tokens": usage.get("total_tokens", 0) or 0,
+                                }
+                            choices = chunk.get("choices") or []
+                            if not choices:
+                                continue
+                            delta = choices[0].get("delta") or {}
+                            # 【修复】reasoning 字段兼容：不同网关对思考流的翻译不一——
+                            # SiliconFlow/DeepSeek 用 reasoning_content，部分 one-api
+                            # 渠道翻译 Anthropic 协议（claude 系模型）时用 reasoning
+                            # 或 thinking。三个名字都接，避免 claude-fable-5 这类模型
+                            # 的 token 在 raw 路径也被丢弃。
+                            reasoning = (
+                                delta.get("reasoning_content")
+                                or delta.get("reasoning")
+                                or delta.get("thinking")
+                            )
+                            content = delta.get("content")
+                            if reasoning:
+                                produced = True
+                                yield (
+                                    "thinking",
+                                    reasoning
+                                    if isinstance(reasoning, str)
+                                    else str(reasoning),
+                                )
+                            if content:
+                                # content 可能是字符串，也可能是 Claude 风格的内容块
+                                # 列表 [{"type":"thinking","thinking":...},
+                                # {"type":"text","text":...}]——按块类型分流
+                                if isinstance(content, list):
+                                    for block in content:
+                                        if not isinstance(block, dict):
+                                            if str(block):
+                                                produced = True
+                                                yield ("content", str(block))
+                                            continue
+                                        btype = block.get("type")
+                                        if btype == "thinking":
+                                            t = block.get("thinking") or ""
+                                            if t:
+                                                produced = True
+                                                yield ("thinking", t)
+                                        else:
+                                            t = block.get("text")
+                                            if t:
+                                                produced = True
+                                                yield ("content", t)
+                                elif isinstance(content, str):
+                                    produced = True
+                                    yield ("content", content)
+                        except (_json.JSONDecodeError, KeyError, IndexError):
+                            continue
 
-        if raw_usage is not None:
-            yield ("usage", _json.dumps(raw_usage))
+                if raw_usage is not None:
+                    yield ("usage", _json.dumps(raw_usage))
+                return
+            except Exception as e:
+                last_err = e
+                if (
+                    produced
+                    or attempt >= _attempts
+                    or not is_transient_llm_error(e)
+                ):
+                    raise
+                delay = _base_delay * (2 ** (attempt - 1))
+                logger.warning(
+                    f"{get_request_id()}[对话解析] raw stream 建连重试 "
+                    f"attempt={attempt}/{_attempts} delay_s={delay:.1f} "
+                    f"model={self.model_name} error={type(e).__name__}: {e}"
+                )
+                await asyncio.sleep(delay)
+        if last_err is not None:
+            raise last_err
 
     async def chat(
         self,
@@ -501,7 +573,11 @@ class GeneralAgent:
         # ReAct 模式：交给自带的工具调用循环。失败时降级走纯 LLM 路径
         if self._react_enabled and self.agent is not None:
             try:
-                response = await self.agent.ainvoke({"messages": messages})
+                response = await with_llm_retry(
+                    lambda: self.agent.ainvoke({"messages": messages}),
+                    attempts=3,
+                    label=f"general.react:{self.model_name}",
+                )
                 final_msg = response["messages"][-1] if response.get("messages") else None
                 if isinstance(final_msg, AIMessage):
                     content = final_msg.content
@@ -530,7 +606,11 @@ class GeneralAgent:
                 )
 
         try:
-            response = await self.llm.ainvoke(messages)
+            response = await with_llm_retry(
+                lambda: self.llm.ainvoke(messages),
+                attempts=3,
+                label=f"general.chat:{self.model_name}",
+            )
         except Exception as e:
             _observe_llm(
                 self.model_name, "general", "error", time.perf_counter() - _started
@@ -541,7 +621,11 @@ class GeneralAgent:
                     f"{get_request_id()}模型限制 temperature=1，回退重试 [chat]: model={self.model_name}"
                 )
                 self.llm = self._create_llm(temperature=1.0)
-                response = await self.llm.ainvoke(messages)
+                response = await with_llm_retry(
+                    lambda: self.llm.ainvoke(messages),
+                    attempts=3,
+                    label=f"general.chat_temp1:{self.model_name}",
+                )
             else:
                 logger.error(
                     f"{get_request_id()}第三方模型调用失败 [chat] | model={self.model_name}, model_type={self.model_type}, "
@@ -591,6 +675,12 @@ class GeneralAgent:
         messages.append(HumanMessage(content=query))
 
         _started = time.perf_counter()
+        logger.info(
+            f"{get_request_id()}[对话解析] GeneralAgent.stream_chat 开始 "
+            f"model={self.model_name} ctx_msgs={len(context or [])} "
+            f"prompt_chars={len(system_prompt or '')} "
+            f"query_chars={len(query or '')} react={bool(self._react_enabled and self.agent)}"
+        )
         # TASK-015: 跨 chunk 标签解析器——流式 token 会把 <thinking> 拆碎成
         # "<"+"th"+"inking>"，逐 token 的 `in` 检测匹配不到，导致标签和思考
         # 内容全部走 content 通道，前端解析后气泡空白。
@@ -753,8 +843,17 @@ class GeneralAgent:
                 if _react_produced:
                     # 流式可用：记住，后续请求不再走 raw 探测兜底
                     self._react_stream_ok = True
+                    _elapsed = time.perf_counter() - _started
                     _observe_llm(
-                        self.model_name, "general", "success", time.perf_counter() - _started
+                        self.model_name, "general", "success", _elapsed
+                    )
+                    _in = int((_react_usage or {}).get("input_tokens", 0) or 0)
+                    _out = int((_react_usage or {}).get("output_tokens", 0) or 0)
+                    logger.info(
+                        f"{get_request_id()}[对话解析] GeneralAgent.stream_chat 完成 "
+                        f"path=react model={self.model_name} "
+                        f"elapsed_ms={int(_elapsed * 1000)} "
+                        f"usage=in:{_in}/out:{_out} {_react_parser.summary()}"
                     )
                     yield {
                         "type": "done",
@@ -801,9 +900,10 @@ class GeneralAgent:
         # TASK-015: 优先用 raw httpx 直接调用，手动解析 reasoning_content。
         # langchain_openai 1.6.7+ 不解析 reasoning_content（GLM-5.2 等 reasoning
         # 模型的 token 全在该字段），导致只有 done 没有 content。
-        # raw 方法成功时直接 return；失败则降级到下方 langchain astream 路径。
+        # raw 方法成功时直接 return；仅在「尚未向客户端产出任何 token」时
+        # 才允许降级到下方 langchain astream，避免半截后重复输出。
+        _raw_produced = False
         try:
-            _raw_produced = False
             _raw_parser = _ThinkingTagStreamParser()
             _raw_usage = None
             async for chunk_type, token in self._stream_llm_raw(messages):
@@ -836,11 +936,20 @@ class GeneralAgent:
                     "model_used": self.model_name,
                 }
             if _raw_produced:
+                _elapsed = time.perf_counter() - _started
                 _observe_llm(
                     self.model_name,
                     "general",
                     "success",
-                    time.perf_counter() - _started,
+                    _elapsed,
+                )
+                _in = int((_raw_usage or {}).get("input_tokens", 0) or 0)
+                _out = int((_raw_usage or {}).get("output_tokens", 0) or 0)
+                logger.info(
+                    f"{get_request_id()}[对话解析] GeneralAgent.stream_chat 完成 "
+                    f"path=raw_httpx model={self.model_name} "
+                    f"elapsed_ms={int(_elapsed * 1000)} "
+                    f"usage=in:{_in}/out:{_out} {_raw_parser.summary()}"
                 )
                 yield {
                     "type": "done",
@@ -857,6 +966,21 @@ class GeneralAgent:
                     f"{get_request_id()}raw httpx 流式 ReadTimeout（上游长时间"
                     f"无响应，疑似模型思考静默），跳过 langchain 降级快速失败: "
                     f"model={self.model_name}"
+                )
+                _observe_llm(
+                    self.model_name, "general", "error", time.perf_counter() - _started
+                )
+                yield {
+                    "type": "error",
+                    "content": friendly_llm_error(_raw_e, self.model_name),
+                }
+                return
+            # 已向客户端推过 token：禁止降级 astream，否则会从头再生成导致重复
+            if _raw_produced:
+                logger.error(
+                    f"{get_request_id()}raw 流半截失败且已产出内容，"
+                    f"跳过 langchain 降级避免重复输出: "
+                    f"model={self.model_name} error={type(_raw_e).__name__}: {_raw_e}"
                 )
                 _observe_llm(
                     self.model_name, "general", "error", time.perf_counter() - _started
@@ -906,11 +1030,20 @@ class GeneralAgent:
                             "model_used": self.model_name,
                         }
                     if _retry_produced:
+                        _elapsed = time.perf_counter() - _started
                         _observe_llm(
                             self.model_name,
                             "general",
                             "success",
-                            time.perf_counter() - _started,
+                            _elapsed,
+                        )
+                        _in = int((_retry_usage or {}).get("input_tokens", 0) or 0)
+                        _out = int((_retry_usage or {}).get("output_tokens", 0) or 0)
+                        logger.info(
+                            f"{get_request_id()}[对话解析] GeneralAgent.stream_chat 完成 "
+                            f"path=raw_httpx_retry model={self.model_name} "
+                            f"elapsed_ms={int(_elapsed * 1000)} "
+                            f"usage=in:{_in}/out:{_out} {_retry_parser.summary()}"
                         )
                         yield {
                             "type": "done",
@@ -919,11 +1052,12 @@ class GeneralAgent:
                         }
                         return
                 except Exception as _retry_e:
-                    # 【稳定性】静默型超时同样快速失败，不再降级第三层
-                    if self._is_read_timeout(_retry_e):
+                    # 【稳定性】静默型超时 / 已产出内容：快速失败，不再降级第三层
+                    if self._is_read_timeout(_retry_e) or _retry_produced:
                         logger.error(
-                            f"{get_request_id()}raw 重试 ReadTimeout（上游长时间"
-                            f"无响应），快速失败: model={self.model_name}"
+                            f"{get_request_id()}raw 重试失败"
+                            f"{'（ReadTimeout）' if self._is_read_timeout(_retry_e) else '（已产出内容）'}"
+                            f"，快速失败: model={self.model_name}"
                         )
                         _observe_llm(
                             self.model_name,
@@ -994,8 +1128,17 @@ class GeneralAgent:
                     "model_used": self.model_name,
                 }
 
+            _elapsed = time.perf_counter() - _started
             _observe_llm(
-                self.model_name, "general", "success", time.perf_counter() - _started
+                self.model_name, "general", "success", _elapsed
+            )
+            _in = int((usage_meta or {}).get("input_tokens", 0) or 0)
+            _out = int((usage_meta or {}).get("output_tokens", 0) or 0)
+            logger.info(
+                f"{get_request_id()}[对话解析] GeneralAgent.stream_chat 完成 "
+                f"path=langchain_astream model={self.model_name} "
+                f"elapsed_ms={int(_elapsed * 1000)} "
+                f"usage=in:{_in}/out:{_out} {_lc_parser.summary()}"
             )
             yield {
                 "type": "done",

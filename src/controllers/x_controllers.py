@@ -1,10 +1,12 @@
+import asyncio
 import hashlib
 import imghdr
 import json
 import os
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
-from typing import AsyncGenerator, ClassVar, Dict, List, Optional, Any
+from typing import Any, AsyncGenerator, ClassVar, Dict, List, Optional
 
 import strawberry
 from litestar import MediaType, Request, Response, Router, WebSocket, get, post, websocket
@@ -135,6 +137,7 @@ from x_models.id_x_010.src.views.x_views import (
     list_user_model_providers,
     load_llm_provider_config,
     merge_context,
+    MARKDOWN_PROMPT_MAX_BYTES,
     rename_markdown_prompt,
     resolve_model_endpoint,
     save_conversation_log,
@@ -1280,6 +1283,13 @@ class Mutation:
                             f"chars={len(active_prompt.content)}"
                         )
 
+            _chat_t0 = time.perf_counter()
+            logger.info(
+                f"{get_request_id()}[对话解析] chat 编排开始 "
+                f"conversation_id={input.conversation_id or '-'} "
+                f"user_id={user.id if user is not None else None} "
+                f"model={chat_model_name} agent_type={input.agent_type or 'auto'}"
+            )
             result = await orchestrator.process(
                 query=input.query,
                 model_type=input.model_type,
@@ -1310,6 +1320,14 @@ class Mutation:
             except Exception as e:
                 logger.error(f"{get_request_id()}保存对话日志失败: {e}", exc_info=True)
 
+            logger.info(
+                f"{get_request_id()}[对话解析] chat 完成 "
+                f"conversation_id={result.get('conversation_id')} "
+                f"intent={result.get('intent')} success={result.get('success')} "
+                f"elapsed_ms={int((time.perf_counter() - _chat_t0) * 1000)} "
+                f"resp_chars={len(result.get('response') or '')} "
+                f"thinking_chars={len(result.get('thinking') or '')}"
+            )
             return ChatResponseType(
                 response=result["response"],
                 thinking=result["thinking"],
@@ -3632,17 +3650,21 @@ class Subscription:
         db_name: Optional[str] = None,
         prompt_disabled: bool = False,
     ) -> AsyncGenerator[StreamChunkType, None]:
+        _stream_t0 = time.perf_counter()
         try:
-            logger.info(
-                f"{get_request_id()}收到流式聊天请求: query='{query[:50]}.../', model_type={model_type}, "
-                f"agent_type={agent_type}"
-            )
-
             # TASK-008：限流 + 配额检查（best-effort）。失败 yield error chunk 后 return
             request = _get_info_request(info)
             rl_user = await _get_bearer_user(request)
             rl_key = str(rl_user.id) if rl_user is not None else (
                 request.client.host if request and request.client else "anon"
+            )
+            logger.info(
+                f"{get_request_id()}[对话解析] stream_chat 收到请求 "
+                f"conversation_id={conversation_id or '-'} "
+                f"user_id={rl_user.id if rl_user is not None else None} "
+                f"query='{(query or '')[:50]}{'...' if len(query or '') > 50 else ''}' "
+                f"model_type={model_type} model_name={model_name or '-'} "
+                f"agent_type={agent_type or 'auto'}"
             )
 
             # TASK-016：从 Accept-Language 头解析语言写入 lang_var，
@@ -3665,6 +3687,13 @@ class Subscription:
                     content="请求过于频繁，请稍后再试（每分钟上限 20 次）",
                 )
                 return
+
+            # 尽早冲刷首包，避免鉴权/上下文/路由阶段长时间无字节导致代理空闲超时
+            yield StreamChunkType(
+                type="status",
+                content="preparing",
+                conversation_id=conversation_id,
+            )
 
             if rl_user is not None:
                 # 系统模型配额检查：移到模型解析后执行
@@ -3708,8 +3737,15 @@ class Subscription:
 
             if merged_context:
                 logger.info(
-                    f"{get_request_id()}上下文已加载: {len(merged_context)} 条消息, "
+                    f"{get_request_id()}[对话解析] 上下文已加载 "
+                    f"conversation_id={conversation_id or '-'} "
+                    f"msgs={len(merged_context)} "
                     f"约 {len(merged_context) // 2} 轮对话"
+                )
+            else:
+                logger.info(
+                    f"{get_request_id()}[对话解析] 无历史上下文 "
+                    f"conversation_id={conversation_id or '-'}"
                 )
 
             # 按 LLM_PROVIDER 加载提供商表配置（external_provider / local_provider）
@@ -3822,8 +3858,17 @@ class Subscription:
             model_used = ""
             intent = ""
             captured_usage: Optional[dict] = None
+            logger.info(
+                f"{get_request_id()}[对话解析] stream_chat 进入编排 "
+                f"conversation_id={conversation_id or '-'} "
+                f"model={model_name} agent_type={agent_type or 'auto'} "
+                f"prompt_injected={bool(active_prompt_content)}"
+            )
 
-            async for chunk in orchestrator.stream_process(
+            # 空闲心跳：下游超过 _HEARTBEAT_INTERVAL 无 chunk 时发 status，
+            # 重置代理 client idle，避免长思考间隔被掐断
+            _HEARTBEAT_INTERVAL = 15.0
+            _stream_aiter = orchestrator.stream_process(
                 query=query,
                 model_type=model_type,
                 model_name=model_name,
@@ -3834,81 +3879,115 @@ class Subscription:
                 api_key=override_api_key,
                 base_url=override_base_url,
                 prompt_content=active_prompt_content,
-            ):
-                # LLM 末块（done 类型）携带的 token 用量：转发给前端在
-                # 气泡底部展示，同时缓存供流结束后落库 usage_logs
-                _chunk_usage = chunk.get("usage") or None
-                # 【追踪】supervisor 回填 conversation_id：新会话首条消息前端
-                # 不携带，由 stream_process 生成器内部生成 UUID 并随每个
-                # chunk 下发。此前只转发给前端、未同步回本函数局部变量——
-                # 导致首轮的对话日志 / 用量日志落库 conversation_id 为空、
-                # maybe_summarize 滚动摘要不触发，全链路追踪断在第一轮。
-                # 这里捕获首个非空值，保证落库三件套都能拿到实体值。
-                _chunk_cid = chunk.get("conversation_id")
-                if _chunk_cid and not conversation_id:
-                    conversation_id = _chunk_cid
-                chunk_type = StreamChunkType(
-                    type=chunk.get("type", ""),
-                    content=chunk.get("content"),
-                    model_used=chunk.get("model_used"),
-                    conversation_id=chunk.get("conversation_id"),
-                    sql=chunk.get("sql"),
-                    sql_meaning=chunk.get("sql_meaning"),
-                    columns=chunk.get("columns"),
-                    data=(
-                        json.dumps(chunk["data"], ensure_ascii=False)
-                        if chunk.get("data") is not None
-                        else None
-                    ),
-                    row_count=chunk.get("row_count"),
-                    chart_config=(
-                        json.dumps(chunk["chart_config"], ensure_ascii=False)
-                        if chunk.get("chart_config") is not None
-                        else None
-                    ),
-                    # 安全拦截标记：仅 security_block 类型 chunk 会带 true，
-                    # 区别于 error 类型的系统错误
-                    security_block=(
-                        bool(chunk["security_block"])
-                        if chunk.get("security_block") is not None
-                        else None
-                    ),
-                    # General Agent 工具调用通知（TASK-004）；其它 Agent
-                    # 不会携带这两个字段，保持 None 即可
-                    tool_name=chunk.get("tool_name"),
-                    tool_output=chunk.get("tool_output"),
-                    input_tokens=(
-                        int(_chunk_usage.get("input_tokens", 0) or 0)
-                        if _chunk_usage
-                        else None
-                    ),
-                    output_tokens=(
-                        int(_chunk_usage.get("output_tokens", 0) or 0)
-                        if _chunk_usage
-                        else None
-                    ),
-                )
+            ).__aiter__()
+            _next_task: Optional[asyncio.Task[Any]] = asyncio.create_task(
+                _stream_aiter.__anext__()
+            )
+            try:
+                while True:
+                    assert _next_task is not None
+                    _done, _ = await asyncio.wait(
+                        {_next_task}, timeout=_HEARTBEAT_INTERVAL
+                    )
+                    if not _done:
+                        yield StreamChunkType(
+                            type="status",
+                            content="keepalive",
+                            conversation_id=conversation_id,
+                        )
+                        continue
+                    try:
+                        chunk = _next_task.result()
+                    except StopAsyncIteration:
+                        _next_task = None
+                        break
+                    _next_task = asyncio.create_task(_stream_aiter.__anext__())
 
-                # 【数据质量】model_used 不能只在 content 分支捕获：SQL 流的
-                # 关键 chunk（sql/sql_approval/result/done）与失败轮次的
-                # error chunk 都不发 content——审批挂起/查询失败的轮次
-                # model_name 会落空（DB 实测 rows 17-21 全空）。任何携带
-                # model_used 的 chunk 都要捕获。
-                if chunk_type.model_used:
-                    model_used = chunk_type.model_used
+                    # LLM 末块（done 类型）携带的 token 用量：转发给前端在
+                    # 气泡底部展示，同时缓存供流结束后落库 usage_logs
+                    _chunk_usage = chunk.get("usage") or None
+                    # 【追踪】supervisor 回填 conversation_id：新会话首条消息前端
+                    # 不携带，由 stream_process 生成器内部生成 UUID 并随每个
+                    # chunk 下发。此前只转发给前端、未同步回本函数局部变量——
+                    # 导致首轮的对话日志 / 用量日志落库 conversation_id 为空、
+                    # maybe_summarize 滚动摘要不触发，全链路追踪断在第一轮。
+                    # 这里捕获首个非空值，保证落库三件套都能拿到实体值。
+                    _chunk_cid = chunk.get("conversation_id")
+                    if _chunk_cid and not conversation_id:
+                        conversation_id = _chunk_cid
+                    chunk_type = StreamChunkType(
+                        type=chunk.get("type", ""),
+                        content=chunk.get("content"),
+                        model_used=chunk.get("model_used"),
+                        conversation_id=chunk.get("conversation_id"),
+                        sql=chunk.get("sql"),
+                        sql_meaning=chunk.get("sql_meaning"),
+                        columns=chunk.get("columns"),
+                        data=(
+                            json.dumps(chunk["data"], ensure_ascii=False)
+                            if chunk.get("data") is not None
+                            else None
+                        ),
+                        row_count=chunk.get("row_count"),
+                        chart_config=(
+                            json.dumps(chunk["chart_config"], ensure_ascii=False)
+                            if chunk.get("chart_config") is not None
+                            else None
+                        ),
+                        # 安全拦截标记：仅 security_block 类型 chunk 会带 true，
+                        # 区别于 error 类型的系统错误
+                        security_block=(
+                            bool(chunk["security_block"])
+                            if chunk.get("security_block") is not None
+                            else None
+                        ),
+                        # General Agent 工具调用通知（TASK-004）；其它 Agent
+                        # 不会携带这两个字段，保持 None 即可
+                        tool_name=chunk.get("tool_name"),
+                        tool_output=chunk.get("tool_output"),
+                        input_tokens=(
+                            int(_chunk_usage.get("input_tokens", 0) or 0)
+                            if _chunk_usage
+                            else None
+                        ),
+                        output_tokens=(
+                            int(_chunk_usage.get("output_tokens", 0) or 0)
+                            if _chunk_usage
+                            else None
+                        ),
+                    )
 
-                if chunk_type.type == "intent":
-                    intent = chunk_type.content or ""
-                elif chunk_type.type == "thinking":
-                    thinking_buffer.append(chunk_type.content or "")
-                elif chunk_type.type == "content":
-                    full_response.append(chunk_type.content or "")
+                    # 【数据质量】model_used 不能只在 content 分支捕获：SQL 流的
+                    # 关键 chunk（sql/sql_approval/result/done）与失败轮次的
+                    # error chunk 都不发 content——审批挂起/查询失败的轮次
+                    # model_name 会落空（DB 实测 rows 17-21 全空）。任何携带
+                    # model_used 的 chunk 都要捕获。
+                    if chunk_type.model_used:
+                        model_used = chunk_type.model_used
 
-                # 捕获 LLM 末块返回的 token 用量（best-effort，可能为 None）
-                if chunk.get("usage"):
-                    captured_usage = chunk["usage"]
+                    if chunk_type.type == "intent":
+                        intent = chunk_type.content or ""
+                        logger.info(
+                            f"{get_request_id()}[对话解析] 意图已解析 "
+                            f"conversation_id={conversation_id or '-'} intent={intent}"
+                        )
+                    elif chunk_type.type == "thinking":
+                        thinking_buffer.append(chunk_type.content or "")
+                    elif chunk_type.type == "content":
+                        full_response.append(chunk_type.content or "")
 
-                yield chunk_type
+                    # 捕获 LLM 末块返回的 token 用量（best-effort，可能为 None）
+                    if chunk.get("usage"):
+                        captured_usage = chunk["usage"]
+
+                    yield chunk_type
+            finally:
+                if _next_task is not None and not _next_task.done():
+                    _next_task.cancel()
+                    try:
+                        await _next_task
+                    except (asyncio.CancelledError, StopAsyncIteration, Exception):
+                        pass
 
             try:
                 await save_conversation_log(
@@ -3959,8 +4038,27 @@ class Subscription:
             except Exception as e:
                 logger.error(f"{get_request_id()}保存用量日志失败: {e}", exc_info=True)
 
+            _in = int((captured_usage or {}).get("input_tokens", 0) or 0)
+            _out = int((captured_usage or {}).get("output_tokens", 0) or 0)
+            logger.info(
+                f"{get_request_id()}[对话解析] stream_chat 完成 "
+                f"conversation_id={conversation_id or '-'} "
+                f"user_id={rl_user.id if rl_user is not None else None} "
+                f"intent={intent or '-'} model={model_used or model_name or '-'} "
+                f"elapsed_ms={int((time.perf_counter() - _stream_t0) * 1000)} "
+                f"resp_chars={sum(len(x) for x in full_response)} "
+                f"thinking_chars={sum(len(x) for x in thinking_buffer)} "
+                f"usage=in:{_in}/out:{_out} system_model={_is_system_model_stream}"
+            )
+
         except Exception as e:
-            logger.error(f"{get_request_id()}流式聊天接口错误: {e}", exc_info=True)
+            logger.error(
+                f"{get_request_id()}[对话解析] stream_chat 失败 "
+                f"conversation_id={conversation_id or '-'} "
+                f"elapsed_ms={int((time.perf_counter() - _stream_t0) * 1000)} "
+                f"error={type(e).__name__}: {e}",
+                exc_info=True,
+            )
             yield StreamChunkType(
                 type="error",
                 content=f"处理请求失败: {str(e)}",
@@ -3996,7 +4094,8 @@ _MARKDOWN_CONTENT_TYPES: tuple[str, ...] = (
     "text/plain",
     "application/octet-stream",
 )
-_MARKDOWN_MAX_BYTES: int = 2 * 1024 * 1024  # 2MB
+# 用户 Prompt 上传上限（3MB），与 views.MARKDOWN_PROMPT_MAX_BYTES 同源
+_MARKDOWN_MAX_BYTES: int = MARKDOWN_PROMPT_MAX_BYTES
 _MARKDOWN_SNIFF_HINTS: tuple[str, ...] = (
     "#", "##", "###", "- ", "* ", "> ", "```", "---", "| ", "[", "](", "1. ",
 )

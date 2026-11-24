@@ -7,7 +7,11 @@ import {
   promptGraphqlApi,
   MarkdownPromptItem,
 } from "@/api/graphql";
-import { uploadMarkdown } from "@/api/upload";
+import {
+  uploadMarkdown,
+  MAX_MARKDOWN_FILE_SIZE,
+  utf8ByteLength,
+} from "@/api/upload";
 import { useTheme } from "@/context/ThemeContext";
 import { useI18n } from "@/context/I18nContext";
 import { useDraggableDialog } from "@/hooks/useDraggableDialog";
@@ -263,6 +267,12 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
     if (editingPrompt === null) return;
     if (!editContentValue.trim()) {
       setError(t("prompt.errorContentEmpty"));
+      return;
+    }
+    if (utf8ByteLength(editContentValue) > MAX_MARKDOWN_FILE_SIZE) {
+      setError(
+        `Content exceeds ${MAX_MARKDOWN_FILE_SIZE / 1024 / 1024}MB UTF-8 limit`,
+      );
       return;
     }
 
@@ -890,8 +900,8 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
               >
                 <span>
                   {editContentValue.length} characters
-                  {editContentValue.length > 2 * 1024 * 1024
-                    ? " · exceeds 2MB limit"
+                  {utf8ByteLength(editContentValue) > MAX_MARKDOWN_FILE_SIZE
+                    ? ` · exceeds ${MAX_MARKDOWN_FILE_SIZE / 1024 / 1024}MB limit`
                     : ""}
                 </span>
                 <span>Ctrl+Enter to save · Esc to cancel</span>
@@ -911,7 +921,7 @@ export function PromptPanel({ onActivePromptChange }: PromptPanelProps) {
                 isDisabled={
                   isSavingContent ||
                   !editContentValue.trim() ||
-                  editContentValue.length > 2 * 1024 * 1024
+                  utf8ByteLength(editContentValue) > MAX_MARKDOWN_FILE_SIZE
                 }
               >
                 {isSavingContent ? "Saving..." : "Save"}
