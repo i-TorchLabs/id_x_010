@@ -12,6 +12,7 @@ from utils.log_util import get_request_id, logger
 from x_models.id_x_010.src.agents.x_llm_error import (
     DEFAULT_EXTERNAL_MODEL,
     friendly_llm_error,
+    friendly_max_tokens_exhausted,
     is_read_timeout,
     is_transient_llm_error,
     with_llm_retry,
@@ -44,6 +45,33 @@ _shared_http_client = None
 # 长问题思考 >2min 即触发 httpx.ReadTimeout（实测 6m33s 三层降级全灭）。
 # 300s 覆盖绝大多数思考静默；可通过环境变量 STREAM_READ_TIMEOUT 调整。
 _STREAM_READ_TIMEOUT = float(os.getenv("STREAM_READ_TIMEOUT", "300"))
+
+# 【稳定性】单次补全最大输出 token。未显式传入时网关常默认 8192；
+# reasoning 模型长文档修订会在思考阶段打满上限 → content 为空。
+# 可通过环境变量 LLM_MAX_TOKENS 调整。
+_LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "32768"))
+
+
+def _is_reasoning_model(model_name: str) -> bool:
+    """判断是否为易把 token 放在 reasoning_content、且不宜走 ReAct 流式的模型。"""
+    n = (model_name or "").lower().strip()
+    if not n:
+        return False
+    if any(
+        p in n
+        for p in (
+            "claude-fable",
+            "claude-opus",
+            "deepseek-r",
+            "reasoning",
+        )
+    ):
+        return True
+    if "glm-" in n:
+        return True
+    # o1 / o3 家族（含 provider/o1-mini 等形式）
+    base = n.rsplit("/", 1)[-1]
+    return base.startswith(("o1", "o3"))
 
 
 def _get_shared_http_client():
@@ -300,10 +328,12 @@ class GeneralAgent:
         self._react_enabled = False
         # 【性能】ReAct 流式可用性记忆（None=未探测，True=可用，False=不可用）：
         # reasoning 模型（claude-fable-5 / GLM 等）token 全在 reasoning_content
-        # 时 langchain 丢弃 → ReAct 路径产出 0 token。首次探测失败后记住，
-        # 后续请求直接走 raw httpx，不再每次白付一次注定失败的 LLM 调用
-        # （实例经 supervisor 缓存按 模型+端点 复用，记忆随之生效）。
-        self._react_stream_ok: Optional[bool] = None
+        # 时 langchain 丢弃 → ReAct 路径产出 0 token。stream_process 每请求
+        # 新建实例，跨请求记忆不可靠，故对已知 reasoning 模型直接置 False，
+        # 跳过注定失败的 ReAct 流式，首轮即走 raw httpx。
+        self._react_stream_ok: Optional[bool] = (
+            False if _is_reasoning_model(self.model_name) else None
+        )
         try:
             if LANGGRAPH_REACT_AVAILABLE:
                 from x_models.id_x_010.src.agents.tools import ALL_TOOLS
@@ -313,6 +343,11 @@ class GeneralAgent:
                     self._react_enabled = True
                     logger.info(
                         f"{get_request_id()}GeneralAgent ReAct 模式启用，工具数={len(ALL_TOOLS)}"
+                        + (
+                            "（reasoning 模型跳过 ReAct 流式）"
+                            if self._react_stream_ok is False
+                            else ""
+                        )
                     )
         except Exception as e:
             # 工具加载失败不阻塞 Agent 实例化，降级为纯 LLM 模式
@@ -324,7 +359,9 @@ class GeneralAgent:
             self._react_enabled = False
 
         logger.info(
-            f"{get_request_id()}GeneralAgent 初始化完成: model_type={model_type}, model_name={self.model_name}, react={self._react_enabled}"
+            f"{get_request_id()}GeneralAgent 初始化完成: model_type={model_type}, "
+            f"model_name={self.model_name}, react={self._react_enabled}, "
+            f"react_stream_ok={self._react_stream_ok}, max_tokens={_LLM_MAX_TOKENS}"
         )
 
     def _get_default_model(self, model_type: str) -> str:
@@ -343,6 +380,7 @@ class GeneralAgent:
                 api_key=SecretStr(self.api_key) if self.api_key else None,
                 base_url=self.base_url,
                 temperature=temperature,
+                max_tokens=_LLM_MAX_TOKENS,
                 streaming=True,
                 # 让 OpenAI 兼容端点在流式末块返回 token 用量；
                 # 不支持的端点会忽略该参数，捕获逻辑降级为 0（非致命）
@@ -368,6 +406,7 @@ class GeneralAgent:
                 api_key=SecretStr(local_api_key),
                 base_url=local_base_url,
                 temperature=temperature,
+                max_tokens=_LLM_MAX_TOKENS,
                 streaming=True,
                 # 本地模型不计费，但 token 用量仍需统计/展示；
                 # 端点不支持时会忽略该参数，降级为无用量（非致命）
@@ -396,6 +435,31 @@ class GeneralAgent:
         """
         return is_read_timeout(err)
 
+    @staticmethod
+    def _is_output_budget_exhausted(
+        finish_reason: Optional[str],
+        output_tokens: int,
+        content_chars: int,
+    ) -> bool:
+        """无正文且输出预算打满（finish_reason=length 或接近上限）。"""
+        if content_chars > 0:
+            return False
+        fr = (finish_reason or "").lower()
+        if fr == "length":
+            return True
+        if output_tokens > 0 and output_tokens >= int(_LLM_MAX_TOKENS * 0.95):
+            return True
+        # 网关可能忽略客户端 max_tokens，仍按默认 8192 封顶；
+        # 正常 stop 的长思考不走此分支
+        if output_tokens >= 8192 and fr not in (
+            "stop",
+            "end_turn",
+            "tool_calls",
+            "function_call",
+        ):
+            return True
+        return False
+
     async def _stream_llm_raw(
         self, messages: List[Any], temperature: float = 0.7
     ) -> AsyncGenerator[Tuple[str, str], None]:
@@ -409,6 +473,7 @@ class GeneralAgent:
         本方法用 httpx 直接调 /v1/chat/completions stream，手动解析 SSE：
           - delta.reasoning_content → yield ("thinking", token)
           - delta.content           → yield ("content", token)
+          - 结束时 yield ("usage", json) 含 finish_reason
 
         保留了 temperature 重试（reasoning 模型只允许 1）的能力由调用方处理。
         """
@@ -435,6 +500,7 @@ class GeneralAgent:
             "messages": payload_messages,
             "stream": True,
             "temperature": temperature,
+            "max_tokens": _LLM_MAX_TOKENS,
             # OpenAI 兼容端点的标准用量参数：流式末块附带 usage。
             # 之前误用 langchain 专属的 stream_usage 参数，端点不识别导致
             # usage 永远为空 → 气泡 token 展示与 usage_logs 计费全部为 0。
@@ -447,6 +513,7 @@ class GeneralAgent:
         last_err: Optional[Exception] = None
         for attempt in range(1, _attempts + 1):
             raw_usage = None
+            finish_reason: Optional[str] = None
             produced = False
             try:
                 # 复用模块级共享 client：每请求新建 AsyncClient 会重复 TCP+TLS 握手
@@ -479,7 +546,11 @@ class GeneralAgent:
                             choices = chunk.get("choices") or []
                             if not choices:
                                 continue
-                            delta = choices[0].get("delta") or {}
+                            choice0 = choices[0] or {}
+                            fr = choice0.get("finish_reason")
+                            if fr:
+                                finish_reason = fr
+                            delta = choice0.get("delta") or {}
                             # 【修复】reasoning 字段兼容：不同网关对思考流的翻译不一——
                             # SiliconFlow/DeepSeek 用 reasoning_content，部分 one-api
                             # 渠道翻译 Anthropic 协议（claude 系模型）时用 reasoning
@@ -527,8 +598,10 @@ class GeneralAgent:
                         except (_json.JSONDecodeError, KeyError, IndexError):
                             continue
 
-                if raw_usage is not None:
-                    yield ("usage", _json.dumps(raw_usage))
+                # 始终附带 finish_reason，便于上层识别 length 空答
+                meta = dict(raw_usage or {})
+                meta["finish_reason"] = finish_reason
+                yield ("usage", _json.dumps(meta))
                 return
             except Exception as e:
                 last_err = e
@@ -900,9 +973,13 @@ class GeneralAgent:
         # TASK-015: 优先用 raw httpx 直接调用，手动解析 reasoning_content。
         # langchain_openai 1.6.7+ 不解析 reasoning_content（GLM-5.2 等 reasoning
         # 模型的 token 全在该字段），导致只有 done 没有 content。
-        # raw 方法成功时直接 return；仅在「尚未向客户端产出任何 token」时
+        # raw 方法成功时直接 return；仅在「尚未向客户端产出任何实质 token」时
         # 才允许降级到下方 langchain astream，避免半截后重复输出。
-        _raw_produced = False
+        _raw_produced = False  # 是否已向客户端推过任意 chunk（含空白）
+        _raw_substantive = False  # 是否有非空白 thinking/content
+        _raw_content_chars = 0
+        _raw_thinking_chars = 0
+        _raw_finish_reason: Optional[str] = None
         try:
             _raw_parser = _ThinkingTagStreamParser()
             _raw_usage = None
@@ -910,11 +987,18 @@ class GeneralAgent:
                 if chunk_type == "usage":
                     try:
                         _raw_usage = json.loads(token)
+                        _raw_finish_reason = (
+                            (_raw_usage or {}).get("finish_reason")
+                            or _raw_finish_reason
+                        )
                     except (json.JSONDecodeError, TypeError):
                         pass
                     continue
                 _raw_produced = True
                 if chunk_type == "thinking":
+                    if token and str(token).strip():
+                        _raw_thinking_chars += len(str(token))
+                        _raw_substantive = True
                     yield {
                         "type": "thinking",
                         "content": token,
@@ -923,6 +1007,12 @@ class GeneralAgent:
                 else:
                     # content 通道可能内嵌被拆碎的 <thinking> 标签，走跨 chunk 解析
                     for _ch, _text in _raw_parser.feed(token):
+                        if _text and str(_text).strip():
+                            if _ch == "thinking":
+                                _raw_thinking_chars += len(str(_text))
+                            else:
+                                _raw_content_chars += len(str(_text))
+                            _raw_substantive = True
                         yield {
                             "type": _ch,
                             "content": _text,
@@ -930,12 +1020,44 @@ class GeneralAgent:
                         }
             for _ch, _text in _raw_parser.flush():
                 _raw_produced = True
+                if _text and str(_text).strip():
+                    if _ch == "thinking":
+                        _raw_thinking_chars += len(str(_text))
+                    else:
+                        _raw_content_chars += len(str(_text))
+                    _raw_substantive = True
                 yield {
                     "type": _ch,
                     "content": _text,
                     "model_used": self.model_name,
                 }
-            if _raw_produced:
+            _in = int((_raw_usage or {}).get("input_tokens", 0) or 0)
+            _out = int((_raw_usage or {}).get("output_tokens", 0) or 0)
+            _budget_hit = self._is_output_budget_exhausted(
+                _raw_finish_reason, _out, _raw_content_chars
+            )
+            if _budget_hit:
+                _elapsed = time.perf_counter() - _started
+                _observe_llm(
+                    self.model_name, "general", "error", _elapsed
+                )
+                logger.warning(
+                    f"{get_request_id()}[对话解析] GeneralAgent.stream_chat 输出上限打满 "
+                    f"path=raw_httpx model={self.model_name} "
+                    f"elapsed_ms={int(_elapsed * 1000)} "
+                    f"usage=in:{_in}/out:{_out} finish_reason={_raw_finish_reason} "
+                    f"raw_thinking_chars={_raw_thinking_chars} "
+                    f"raw_content_chars={_raw_content_chars} "
+                    f"max_tokens={_LLM_MAX_TOKENS} {_raw_parser.summary()}"
+                )
+                yield {
+                    "type": "error",
+                    "content": friendly_max_tokens_exhausted(
+                        self.model_name, _LLM_MAX_TOKENS
+                    ),
+                }
+                return
+            if _raw_substantive:
                 _elapsed = time.perf_counter() - _started
                 _observe_llm(
                     self.model_name,
@@ -943,20 +1065,36 @@ class GeneralAgent:
                     "success",
                     _elapsed,
                 )
-                _in = int((_raw_usage or {}).get("input_tokens", 0) or 0)
-                _out = int((_raw_usage or {}).get("output_tokens", 0) or 0)
                 logger.info(
                     f"{get_request_id()}[对话解析] GeneralAgent.stream_chat 完成 "
                     f"path=raw_httpx model={self.model_name} "
                     f"elapsed_ms={int(_elapsed * 1000)} "
-                    f"usage=in:{_in}/out:{_out} {_raw_parser.summary()}"
+                    f"usage=in:{_in}/out:{_out} finish_reason={_raw_finish_reason} "
+                    f"raw_thinking_chars={_raw_thinking_chars} "
+                    f"raw_content_chars={_raw_content_chars} "
+                    f"{_raw_parser.summary()}"
                 )
+                # usage 对外仍保留 token 字段；finish_reason 仅日志用
+                _usage_out = None
+                if _raw_usage is not None:
+                    _usage_out = {
+                        k: v
+                        for k, v in _raw_usage.items()
+                        if k != "finish_reason"
+                    }
                 yield {
                     "type": "done",
                     "model_used": self.model_name,
-                    "usage": _raw_usage,
+                    "usage": _usage_out,
                 }
                 return
+            if _raw_produced and not _raw_substantive:
+                # 仅空白 thinking：不视为成功，允许降级；不阻塞后续路径
+                logger.warning(
+                    f"{get_request_id()}raw stream 仅空白产出，继续降级: "
+                    f"model={self.model_name} finish_reason={_raw_finish_reason}"
+                )
+                _raw_produced = False
         except Exception as _raw_e:
             # 【稳定性】上游静默型超时：raw 路径已等满 _STREAM_READ_TIMEOUT，
             # 降级 langchain astream 只会用同一个端点再等一遍（同样超时）。
@@ -996,6 +1134,10 @@ class GeneralAgent:
                     f"{get_request_id()}模型限制 temperature=1，raw 重试 [stream_chat]: model={self.model_name}"
                 )
                 _retry_produced = False
+                _retry_substantive = False
+                _retry_content_chars = 0
+                _retry_thinking_chars = 0
+                _retry_finish_reason: Optional[str] = None
                 _retry_parser = _ThinkingTagStreamParser()
                 _retry_usage = None
                 try:
@@ -1005,11 +1147,18 @@ class GeneralAgent:
                         if chunk_type == "usage":
                             try:
                                 _retry_usage = json.loads(token)
+                                _retry_finish_reason = (
+                                    (_retry_usage or {}).get("finish_reason")
+                                    or _retry_finish_reason
+                                )
                             except (json.JSONDecodeError, TypeError):
                                 pass
                             continue
                         _retry_produced = True
                         if chunk_type == "thinking":
+                            if token and str(token).strip():
+                                _retry_thinking_chars += len(str(token))
+                                _retry_substantive = True
                             yield {
                                 "type": "thinking",
                                 "content": token,
@@ -1017,6 +1166,12 @@ class GeneralAgent:
                             }
                         else:
                             for _ch, _text in _retry_parser.feed(token):
+                                if _text and str(_text).strip():
+                                    if _ch == "thinking":
+                                        _retry_thinking_chars += len(str(_text))
+                                    else:
+                                        _retry_content_chars += len(str(_text))
+                                    _retry_substantive = True
                                 yield {
                                     "type": _ch,
                                     "content": _text,
@@ -1024,12 +1179,44 @@ class GeneralAgent:
                                 }
                     for _ch, _text in _retry_parser.flush():
                         _retry_produced = True
+                        if _text and str(_text).strip():
+                            if _ch == "thinking":
+                                _retry_thinking_chars += len(str(_text))
+                            else:
+                                _retry_content_chars += len(str(_text))
+                            _retry_substantive = True
                         yield {
                             "type": _ch,
                             "content": _text,
                             "model_used": self.model_name,
                         }
-                    if _retry_produced:
+                    _rin = int((_retry_usage or {}).get("input_tokens", 0) or 0)
+                    _rout = int((_retry_usage or {}).get("output_tokens", 0) or 0)
+                    if self._is_output_budget_exhausted(
+                        _retry_finish_reason, _rout, _retry_content_chars
+                    ):
+                        _elapsed = time.perf_counter() - _started
+                        _observe_llm(
+                            self.model_name, "general", "error", _elapsed
+                        )
+                        logger.warning(
+                            f"{get_request_id()}[对话解析] GeneralAgent.stream_chat 输出上限打满 "
+                            f"path=raw_httpx_retry model={self.model_name} "
+                            f"elapsed_ms={int(_elapsed * 1000)} "
+                            f"usage=in:{_rin}/out:{_rout} "
+                            f"finish_reason={_retry_finish_reason} "
+                            f"raw_thinking_chars={_retry_thinking_chars} "
+                            f"raw_content_chars={_retry_content_chars} "
+                            f"max_tokens={_LLM_MAX_TOKENS} {_retry_parser.summary()}"
+                        )
+                        yield {
+                            "type": "error",
+                            "content": friendly_max_tokens_exhausted(
+                                self.model_name, _LLM_MAX_TOKENS
+                            ),
+                        }
+                        return
+                    if _retry_substantive:
                         _elapsed = time.perf_counter() - _started
                         _observe_llm(
                             self.model_name,
@@ -1037,18 +1224,27 @@ class GeneralAgent:
                             "success",
                             _elapsed,
                         )
-                        _in = int((_retry_usage or {}).get("input_tokens", 0) or 0)
-                        _out = int((_retry_usage or {}).get("output_tokens", 0) or 0)
                         logger.info(
                             f"{get_request_id()}[对话解析] GeneralAgent.stream_chat 完成 "
                             f"path=raw_httpx_retry model={self.model_name} "
                             f"elapsed_ms={int(_elapsed * 1000)} "
-                            f"usage=in:{_in}/out:{_out} {_retry_parser.summary()}"
+                            f"usage=in:{_rin}/out:{_rout} "
+                            f"finish_reason={_retry_finish_reason} "
+                            f"raw_thinking_chars={_retry_thinking_chars} "
+                            f"raw_content_chars={_retry_content_chars} "
+                            f"{_retry_parser.summary()}"
                         )
+                        _retry_usage_out = None
+                        if _retry_usage is not None:
+                            _retry_usage_out = {
+                                k: v
+                                for k, v in _retry_usage.items()
+                                if k != "finish_reason"
+                            }
                         yield {
                             "type": "done",
                             "model_used": self.model_name,
-                            "usage": _retry_usage,
+                            "usage": _retry_usage_out,
                         }
                         return
                 except Exception as _retry_e:

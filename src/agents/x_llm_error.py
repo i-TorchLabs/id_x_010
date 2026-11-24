@@ -154,6 +154,21 @@ async def with_llm_retry(
     raise last_err
 
 
+def friendly_max_tokens_exhausted(model_name: str = "", max_tokens: int = 0) -> str:
+    """输出长度上限打满且无正文时的用户提示。
+
+    reasoning 模型长文档场景常见：思考占用几乎全部 completion_tokens，
+    finish_reason=length，SSE 侧 content 为空。
+    """
+    model = f' "{model_name}"' if model_name else ""
+    limit = f"（当前上限约 {max_tokens} tokens）" if max_tokens > 0 else ""
+    return (
+        f"模型{model}输出长度上限已用尽{limit}，多为思考过程占用，"
+        f"未留下有效正文。请缩短注入文档、更换模型，"
+        f"或提高环境变量 LLM_MAX_TOKENS 后重试"
+    )
+
+
 def friendly_llm_error(e: Exception, model_name: str = "") -> str:
     """将 LLM API 异常转换为用户可读懂、可行动的中文提示。
 
