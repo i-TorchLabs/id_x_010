@@ -4,9 +4,7 @@ import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "@/context/ThemeContext";
 import { useI18n } from "@/context/I18nContext";
-import { ThemeToggle } from "./ThemeToggle";
-import { LangToggle } from "./LangToggle";
-import LeftPanel from "./LeftPanel";
+import { AuthSplitShell } from "./AuthSplitShell";
 import RegisterForm from "./RegisterForm";
 import { userGraphqlApi } from "@/api/graphql";
 
@@ -103,49 +101,42 @@ export default function RegisterPage() {
     );
 
     return (
-        <div className="h-screen relative overflow-hidden">
-            <div className="absolute top-4 right-4 z-50 flex items-center gap-1">
-                <LangToggle />
-                <ThemeToggle />
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 h-full">
-                <LeftPanel
-                    isTyping={isTyping}
-                    isPasswordFocused={isPasswordFocused}
+        <AuthSplitShell
+            preset="register"
+            left={{
+                isTyping,
+                isPasswordFocused,
+                showPassword,
+                passwordLength: password.length,
+                isDark,
+            }}
+        >
+            {(metrics) => (
+                <RegisterForm
+                    email={email}
+                    setEmail={setEmail}
+                    phone={phone}
+                    setPhone={setPhone}
+                    password={password}
+                    setPassword={setPassword}
+                    confirmPassword={confirmPassword}
+                    setConfirmPassword={setConfirmPassword}
                     showPassword={showPassword}
-                    passwordLength={password.length}
-                    isDark={isDark}
+                    setShowPassword={setShowPassword}
+                    isTyping={isTyping}
+                    setIsTyping={setIsTyping}
+                    isPasswordFocused={isPasswordFocused}
+                    setIsPasswordFocused={setIsPasswordFocused}
+                    isSubmitting={isSubmitting}
+                    onSubmit={onSubmit}
+                    errorMsg={errorMsg}
+                    emailError={emailError}
+                    phoneError={phoneError}
+                    passwordError={passwordError}
+                    confirmPasswordError={confirmPasswordError}
+                    metrics={metrics}
                 />
-
-                <div
-                    className="flex items-center justify-center p-8 md:p-10 theme-transition"
-                    style={{ background: "var(--bg)" }}
-                >
-                    <RegisterForm
-                        email={email}
-                        setEmail={setEmail}
-                        phone={phone}
-                        setPhone={setPhone}
-                        password={password}
-                        setPassword={setPassword}
-                        confirmPassword={confirmPassword}
-                        setConfirmPassword={setConfirmPassword}
-                        showPassword={showPassword}
-                        setShowPassword={setShowPassword}
-                        isTyping={isTyping}
-                        setIsTyping={setIsTyping}
-                        isPasswordFocused={isPasswordFocused}
-                        setIsPasswordFocused={setIsPasswordFocused}
-                        isSubmitting={isSubmitting}
-                        onSubmit={onSubmit}
-                        errorMsg={errorMsg}
-                        emailError={emailError}
-                        phoneError={phoneError}
-                        passwordError={passwordError}
-                        confirmPasswordError={confirmPasswordError}
-                    />
-                </div>
-            </div>
-        </div>
+            )}
+        </AuthSplitShell>
     );
 }

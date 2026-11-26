@@ -3,9 +3,7 @@
 import { useState, useCallback } from "react";
 import { useTheme } from "@/context/ThemeContext";
 import { useI18n } from "@/context/I18nContext";
-import { ThemeToggle } from "./ThemeToggle";
-import { LangToggle } from "./LangToggle";
-import LeftPanel from "./LeftPanel";
+import { AuthSplitShell } from "./AuthSplitShell";
 import ForgotPasswordForm from "./ForgotPasswordForm";
 import { userGraphqlApi } from "@/api/graphql";
 
@@ -75,40 +73,33 @@ export default function ForgotPasswordPage() {
     );
 
     return (
-        <div className="h-screen relative overflow-hidden">
-            <div className="absolute top-4 right-4 z-50 flex items-center gap-1">
-                <LangToggle />
-                <ThemeToggle />
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 h-full">
-                <LeftPanel
+        <AuthSplitShell
+            preset="forgot"
+            left={{
+                isTyping,
+                isPasswordFocused: false,
+                showPassword: false,
+                passwordLength: 0,
+                isDark,
+            }}
+        >
+            {(metrics) => (
+                <ForgotPasswordForm
+                    email={email}
+                    setEmail={setEmail}
                     isTyping={isTyping}
-                    isPasswordFocused={false}
-                    showPassword={false}
-                    passwordLength={0}
-                    isDark={isDark}
+                    setIsTyping={setIsTyping}
+                    isSubmitting={isSubmitting}
+                    isSuccess={isSuccess}
+                    onSubmit={onSubmit}
+                    errorMsg={errorMsg}
+                    emailError={emailError}
+                    agreedToTerms={agreedToTerms}
+                    setAgreedToTerms={setAgreedToTerms}
+                    termsError={termsError}
+                    metrics={metrics}
                 />
-
-                <div
-                    className="flex items-center justify-center p-8 md:p-10 theme-transition"
-                    style={{ background: "var(--bg)" }}
-                >
-                    <ForgotPasswordForm
-                        email={email}
-                        setEmail={setEmail}
-                        isTyping={isTyping}
-                        setIsTyping={setIsTyping}
-                        isSubmitting={isSubmitting}
-                        isSuccess={isSuccess}
-                        onSubmit={onSubmit}
-                        errorMsg={errorMsg}
-                        emailError={emailError}
-                        agreedToTerms={agreedToTerms}
-                        setAgreedToTerms={setAgreedToTerms}
-                        termsError={termsError}
-                    />
-                </div>
-            </div>
-        </div>
+            )}
+        </AuthSplitShell>
     );
 }

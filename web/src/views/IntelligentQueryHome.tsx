@@ -114,7 +114,7 @@ export default function IntelligentQueryHome() {
 
   return (
     <div
-      className="flex h-screen theme-transition"
+      className="theme-transition flex h-[100dvh] min-h-0 overflow-hidden"
       style={{ background: "var(--bg)" }}
     >
       {/* ── Sidebar (always mounted, collapse to rail) ── */}
@@ -126,7 +126,7 @@ export default function IntelligentQueryHome() {
         onToggleCollapse={() => setIsSidebarOpen(!isSidebarOpen)}
       />
 
-      <main className="flex-1 flex flex-col relative min-w-0">
+      <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         {isEmpty ? (
           <>
             <div className="absolute top-4 right-4 z-50 flex items-center gap-1">

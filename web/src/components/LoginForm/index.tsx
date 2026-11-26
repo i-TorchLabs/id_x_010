@@ -12,6 +12,7 @@ import {
   TextField,
 } from "@heroui/react";
 import { useI18n } from "@/context/I18nContext";
+import type { AuthFormMetrics } from "@/hooks/useAuthFormMetrics";
 
 interface LoginFormProps {
   email: string;
@@ -31,6 +32,8 @@ interface LoginFormProps {
   passwordError: boolean;
   onSsoClick: () => void;
   isAdmin?: boolean;
+  /** 右栏容器驱动的比例尺（AuthSplitShell 注入） */
+  metrics?: AuthFormMetrics;
 }
 
 export default function LoginForm({
@@ -51,6 +54,7 @@ export default function LoginForm({
   passwordError,
   onSsoClick,
   isAdmin = false,
+  metrics: m,
 }: LoginFormProps) {
   const { t } = useI18n();
   const eyeIcon = showPassword ? (
@@ -89,35 +93,53 @@ export default function LoginForm({
     </svg>
   );
 
+  const logoBox = m?.logoBox ?? 56;
+  const logoIcon = m?.logoIcon ?? 28;
+
   return (
-    <div className="w-full max-w-100">
-      {/* Logo */}
-      <div className="flex justify-center mb-6">
+    <div className="w-full">
+      <div
+        className="flex justify-center"
+        style={{ marginBottom: m?.gapLogo ?? 24 }}
+      >
         <div
           className="flex items-center justify-center"
           style={{
-            width: 56,
-            height: 56,
-            borderRadius: "16px",
+            width: logoBox,
+            height: logoBox,
+            borderRadius: m?.logoRadius ?? 12,
           }}
         >
           <Image
             src="/favicon.ico"
             alt="Logo"
-            width={28}
-            height={28}
-            className="w-7 h-7"
+            width={logoIcon}
+            height={logoIcon}
+            style={{ width: logoIcon, height: logoIcon }}
             priority
           />
         </div>
       </div>
 
-      {/* Header */}
-      <div className="text-center mb-9">
-        <h1 className="text-[28px] font-semibold mb-1.5 leading-[1.14] tracking-[-0.28px] text-foreground">
+      <div
+        className="text-center"
+        style={{ marginBottom: m?.gapHeader ?? 36 }}
+      >
+        <h1
+          className="font-semibold text-foreground"
+          style={{
+            fontSize: m?.titleSize ?? 26,
+            lineHeight: 1.12,
+            letterSpacing: m ? `${m.trackingTitle}px` : "-0.26px",
+            marginBottom: m?.gapTitle ?? 8,
+          }}
+        >
           {isAdmin ? t("login.adminTitle") : t("login.welcomeTitle")}
         </h1>
-        <p className="text-[14px] text-muted">
+        <p
+          className="text-muted"
+          style={{ fontSize: m?.subSize ?? 14, lineHeight: 1.45 }}
+        >
           {isAdmin ? t("login.adminSubtitle") : t("login.userSubtitle")}
         </p>
       </div>
@@ -127,14 +149,17 @@ export default function LoginForm({
           void onSubmit(e);
         }}
       >
-        {/* Email Field */}
-        <div className="mb-5">
+        <div style={{ marginBottom: m?.gapField ?? 20 }}>
           <TextField
             fullWidth
             isInvalid={emailError}
             validationBehavior="aria"
           >
-            <Label htmlFor="email" className="text-sm font-semibold">
+            <Label
+              htmlFor="email"
+              className="font-semibold"
+              style={{ fontSize: m?.labelSize ?? 14 }}
+            >
               {t("login.emailLabel")}
             </Label>
             <Input
@@ -147,19 +172,23 @@ export default function LoginForm({
               onBlur={() => setIsTyping(false)}
               placeholder={t("login.emailPlaceholder")}
               autoComplete="off"
+              style={{ fontSize: m?.inputSize }}
             />
             {emailError && <FieldError>{t("login.errorInvalidEmail")}</FieldError>}
           </TextField>
         </div>
 
-        {/* Password Field */}
-        <div className="mb-5">
+        <div style={{ marginBottom: m?.gapField ?? 20 }}>
           <TextField
             fullWidth
             isInvalid={passwordError}
             validationBehavior="aria"
           >
-            <Label htmlFor="password" className="text-sm font-semibold">
+            <Label
+              htmlFor="password"
+              className="font-semibold"
+              style={{ fontSize: m?.labelSize ?? 14 }}
+            >
               {t("login.passwordLabel")}
             </Label>
             <div className="relative">
@@ -173,12 +202,17 @@ export default function LoginForm({
                 onBlur={() => setIsPasswordFocused(false)}
                 placeholder={t("login.passwordPlaceholder")}
                 className="pr-11"
+                style={{ fontSize: m?.inputSize }}
               />
               <button
                 type="button"
-                className="icon-btn-sm absolute right-2 top-1/2 -translate-y-1/2 z-10"
+                className="icon-btn-sm absolute right-2 top-1/2 z-10 -translate-y-1/2"
                 onClick={() => setShowPassword(!showPassword)}
-                aria-label={showPassword ? t("login.ariaHidePassword") : t("login.ariaShowPassword")}
+                aria-label={
+                  showPassword
+                    ? t("login.ariaHidePassword")
+                    : t("login.ariaShowPassword")
+                }
               >
                 {eyeIcon}
               </button>
@@ -189,27 +223,31 @@ export default function LoginForm({
           </TextField>
         </div>
 
-        {/* Options Group */}
-        <div className="flex items-center justify-between mb-6">
+        <div
+          className="flex items-center justify-between"
+          style={{ marginBottom: m?.gapOptions ?? 24 }}
+        >
           <Checkbox defaultSelected name="remember">
             <Checkbox.Content>
               <Checkbox.Control>
                 <Checkbox.Indicator />
               </Checkbox.Control>
-              <span className="text-sm">{t("login.rememberMe")}</span>
+              <span style={{ fontSize: m?.subSize ?? 14 }}>
+                {t("login.rememberMe")}
+              </span>
             </Checkbox.Content>
           </Checkbox>
           <a
             href="/f/010/forgot-password"
-            className="text-[14px] no-underline hover:underline text-foreground font-medium"
+            className="no-underline hover:underline font-medium text-foreground"
+            style={{ fontSize: m?.subSize ?? 14 }}
           >
             {t("login.forgotPassword")}
           </a>
         </div>
 
-        {/* Error Message */}
         {errorMsg && (
-          <Alert status="danger" className="mb-4">
+          <Alert status="danger" style={{ marginBottom: m?.gapAlert ?? 16 }}>
             <Alert.Indicator />
             <Alert.Content>
               <Alert.Description>{errorMsg}</Alert.Description>
@@ -217,7 +255,6 @@ export default function LoginForm({
           </Alert>
         )}
 
-        {/* Submit */}
         <Button
           type="submit"
           fullWidth
@@ -225,6 +262,11 @@ export default function LoginForm({
           size="lg"
           isDisabled={isSubmitting}
           className="rounded-full font-semibold"
+          style={{
+            minHeight: m?.btnMinH ?? 44,
+            fontSize: m?.btnFont ?? 16,
+            letterSpacing: m ? `${m.trackingBtn}px` : undefined,
+          }}
         >
           {isSubmitting
             ? t("login.signingIn")
@@ -233,13 +275,26 @@ export default function LoginForm({
               : t("login.logIn")}
         </Button>
 
-        {/* SSO 分隔与入口（仅普通用户登录页展示，管理后台不提供 SSO） */}
         {!isAdmin && (
           <>
-            <div className="flex items-center gap-3 my-5">
-              <span className="flex-1 h-px" style={{ background: "var(--divider)" }} />
-              <span className="text-xs text-muted">{t("login.or")}</span>
-              <span className="flex-1 h-px" style={{ background: "var(--divider)" }} />
+            <div
+              className="flex items-center gap-3"
+              style={{ marginTop: m?.gapField ?? 20, marginBottom: m?.gapField ?? 20 }}
+            >
+              <span
+                className="h-px flex-1"
+                style={{ background: "var(--divider)" }}
+              />
+              <span
+                className="text-muted"
+                style={{ fontSize: m ? m.subSize * 0.85 : 12 }}
+              >
+                {t("login.or")}
+              </span>
+              <span
+                className="h-px flex-1"
+                style={{ background: "var(--divider)" }}
+              />
             </div>
             <Button
               type="button"
@@ -247,6 +302,10 @@ export default function LoginForm({
               variant="secondary"
               size="lg"
               className="rounded-full font-semibold"
+              style={{
+                minHeight: m?.btnMinH ?? 44,
+                fontSize: m?.btnFont ?? 16,
+              }}
               onPress={onSsoClick}
             >
               {t("login.signInWithSso")}
@@ -255,14 +314,19 @@ export default function LoginForm({
         )}
       </form>
 
-      {/* Footer link */}
-      <div className="text-center mt-8 text-[14px] text-muted">
+      <div
+        className="text-center text-muted"
+        style={{
+          marginTop: m?.gapFooter ?? 32,
+          fontSize: m?.subSize ?? 14,
+        }}
+      >
         {isAdmin ? (
           <>
             {t("login.adminFooterPrompt")}{" "}
             <a
               href="/f/010/user-login"
-              className="no-underline hover:underline text-foreground font-semibold"
+              className="no-underline hover:underline font-semibold text-foreground"
             >
               {t("login.userSignInLink")}
             </a>
@@ -273,15 +337,15 @@ export default function LoginForm({
               {t("login.noAccountPrompt")}{" "}
               <a
                 href="/f/010/user-register"
-                className="no-underline hover:underline text-foreground font-semibold"
+                className="no-underline hover:underline font-semibold text-foreground"
               >
                 {t("login.signUpLink")}
               </a>
             </div>
-            <div className="mt-2">
+            <div style={{ marginTop: m ? Math.round(8 * m.spaceScale) : 8 }}>
               <a
                 href="/f/010/admin-login"
-                className="no-underline hover:underline text-foreground font-semibold"
+                className="no-underline hover:underline font-semibold text-foreground"
               >
                 {t("login.adminLoginLink")}
               </a>

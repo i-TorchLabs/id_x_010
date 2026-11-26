@@ -12,6 +12,7 @@ import {
   TextField,
 } from "@heroui/react";
 import { useI18n } from "@/context/I18nContext";
+import type { AuthFormMetrics } from "@/hooks/useAuthFormMetrics";
 
 interface RegisterFormProps {
   email: string;
@@ -35,6 +36,7 @@ interface RegisterFormProps {
   phoneError: boolean;
   passwordError: boolean;
   confirmPasswordError: boolean;
+  metrics?: AuthFormMetrics;
 }
 
 export default function RegisterForm({
@@ -59,6 +61,7 @@ export default function RegisterForm({
   phoneError,
   passwordError,
   confirmPasswordError,
+  metrics: m,
 }: RegisterFormProps) {
   const { t } = useI18n();
   const eyeIcon = showPassword ? (
@@ -97,33 +100,47 @@ export default function RegisterForm({
     </svg>
   );
 
+  const logoBox = m?.logoBox ?? 56;
+  const logoIcon = m?.logoIcon ?? 28;
+  const fieldMb = m?.gapField ?? 20;
+
   return (
-    <div className="w-full max-w-100">
-      <div className="flex justify-center mb-6">
+    <div className="w-full">
+      <div className="flex justify-center" style={{ marginBottom: m?.gapLogo ?? 24 }}>
         <div
           className="flex items-center justify-center"
           style={{
-            width: 56,
-            height: 56,
-            borderRadius: "16px",
+            width: logoBox,
+            height: logoBox,
+            borderRadius: m?.logoRadius ?? 12,
           }}
         >
           <Image
             src="/favicon.ico"
             alt="Logo"
-            width={28}
-            height={28}
-            className="w-7 h-7"
+            width={logoIcon}
+            height={logoIcon}
+            style={{ width: logoIcon, height: logoIcon }}
             priority
           />
         </div>
       </div>
 
-      <div className="text-center mb-9">
-        <h1 className="text-[28px] font-semibold mb-1.5 leading-[1.14] tracking-[-0.28px] text-foreground">
+      <div className="text-center" style={{ marginBottom: m?.gapHeader ?? 36 }}>
+        <h1
+          className="font-semibold text-foreground"
+          style={{
+            fontSize: m?.titleSize ?? 26,
+            lineHeight: 1.12,
+            letterSpacing: m ? `${m.trackingTitle}px` : "-0.26px",
+            marginBottom: m?.gapTitle ?? 8,
+          }}
+        >
           {t("register.title")}
         </h1>
-        <p className="text-[14px] text-muted">{t("register.subtitle")}</p>
+        <p className="text-muted" style={{ fontSize: m?.subSize ?? 14, lineHeight: 1.45 }}>
+          {t("register.subtitle")}
+        </p>
       </div>
 
       <form
@@ -132,7 +149,7 @@ export default function RegisterForm({
         }}
       >
         {/* Email Field */}
-        <div className="mb-5">
+        <div style={{ marginBottom: fieldMb }}>
           <TextField
             fullWidth
             isInvalid={emailError}
@@ -157,7 +174,7 @@ export default function RegisterForm({
         </div>
 
         {/* Phone Field */}
-        <div className="mb-5">
+        <div style={{ marginBottom: fieldMb }}>
           <TextField
             fullWidth
             isInvalid={phoneError}
@@ -185,7 +202,7 @@ export default function RegisterForm({
         </div>
 
         {/* Password Field */}
-        <div className="mb-5">
+        <div style={{ marginBottom: fieldMb }}>
           <TextField
             fullWidth
             isInvalid={passwordError}
@@ -220,7 +237,7 @@ export default function RegisterForm({
         </div>
 
         {/* Confirm Password Field */}
-        <div className="mb-5">
+        <div style={{ marginBottom: fieldMb }}>
           <TextField
             fullWidth
             isInvalid={confirmPasswordError}
@@ -244,13 +261,16 @@ export default function RegisterForm({
         </div>
 
         {/* Terms Checkbox */}
-        <div className="flex items-center justify-between mb-6">
+        <div
+          className="flex items-center justify-between"
+          style={{ marginBottom: m?.gapOptions ?? 24 }}
+        >
           <Checkbox name="terms">
             <Checkbox.Content>
               <Checkbox.Control>
                 <Checkbox.Indicator />
               </Checkbox.Control>
-              <span className="text-sm">
+              <span style={{ fontSize: m?.subSize ?? 14 }}>
                 {t("forgotPassword.termsLabel")}
               </span>
             </Checkbox.Content>
@@ -259,7 +279,7 @@ export default function RegisterForm({
 
         {/* Error Message */}
         {errorMsg && (
-          <Alert status="danger" className="mb-4">
+          <Alert status="danger" style={{ marginBottom: m?.gapAlert ?? 16 }}>
             <Alert.Indicator />
             <Alert.Content>
               <Alert.Description>{errorMsg}</Alert.Description>
@@ -274,12 +294,20 @@ export default function RegisterForm({
           size="lg"
           isDisabled={isSubmitting}
           className="rounded-full font-semibold"
+          style={{
+            minHeight: m?.btnMinH ?? 44,
+            fontSize: m?.btnFont ?? 16,
+            letterSpacing: m ? `${m.trackingBtn}px` : undefined,
+          }}
         >
           {isSubmitting ? t("register.signingUp") : t("register.signUpButton")}
         </Button>
       </form>
 
-      <div className="text-center mt-8 text-[14px] text-muted">
+      <div
+        className="text-center text-muted"
+        style={{ marginTop: m?.gapFooter ?? 32, fontSize: m?.subSize ?? 14 }}
+      >
         {t("register.hasAccountPrompt")}{" "}
         <a
           href="/f/010/user-login"

@@ -12,6 +12,7 @@ import {
     TextField,
 } from "@heroui/react";
 import { useI18n } from "@/context/I18nContext";
+import type { AuthFormMetrics } from "@/hooks/useAuthFormMetrics";
 
 interface ForgotPasswordFormProps {
     email: string;
@@ -26,6 +27,7 @@ interface ForgotPasswordFormProps {
     agreedToTerms: boolean;
     setAgreedToTerms: (agreed: boolean) => void;
     termsError: boolean;
+    metrics?: AuthFormMetrics;
 }
 
 export default function ForgotPasswordForm({
@@ -41,15 +43,27 @@ export default function ForgotPasswordForm({
     agreedToTerms,
     setAgreedToTerms,
     termsError,
+    metrics: m,
 }: ForgotPasswordFormProps) {
     const { t } = useI18n();
+    const logoBox = m?.logoBox ?? 56;
+    const logoIcon = m?.logoIcon ?? 28;
+
     if (isSuccess) {
+        const okSize = Math.round(64 * (m?.typeScale ?? 1));
         return (
-            <div className="w-full max-w-100">
-                <div className="flex justify-center mb-6">
-                    <div className="w-16 h-16 rounded-full bg-success flex items-center justify-center">
+            <div className="w-full">
+                <div
+                    className="flex justify-center"
+                    style={{ marginBottom: m?.gapLogo ?? 24 }}
+                >
+                    <div
+                        className="flex items-center justify-center rounded-full bg-success"
+                        style={{ width: okSize, height: okSize }}
+                    >
                         <svg
-                            className="w-8 h-8 text-success-foreground"
+                            className="text-success-foreground"
+                            style={{ width: okSize / 2, height: okSize / 2 }}
                             fill="none"
                             stroke="currentColor"
                             viewBox="0 0 24 24"
@@ -64,11 +78,25 @@ export default function ForgotPasswordForm({
                     </div>
                 </div>
 
-                <div className="text-center mb-9">
-                    <h1 className="text-[28px] font-semibold mb-1.5 leading-[1.14] tracking-[-0.28px] text-foreground">
+                <div
+                    className="text-center"
+                    style={{ marginBottom: m?.gapHeader ?? 36 }}
+                >
+                    <h1
+                        className="font-semibold text-foreground"
+                        style={{
+                            fontSize: m?.titleSize ?? 26,
+                            lineHeight: 1.12,
+                            letterSpacing: m ? `${m.trackingTitle}px` : "-0.26px",
+                            marginBottom: m?.gapTitle ?? 8,
+                        }}
+                    >
                         {t("forgotPassword.successTitle")}
                     </h1>
-                    <p className="text-[14px] text-muted">
+                    <p
+                        className="text-muted"
+                        style={{ fontSize: m?.subSize ?? 14, lineHeight: 1.45 }}
+                    >
                         {t("forgotPassword.successBody", { email })}
                     </p>
                 </div>
@@ -78,6 +106,10 @@ export default function ForgotPasswordForm({
                     variant="primary"
                     size="lg"
                     className="rounded-full font-semibold"
+                    style={{
+                        minHeight: m?.btnMinH ?? 44,
+                        fontSize: m?.btnFont ?? 16,
+                    }}
                     onPress={() => (window.location.href = "/f/010/user-login")}
                 >
                     {t("forgotPassword.backToLogin")}
@@ -87,32 +119,49 @@ export default function ForgotPasswordForm({
     }
 
     return (
-        <div className="w-full max-w-100">
-            <div className="flex justify-center mb-6">
+        <div className="w-full">
+            <div
+                className="flex justify-center"
+                style={{ marginBottom: m?.gapLogo ?? 24 }}
+            >
                 <div
                     className="flex items-center justify-center"
                     style={{
-                        width: 56,
-                        height: 56,
-                        borderRadius: "16px",
+                        width: logoBox,
+                        height: logoBox,
+                        borderRadius: m?.logoRadius ?? 12,
                     }}
                 >
                     <Image
                         src="/favicon.ico"
                         alt="Logo"
-                        width={28}
-                        height={28}
-                        className="w-7 h-7"
+                        width={logoIcon}
+                        height={logoIcon}
+                        style={{ width: logoIcon, height: logoIcon }}
                         priority
                     />
                 </div>
             </div>
 
-            <div className="text-center mb-9">
-                <h1 className="text-[28px] font-semibold mb-1.5 leading-[1.14] tracking-[-0.28px] text-foreground">
+            <div
+                className="text-center"
+                style={{ marginBottom: m?.gapHeader ?? 36 }}
+            >
+                <h1
+                    className="font-semibold text-foreground"
+                    style={{
+                        fontSize: m?.titleSize ?? 26,
+                        lineHeight: 1.12,
+                        letterSpacing: m ? `${m.trackingTitle}px` : "-0.26px",
+                        marginBottom: m?.gapTitle ?? 8,
+                    }}
+                >
                     {t("forgotPassword.title")}
                 </h1>
-                <p className="text-[14px] text-muted">
+                <p
+                    className="text-muted"
+                    style={{ fontSize: m?.subSize ?? 14, lineHeight: 1.45 }}
+                >
                     {t("forgotPassword.subtitle")}
                 </p>
             </div>
@@ -122,13 +171,17 @@ export default function ForgotPasswordForm({
                     void onSubmit(e);
                 }}
             >
-                <div className="mb-5">
+                <div style={{ marginBottom: m?.gapField ?? 20 }}>
                     <TextField
                         fullWidth
                         isInvalid={emailError}
                         validationBehavior="aria"
                     >
-                        <Label htmlFor="email" className="text-sm font-semibold">
+                        <Label
+                            htmlFor="email"
+                            className="font-semibold"
+                            style={{ fontSize: m?.labelSize ?? 14 }}
+                        >
                             {t("forgotPassword.emailLabel")}
                         </Label>
                         <Input
@@ -141,15 +194,17 @@ export default function ForgotPasswordForm({
                             onBlur={() => setIsTyping(false)}
                             placeholder={t("forgotPassword.emailPlaceholder")}
                             autoComplete="off"
+                            style={{ fontSize: m?.inputSize }}
                         />
                         {emailError && (
-                            <FieldError>{t("forgotPassword.errorValidEmailRequired")}</FieldError>
+                            <FieldError>
+                                {t("forgotPassword.errorValidEmailRequired")}
+                            </FieldError>
                         )}
                     </TextField>
                 </div>
 
-                {/* Terms of Service Checkbox */}
-                <div className="mb-6">
+                <div style={{ marginBottom: m?.gapOptions ?? 24 }}>
                     <Checkbox
                         isSelected={agreedToTerms}
                         onChange={setAgreedToTerms}
@@ -160,20 +215,32 @@ export default function ForgotPasswordForm({
                             <Checkbox.Control>
                                 <Checkbox.Indicator />
                             </Checkbox.Control>
-                            <span className="text-sm text-muted">
+                            <span
+                                className="text-muted"
+                                style={{ fontSize: m?.subSize ?? 14 }}
+                            >
                                 {t("forgotPassword.termsLabel")}
                             </span>
                         </Checkbox.Content>
                     </Checkbox>
                     {termsError && (
-                        <p className="text-[12px] mt-1 text-danger">
+                        <p
+                            className="text-danger"
+                            style={{
+                                fontSize: 12 * (m?.typeScale ?? 1),
+                                marginTop: 4,
+                            }}
+                        >
                             {t("forgotPassword.errorTermsRequired")}
                         </p>
                     )}
                 </div>
 
                 {errorMsg && (
-                    <Alert status="danger" className="mb-4">
+                    <Alert
+                        status="danger"
+                        style={{ marginBottom: m?.gapAlert ?? 16 }}
+                    >
                         <Alert.Indicator />
                         <Alert.Content>
                             <Alert.Description>{errorMsg}</Alert.Description>
@@ -187,17 +254,31 @@ export default function ForgotPasswordForm({
                     variant="primary"
                     size="lg"
                     isDisabled={isSubmitting}
-                    className="rounded-full font-semibold mb-3.5"
+                    className="rounded-full font-semibold"
+                    style={{
+                        minHeight: m?.btnMinH ?? 44,
+                        fontSize: m?.btnFont ?? 16,
+                        letterSpacing: m ? `${m.trackingBtn}px` : undefined,
+                        marginBottom: m ? Math.round(14 * m.spaceScale) : 14,
+                    }}
                 >
-                    {isSubmitting ? t("forgotPassword.submitting") : t("forgotPassword.submitButton")}
+                    {isSubmitting
+                        ? t("forgotPassword.submitting")
+                        : t("forgotPassword.submitButton")}
                 </Button>
             </form>
 
-            <div className="text-center mt-8 text-[14px] text-muted">
+            <div
+                className="text-center text-muted"
+                style={{
+                    marginTop: m?.gapFooter ?? 32,
+                    fontSize: m?.subSize ?? 14,
+                }}
+            >
                 {t("forgotPassword.rememberPassword")}{" "}
                 <a
                     href="/f/010/user-login"
-                    className="no-underline hover:underline text-foreground font-semibold"
+                    className="no-underline hover:underline font-semibold text-foreground"
                 >
                     {t("login.signInLink")}
                 </a>

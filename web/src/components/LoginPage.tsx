@@ -4,9 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTheme } from "@/context/ThemeContext";
 import { useI18n } from "@/context/I18nContext";
-import { ThemeToggle } from "./ThemeToggle";
-import { LangToggle } from "./LangToggle";
-import LeftPanel from "./LeftPanel";
+import { AuthSplitShell } from "./AuthSplitShell";
 import LoginForm from "./LoginForm";
 import { userGraphqlApi } from "@/api/graphql";
 import { clearSsoLoginFlag, redirectToAdfsAuthorize } from "@/utils/sso";
@@ -149,45 +147,38 @@ export default function LoginPage({ mode = "user" }: LoginPageProps) {
     );
 
     return (
-        <div className="h-screen relative overflow-hidden">
-            <div className="absolute top-4 right-4 z-50 flex items-center gap-1">
-                <LangToggle />
-                <ThemeToggle />
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 h-full">
-                <LeftPanel
-                    isTyping={isTyping}
-                    isPasswordFocused={isPasswordFocused}
+        <AuthSplitShell
+            preset="login"
+            left={{
+                isTyping,
+                isPasswordFocused,
+                showPassword,
+                passwordLength: password.length,
+                isDark,
+            }}
+        >
+            {(metrics) => (
+                <LoginForm
+                    email={email}
+                    setEmail={setEmail}
+                    password={password}
+                    setPassword={setPassword}
                     showPassword={showPassword}
-                    passwordLength={password.length}
-                    isDark={isDark}
+                    setShowPassword={setShowPassword}
+                    isTyping={isTyping}
+                    setIsTyping={setIsTyping}
+                    isPasswordFocused={isPasswordFocused}
+                    setIsPasswordFocused={setIsPasswordFocused}
+                    isSubmitting={isSubmitting}
+                    onSubmit={onSubmit}
+                    errorMsg={errorMsg}
+                    emailError={emailError}
+                    passwordError={passwordError}
+                    onSsoClick={handleSsoClick}
+                    isAdmin={isAdmin}
+                    metrics={metrics}
                 />
-
-                <div
-                    className="flex items-center justify-center p-8 md:p-10 theme-transition"
-                    style={{ background: "var(--bg)" }}
-                >
-                    <LoginForm
-                        email={email}
-                        setEmail={setEmail}
-                        password={password}
-                        setPassword={setPassword}
-                        showPassword={showPassword}
-                        setShowPassword={setShowPassword}
-                        isTyping={isTyping}
-                        setIsTyping={setIsTyping}
-                        isPasswordFocused={isPasswordFocused}
-                        setIsPasswordFocused={setIsPasswordFocused}
-                        isSubmitting={isSubmitting}
-                        onSubmit={onSubmit}
-                        errorMsg={errorMsg}
-                        emailError={emailError}
-                        passwordError={passwordError}
-                        onSsoClick={handleSsoClick}
-                        isAdmin={isAdmin}
-                    />
-                </div>
-            </div>
-        </div>
+            )}
+        </AuthSplitShell>
     );
 }

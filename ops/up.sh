@@ -137,8 +137,11 @@ fi
 #    haproxy:8080 -> pod:8080 -> 宿主机:${POD_PORT}
 # ============================================
 if ! podman pod exists "${PROJECT_NAME}"; then
+  # ChinaRouter HK 节点固定解析：避免走 GA 公网线路导致 TLS 后空回复。
+  # Pod 级 --add-host 写入共享网络命名空间，service/web/haproxy 均可解析。
   podman pod create --name "${PROJECT_NAME}" \
-    -p "${POD_PORT}:8080"
+    -p "${POD_PORT}:8080" \
+    --add-host=apihk.chinarouter.net:47.84.61.46
   echo "[up] Pod ${PROJECT_NAME} 已创建，端口映射 ${POD_PORT}:8080"
 fi
 
@@ -212,6 +215,50 @@ else
   echo "[up]       2) rootful 部署检查 firewalld/nftables 是否拦截容器源网段的 FORWARD/MASQUERADE；" >&2
   echo "[up]       3) 数据库侧 pg_hba.conf 须放行宿主机 IP（容器出站经 NAT 后源地址即宿主机 IP）；" >&2
   echo "[up]       4) 看后端具体报错: podman logs ${PROJECT_NAME}-service" >&2
+fi
+
+# 外部 LLM 网关出网预检（不阻断启动）。
+# 现象对齐：TLS 能建连但对端空回复 / RemoteProtocolError，与「Key 无效」不同；
+# 宿主机与容器同时失败时，优先查网关侧 IP 白名单 / 线路，而非 Pod 网络策略。
+LLM_EGRESS_URL="${LLM_EGRESS_URL:-https://apihk.chinarouter.net/v1/models}"
+echo "[up] 检测 LLM 网关出网 ${LLM_EGRESS_URL} ..."
+probe_llm_http() {
+  # $1=host|container
+  local where="$1"
+  if [ "${where}" = "host" ]; then
+    curl -sS -o /dev/null --connect-timeout 5 --max-time 12 \
+      -w '%{http_code}' "${LLM_EGRESS_URL}" 2>/dev/null || echo "000"
+  else
+    podman exec "${PROJECT_NAME}-service" python -c "
+import urllib.request
+try:
+    r = urllib.request.urlopen('${LLM_EGRESS_URL}', timeout=12)
+    print(r.status)
+except Exception:
+    print('000')
+" 2>/dev/null || echo "000"
+  fi
+}
+host_llm_code="$(probe_llm_http host | tr -d '\r\n')"
+ctr_llm_code="$(probe_llm_http container | tr -d '\r\n')"
+# 2xx/3xx/401/403 都算「链路可达」（401/403 说明网关在回 HTTP，只是鉴权）
+llm_reachable() {
+  case "$1" in
+    2*|3*|401|403) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+if llm_reachable "${host_llm_code}" && llm_reachable "${ctr_llm_code}"; then
+  echo "[up] LLM 网关出网正常（host=${host_llm_code}, container=${ctr_llm_code}）"
+elif llm_reachable "${host_llm_code}" && ! llm_reachable "${ctr_llm_code}"; then
+  echo "[up] 警告: 宿主机可达 LLM 网关（${host_llm_code}），容器不可达（${ctr_llm_code}）——偏容器网络/代理" >&2
+  echo "[up] 排查: podman info NetworkBackend；对比 HTTP(S)_PROXY；必要时 --network=host 试验" >&2
+elif ! llm_reachable "${host_llm_code}" && ! llm_reachable "${ctr_llm_code}"; then
+  echo "[up] 警告: 宿主机与容器均无法从 LLM 网关拿到 HTTP 响应（host=${host_llm_code}, container=${ctr_llm_code}）" >&2
+  echo "[up] 这通常不是镜像构建问题：DNS/TCP/TLS 可能正常，但对端空回复（RemoteProtocolError）。" >&2
+  echo "[up] 请向 ChinaRouter 确认本机出口 IP 是否在白名单；可用 curl ifconfig.me 查看出口。" >&2
+else
+  echo "[up] 警告: LLM 网关探测异常 host=${host_llm_code} container=${ctr_llm_code}" >&2
 fi
 
 # -- web --

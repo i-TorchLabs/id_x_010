@@ -1317,7 +1317,7 @@ export default function ChatHome() {
 
   return (
     <div
-      className="flex h-screen theme-transition"
+      className="theme-transition flex h-[100dvh] min-h-0 overflow-hidden"
       style={{ background: "var(--bg)" }}
     >
       {/* ── Left Panel: Sidebar (always mounted, collapse to rail) ── */}
@@ -1341,7 +1341,7 @@ export default function ChatHome() {
       />
 
       {/* Main Chat Area */}
-      <main className="flex-1 flex flex-col relative min-w-0">
+      <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         {/* Chat Content */}
         {isEmpty ? (
           <>

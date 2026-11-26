@@ -252,6 +252,23 @@ def friendly_llm_error(e: Exception, model_name: str = "") -> str:
     if "timeout" in cls or "timed out" in lower or "timeout" in lower:
         return "模型请求超时，请稍后重试"
 
+    # TLS 后对端空回复 / 无 HTTP 状态码即断连：多为网关线路或出口 IP 策略，
+    # 与「Key 无效 / 模型名错误」不同（后者通常会返回 4xx JSON）。
+    if (
+        "server disconnected" in lower
+        or "remoteprotocol" in cls
+        or "remoteprotocolerror" in lower
+        or "empty reply" in lower
+        or "without sending a response" in lower
+        or "remotely closed" in lower
+        or "remote end closed" in lower
+    ):
+        return (
+            "模型网关在建立连接后未返回任何响应即断开（常见于出口 IP 未放行或"
+            "网关线路异常）。请向网关方确认本机出口 IP 白名单，或在「模型设置」"
+            "中更换可用的 base_url / 提供商后重试"
+        )
+
     # 连接失败
     if "connection" in cls or "connect" in lower or "name or service not known" in lower:
         return "无法连接模型服务，请检查访问地址（base_url）是否正确以及网络是否可达"

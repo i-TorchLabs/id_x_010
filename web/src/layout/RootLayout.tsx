@@ -18,7 +18,7 @@ export default function RootLayout({
 }>) {
     return (
         <html lang="en" className="antialiased">
-            <body className="h-screen overflow-hidden">
+            <body className="h-[100dvh] overflow-hidden">
                 <Providers>{children}</Providers>
             </body>
         </html>

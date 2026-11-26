@@ -62,7 +62,7 @@ export function CenterHero({
                 }}
             />
 
-            <div className="w-full max-w-270 relative z-10 flex-1 flex flex-col min-h-0">
+            <div className="relative z-10 flex min-h-0 w-full max-w-[min(67.5rem,100%)] flex-1 flex-col px-[var(--wb-pad-x,1rem)]">
                 {/*整组内容（图标 + 标题 + Input）水平 + 垂直双居中：
                   - flex-1 + justify-center：占满外层高度并垂直居中
                   - items-center：水平居中（图标/Badge/标题/Input 整体居中）
@@ -125,11 +125,11 @@ export function CenterHero({
                         className="text-center"
                     >
                         {/* Badge */}
-                        <div className="flex justify-center mb-5">
+                        <div className="mb-5 flex justify-center">
                             <span
                                 className="font-text"
                                 style={{
-                                    fontSize: "11px",
+                                    fontSize: "calc(11px * var(--wb-type, 1))",
                                     fontWeight: 600,
                                     letterSpacing: "0.1em",
                                     textTransform: "uppercase",
@@ -147,9 +147,9 @@ export function CenterHero({
                         <h1
                             className="font-display"
                             style={{
-                                fontSize: "48px",
+                                fontSize: "var(--wb-hero-title, clamp(1.75rem, 4vw + 0.5rem, 3rem))",
                                 fontWeight: 600,
-                                letterSpacing: "-0.48px",
+                                letterSpacing: "-0.02em",
                                 lineHeight: 1.05,
                                 color: "var(--fg1)",
                             }}
@@ -159,13 +159,13 @@ export function CenterHero({
                         <motion.p
                             className="font-text"
                             style={{
-                                fontSize: "15px",
+                                fontSize: "var(--wb-hero-sub, clamp(0.8125rem, 0.5vw + 0.7rem, 0.9375rem))",
                                 lineHeight: 1.5,
                                 letterSpacing: "-0.15px",
                                 fontWeight: 400,
                                 color: "var(--fg3)",
-                                maxWidth: "520px",
-                                margin: "20px auto 0",
+                                maxWidth: "min(32.5rem, 100%)",
+                                margin: "calc(20px * var(--wb-space, 1)) auto 0",
                             }}
                             initial={{ opacity: 0, y: 10 }}
                             animate={{ opacity: 1, y: 0 }}
@@ -175,9 +175,11 @@ export function CenterHero({
                         </motion.p>
                     </motion.div>
 
-                    {/* Input Area —— 紧贴副标题下方（marginTop 32px，
-                        与原 mb-7 / margin 20px 等节奏一致），不再贴底 */}
-                    <div className="w-full" style={{ marginTop: "32px" }}>
+                    {/* Input Area —— 间距随 --wb-space 缩放 */}
+                    <div
+                        className="w-full"
+                        style={{ marginTop: "calc(32px * var(--wb-space, 1))" }}
+                    >
                         <motion.div
                             initial={{ opacity: 0, y: 24 }}
                             animate={{ opacity: 1, y: 0 }}

@@ -63,7 +63,7 @@ export function PagedTableShell<T>({
   total,
   colCount,
   emptyText,
-  maxHeight = 560,
+  maxHeight,
   children,
 }: {
   pagedRows: T[];
@@ -73,17 +73,19 @@ export function PagedTableShell<T>({
   total: number;
   colCount: number;
   emptyText: string;
-  maxHeight?: number;
+  maxHeight?: number | string;
   children: React.ReactNode;
 }) {
   const { t } = useI18n();
+  // 默认随视口 --wb-table-max-h；调用方可显式覆盖
+  const resolvedMaxH = maxHeight ?? "var(--wb-table-max-h, 560px)";
 
   return (
     <div style={{ background: "var(--surface-1)", border: "0.5px solid var(--divider)", borderRadius: 12, overflow: "hidden" }}>
       {/* 滚动容器：tbody 超出 maxHeight 时鼠标滚轮上下滚动；表头 sticky 固定 */}
       <div
         style={{
-          maxHeight,
+          maxHeight: resolvedMaxH,
           overflowY: "auto",
           scrollbarWidth: "thin",
           scrollbarGutter: "stable",

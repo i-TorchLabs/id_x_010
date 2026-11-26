@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Avatar, Button, Separator } from "@heroui/react";
 import { motion } from "framer-motion";
 import { PromptPanel } from "./PromptPanel";
@@ -122,7 +123,27 @@ export function ChatSidebar({
     const userName = userNameProp ?? t("sidebar.defaultUserName");
     const userEmail = userEmailProp ?? t("sidebar.defaultUserEmail");
     const showModelSection = modelType !== undefined && onModelChange;
-    const width = isCollapsed ? COLLAPSED_WIDTH : EXPANDED_WIDTH;
+
+    // 侧栏宽度随 --wb-sidebar-* 视口变量缩放（ViewportScaleProvider）
+    const [expandedW, setExpandedW] = useState(EXPANDED_WIDTH);
+    const [railW, setRailW] = useState(COLLAPSED_WIDTH);
+    useEffect(() => {
+        const read = () => {
+            const cs = getComputedStyle(document.documentElement);
+            const ew = parseFloat(cs.getPropertyValue("--wb-sidebar-w"));
+            const rw = parseFloat(cs.getPropertyValue("--wb-sidebar-rail"));
+            if (!Number.isNaN(ew) && ew > 0) setExpandedW(ew);
+            if (!Number.isNaN(rw) && rw > 0) setRailW(rw);
+        };
+        read();
+        window.addEventListener("resize", read);
+        window.visualViewport?.addEventListener("resize", read);
+        return () => {
+            window.removeEventListener("resize", read);
+            window.visualViewport?.removeEventListener("resize", read);
+        };
+    }, []);
+    const width = isCollapsed ? railW : expandedW;
 
     const iconBtnBase: React.CSSProperties = {
         display: "flex",
@@ -254,7 +275,7 @@ export function ChatSidebar({
             style={{ background: "var(--bg)" }}
         >
             <div
-                className="w-72 h-full flex flex-col"
+                className="flex h-full w-full flex-col"
                 style={{ borderRight: "0.5px solid var(--divider)" }}
             >
                 {/* ── Brand row + collapse button at right-upper corner ── */}

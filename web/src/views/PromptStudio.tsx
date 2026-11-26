@@ -112,8 +112,23 @@ export function PromptStudio() {
   }, [selectedKey]);
 
   return (
-    <div style={{ padding: 24, maxWidth: 1100, margin: "0 auto" }}>
-      <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16 }}>Prompt Studio</h2>
+    <div
+      className="h-[100dvh] min-h-0 overflow-auto"
+      style={{
+        padding: "var(--wb-pad-y, 24px) var(--wb-pad-x, 24px)",
+        maxWidth: "min(1100px, 100%)",
+        margin: "0 auto",
+      }}
+    >
+      <h2
+        style={{
+          fontSize: "calc(18px * var(--wb-type, 1))",
+          fontWeight: 600,
+          marginBottom: 16,
+        }}
+      >
+        Prompt Studio
+      </h2>
 
       {message && (
         <motion.div

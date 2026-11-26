@@ -76,7 +76,7 @@ export default function OAuthCallbackPage() {
   }, []);
 
   return (
-    <div className="flex h-screen items-center justify-center">
+    <div className="flex h-[100dvh] items-center justify-center">
       <p>Completing SSO sign-in...</p>
     </div>
   );

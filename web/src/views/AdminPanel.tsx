@@ -105,62 +105,114 @@ export function AdminPanel() {
   ];
 
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg)", color: "var(--fg1)" }}>
+    <div
+      className="flex min-h-0 flex-col overflow-hidden"
+      style={{
+        height: "100dvh",
+        background: "var(--bg)",
+        color: "var(--fg1)",
+      }}
+    >
       {/* Header */}
-      <div style={{
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "0 24px", height: 56, borderBottom: "0.5px solid var(--divider)",
-        background: "var(--surface-1)",
-      }}>
-        <span style={{ fontSize: 16, fontWeight: 600 }}>{t("admin.headerTitle")}</span>
+      <div
+        className="flex shrink-0 items-center justify-between"
+        style={{
+          padding: "0 var(--wb-pad-x, 24px)",
+          height: "var(--wb-nav-h, 48px)",
+          minHeight: 44,
+          borderBottom: "0.5px solid var(--divider)",
+          background: "var(--surface-1)",
+        }}
+      >
+        <span style={{ fontSize: "calc(15px * var(--wb-type, 1))", fontWeight: 600 }}>
+          {t("admin.headerTitle")}
+        </span>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <LangToggle />
           <ThemeToggle />
-          <Button size="sm" variant="ghost" onPress={handleLogout} style={{ fontSize: 13 }}>{t("admin.logout")}</Button>
+          <Button size="sm" variant="ghost" onPress={handleLogout} style={{ fontSize: 13 }}>
+            {t("admin.logout")}
+          </Button>
         </div>
       </div>
 
       {/* Tabs */}
-      <div style={{ display: "flex", gap: 0,         borderBottom: "0.5px solid var(--divider)", paddingLeft: 24, paddingRight: 24 }}>
-        {tabs.map((t) => (
+      <div
+        className="flex shrink-0"
+        style={{
+          gap: 0,
+          borderBottom: "0.5px solid var(--divider)",
+          paddingLeft: "var(--wb-pad-x, 24px)",
+          paddingRight: "var(--wb-pad-x, 24px)",
+        }}
+      >
+        {tabs.map((tabItem) => (
           <button
-            key={t.key}
-            onClick={() => { setTab(t.key); setFeedback(null); }}
+            key={tabItem.key}
+            onClick={() => {
+              setTab(tabItem.key);
+              setFeedback(null);
+            }}
             style={{
-              padding: "10px 20px", fontSize: 13, fontWeight: tab === t.key ? 600 : 500,
-              color: tab === t.key ? "var(--fg1)" : "var(--fg3)",
-              background: "transparent", border: "none", cursor: "pointer",
-              borderBottom: tab === t.key ? "2px solid var(--accent)" : "2px solid transparent",
+              padding: "10px 20px",
+              fontSize: "calc(13px * var(--wb-type, 1))",
+              fontWeight: tab === tabItem.key ? 600 : 500,
+              color: tab === tabItem.key ? "var(--fg1)" : "var(--fg3)",
+              background: "transparent",
+              border: "none",
+              cursor: "pointer",
+              borderBottom:
+                tab === tabItem.key
+                  ? "2px solid var(--accent)"
+                  : "2px solid transparent",
               borderRadius: "8px 8px 0 0",
-              transition: "color 180ms ease, border-color 180ms ease, background-color 180ms ease",
+              transition:
+                "color 180ms ease, border-color 180ms ease, background-color 180ms ease",
             }}
             onMouseEnter={(e) => {
-              if (tab !== t.key) e.currentTarget.style.backgroundColor = "var(--hover-bg)";
+              if (tab !== tabItem.key)
+                e.currentTarget.style.backgroundColor = "var(--hover-bg)";
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.backgroundColor = "transparent";
             }}
           >
-            {t.label}
+            {tabItem.label}
           </button>
         ))}
       </div>
 
       {/* Feedback */}
       {feedback && (
-        <div style={{
-          margin: "12px 24px", padding: "8px 12px", borderRadius: 10, fontSize: 13,
-          background: feedback.kind === "ok" ? "var(--badge-bg)" : "var(--error-bg)",
-          border: `0.5px solid ${feedback.kind === "ok" ? "var(--divider-strong)" : "var(--error-border)"}`,
-          color: feedback.kind === "ok" ? "var(--fg1)" : "var(--error)",
-          boxShadow: "var(--shadow-xs)",
-        }}>
+        <div
+          style={{
+            margin: "12px var(--wb-pad-x, 24px)",
+            padding: "8px 12px",
+            borderRadius: 10,
+            fontSize: 13,
+            background:
+              feedback.kind === "ok" ? "var(--badge-bg)" : "var(--error-bg)",
+            border: `0.5px solid ${
+              feedback.kind === "ok"
+                ? "var(--divider-strong)"
+                : "var(--error-border)"
+            }`,
+            color: feedback.kind === "ok" ? "var(--fg1)" : "var(--error)",
+            boxShadow: "var(--shadow-xs)",
+            flexShrink: 0,
+          }}
+        >
           {feedback.text}
         </div>
       )}
 
-      {/* Tab content */}
-      <div style={{ padding: "16px 24px" }}>
+      {/* Tab content — 可滚动，适配矮屏 */}
+      <div
+        className="min-h-0 flex-1 overflow-auto"
+        style={{
+          padding: "var(--wb-pad-y, 16px) var(--wb-pad-x, 24px)",
+        }}
+      >
         {tab === "models" && <SystemModelsTab onFeedback={setFeedback} />}
         {tab === "users" && <UsersTab onFeedback={setFeedback} />}
         {tab === "billing" && <BillingTab onFeedback={setFeedback} />}

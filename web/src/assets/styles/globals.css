@@ -57,6 +57,19 @@
     /* Glassmorphism */
     --backdrop: saturate(180%) blur(20px);
 
+    /* Workbench viewport scale defaults（ViewportScaleProvider 运行时覆盖） */
+    --wb-scale: 1;
+    --wb-type: 1;
+    --wb-space: 1;
+    --wb-nav-h: 48px;
+    --wb-pad-x: 24px;
+    --wb-pad-y: 16px;
+    --wb-sidebar-w: 288px;
+    --wb-sidebar-rail: 56px;
+    --wb-hero-title: 48px;
+    --wb-hero-sub: 15px;
+    --wb-table-max-h: 560px;
+
     /* LeftPanel decoration */
     /* 注意：切勿在此定义 --overlay——该变量是 HeroUI 的弹层背景 token
        （bg-overlay，用于 AlertDialog/Dropdown/Select 等），覆盖它会
@@ -161,7 +174,7 @@ body {
     background: var(--bg);
     color: var(--fg);
     overflow: hidden;
-    height: 100vh;
+    height: 100dvh;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     transition: background-color 200ms, color 200ms;
